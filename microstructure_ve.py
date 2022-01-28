@@ -1,10 +1,10 @@
 import io
 import pathlib
 import subprocess
-from typing import Optional, Protocol, TextIO
+from typing import Optional, Protocol, TextIO, Union, Sequence
 
 import numpy as np
-from dataclasses import dataclass, astuple
+from dataclasses import dataclass
 import scipy.io
 import scipy.ndimage
 
@@ -27,7 +27,7 @@ FREQ, YOUNGS_CPLX = load_viscoelasticity(YOUNGS_DATA_PATH)
 
 
 class InpSection(Protocol):
-    def to_inp(self, inp_file_obj: TextIO | StringIO):
+    def to_inp(self, inp_file_obj: Union[TextIO, io.StringIO]):
         pass
 
 
@@ -147,7 +147,7 @@ class BigNodeSet(NodeSet):
 
 @dataclass
 class EqualityEquation:
-    nsets: list[NodeSet]
+    nsets: Sequence[NodeSet]
     dof: int
     boundary_name: Optional[str] = None
 
@@ -317,7 +317,7 @@ def assign_intph(microstructure, num_layers):
     """
     dists = scipy.ndimage.distance_transform_edt(microstructure)
     particles: np.ndarray = dists == 0
-    matrix = dists >= num_layers
+    matrix = dists > num_layers
     interphase = ~(matrix | particles)
     return 2 * matrix.view("u1") + interphase.view("u1")
 

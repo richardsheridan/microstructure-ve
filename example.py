@@ -1,9 +1,26 @@
-from microstructure_ve import *
+import numpy as np
 
-intph_img = np.load('ms.npy') == 0
+from microstructure_ve import (
+    Heading,
+    GridNodes,
+    BoundaryNodes,
+    CPE4RElements,
+    NodeSet,
+    BigNodeSet,
+    EqualityEquation,
+    ElementSet,
+    InpSection,
+    ViscoelasticMaterial,
+    Material,
+    StepParameters,
+    assign_intph,
+)
+
+
 scale = 0.0025
-displacement=0.005
-youngs_plat=100 # MegaPascals
+layers = 5
+displacement = 0.005
+youngs_plat = 100  # MegaPascals
 
 sides_lr = {
     "LeftSurface": np.s_[:, 0],
@@ -24,6 +41,9 @@ corners = {
     "TopRight": np.s_[-1, -1],
 }
 
+ms_img = np.load("ms.npy")
+intph_img = assign_intph(ms_img, layers)
+
 sections = []
 
 heading = Heading()
@@ -38,9 +58,7 @@ nsets_tb = BigNodeSet.from_image_and_slicedict(intph_img, sides_tb)
 sections.extend((*nsets_lr, *nsets_c, *nsets_tb))
 
 eqs = [EqualityEquation(nsets, 1, bnodes.lr_nset) for nsets in zip(*nsets_lr)]
-eqs += [EqualityEquation(nsets, 2, bnodes.lr_nset) for nsets in zip(*nsets_lr)][
-    1:-1
-]
+eqs += [EqualityEquation(nsets, 2, bnodes.lr_nset) for nsets in zip(*nsets_lr)][1:-1]
 eqs += [EqualityEquation(nsets, 1, bnodes.tb_nset) for nsets in zip(*nsets_tb)]
 eqs += [EqualityEquation([f, c], 2) for f, (c,) in zip(nsets_tb, nsets_c)]
 sections.extend(eqs)
@@ -64,6 +82,11 @@ sections.extend(materials)
 step_parm = StepParameters(bnodes, displacement)
 sections.append(step_parm)
 
-with open('abaqus.inp', 'w') as inp_file_obj:
+with open("abaqus.inp", "w") as inp_file_obj:
     for section in sections:
         section.to_inp(inp_file_obj)
+
+# from microstructure_ve import run_job, read_odb
+#
+# run_job("abaqus", 4)
+# read_odb("abaqus", displacement)
