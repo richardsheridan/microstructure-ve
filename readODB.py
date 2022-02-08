@@ -23,4 +23,4 @@ for iFrame in range(1, numberFrame):
 		E_Real += v.data[0] / displacement
 		E_Imag += v.conjugateData[0] / displacement
 	frequency = frame.frameValue
-	out.write(str(frequency) +'\t' + str(E_Real) + '\t' + str(E_Imag) + '\n')
+	out.write(str(frequency) + '\t' + str(E_Real) + '\t' + str(E_Imag) + '\n')

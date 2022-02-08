@@ -1,12 +1,9 @@
-import io
 import pathlib
 import subprocess
-from typing import Optional, Protocol, TextIO, Union, Sequence
+from typing import Optional, Sequence
 
 import numpy as np
 from dataclasses import dataclass
-import scipy.io
-import scipy.ndimage
 
 
 ABAQUS_PATH = pathlib.Path("/var/DassaultSystemes/SIMULIA/Commands/abaqus")
@@ -24,11 +21,6 @@ def load_viscoelasticity(matrl_name):
 
 
 FREQ, YOUNGS_CPLX = load_viscoelasticity(YOUNGS_DATA_PATH)
-
-
-class InpSection(Protocol):
-    def to_inp(self, inp_file_obj: Union[TextIO, io.StringIO]):
-        pass
 
 
 @dataclass
@@ -300,14 +292,16 @@ ALLAE, ALLCD, ALLEE, ALLFD, ALLJD, ALLKE, ALLPD, ALLSD, ALLSE, ALLVD, ALLWK, ETO
         )
 
 
-def load_microstructure(matfile, var_name):
+def load_matlab_microstructure(matfile, var_name):
     """Load the microstructure in .mat file into a 2D boolean ndarray.
     @para: matfile --> the file name of the microstructure
            var_name --> the name of the variable in the .mat file
                         that contains the 2D microstructure 0-1 matrix.
     @return: 2D ndarray dtype=bool
     """
-    return scipy.io.loadmat(matfile, matlab_compatible=True)[var_name] == 0
+    from scipy.io import loadmat
+
+    return loadmat(matfile, matlab_compatible=True)[var_name]
 
 
 def assign_intph(microstructure, num_layers):
@@ -315,7 +309,9 @@ def assign_intph(microstructure, num_layers):
 
     Particles must be falsey, matrix must be truthy
     """
-    dists = scipy.ndimage.distance_transform_edt(microstructure)
+    from scipy.ndimage import distance_transform_edt
+
+    dists = distance_transform_edt(microstructure)
     particles: np.ndarray = dists == 0
     matrix = dists > num_layers
     interphase = ~(matrix | particles)
@@ -340,4 +336,3 @@ def read_odb(job_name, displacement):
         [ABAQUS_PATH, "python", BASE_PATH / "readODB.py", job_name, str(displacement)],
         check=True,
     )
-

@@ -9,7 +9,6 @@ from microstructure_ve import (
     BigNodeSet,
     EqualityEquation,
     ElementSet,
-    InpSection,
     ViscoelasticMaterial,
     Material,
     StepParameters,
@@ -66,7 +65,7 @@ sections.extend(eqs)
 elsets = ElementSet.from_intph_image(intph_img)
 sections.extend(elsets)
 
-materials: list[InpSection] = [
+materials = [
     ViscoelasticMaterial(elset, shift=-4.0, youngs=youngs_plat) for elset in elsets
 ]
 materials[0] = Material(elsets[0], density=2.65e-15, youngs=5e5, poisson=0.15)
