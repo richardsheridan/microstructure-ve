@@ -11,7 +11,7 @@ b = 1 # batch number
 # loops = 1
 with open(f'Batch-{b}_E.csv', 'w') as f:
     writer = csv.writer(f)
-    writer.writerow(["box_size", "mesh_size", "E_mat", "nu_mat", "E_inc", "nu_inc", "n_inclusion", "r_inclusion", "variance", "Young's Modulus"])
+    writer.writerow(["box_size", "mesh_size", "E_mat", "nu_mat", "E_inc", "nu_inc", "n_inclusion", "r_inclusion", "variance", "Young's Modulus", "geometry df"])
 
 # Inputs
 # Material properties
@@ -89,7 +89,7 @@ for E_mat in E_mats:
 
                 with open(f'Batch-{b}_E.csv', 'a') as f:
                     writer = csv.writer(f)
-                    writer.writerow([box_size, mesh_size, E_mat, nu_mat, E_inc, nu_inc, n, r, variance, E])
+                    writer.writerow([box_size, mesh_size, E_mat, nu_mat, E_inc, nu_inc, n, r, variance, E, l])
                 # with open(f'Batch-{b}_E.txt', 'a') as f:
                 #     line =
                 #     f.write(str(E)+'\n')
