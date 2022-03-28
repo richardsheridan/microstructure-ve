@@ -62,21 +62,19 @@ eqs += [EqualityEquation(nsets, 1, bnodes.tb_nset) for nsets in zip(*nsets_tb)]
 eqs += [EqualityEquation([f, c], 2) for f, (c,) in zip(nsets_tb, nsets_c)]
 sections.extend(eqs)
 
-elsets = ElementSet.from_intph_image(intph_img)
-sections.extend(elsets)
+filler_elset, intph_elset, mat_elset = ElementSet.from_intph_image(intph_img)
+sections.extend([filler_elset, intph_elset, mat_elset])
 
-materials = [
-    ViscoelasticMaterial(elset, shift=-4.0, youngs=youngs_plat) for elset in elsets
-]
-materials[0] = Material(elsets[0], density=2.65e-15, youngs=5e5, poisson=0.15)
-materials[-1] = ViscoelasticMaterial(
-    elsets[-1],
+filler_material = Material(filler_elset, density=2.65e-15, youngs=5e5, poisson=0.15)
+intph_material = ViscoelasticMaterial(
+    intph_elset,
     youngs=youngs_plat,
     shift=-6.0,
     left_broadening=1.0,
     right_broadening=1.0,
 )
-sections.extend(materials)
+mat_material = ViscoelasticMaterial(mat_elset, shift=-4.0, youngs=youngs_plat)
+sections.extend([filler_material, intph_material, mat_material])
 
 step_parm = StepParameters(bnodes, displacement)
 sections.append(step_parm)
