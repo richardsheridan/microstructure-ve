@@ -1,6 +1,6 @@
 import pathlib
 import subprocess
-from typing import Optional, Sequence
+from typing import Optional, Sequence, List
 
 import numpy as np
 from dataclasses import dataclass
@@ -304,51 +304,29 @@ def load_matlab_microstructure(matfile, var_name):
     return loadmat(matfile, matlab_compatible=True)[var_name]
 
 
-# def assign_intph(microstructure, num_layers):
-#     """Generate interphase layers around the particles.
-
-#     Particles must be falsey, matrix must be truthy
-#     """
-#     from scipy.ndimage import distance_transform_edt
-
-#     dists = distance_transform_edt(microstructure)
-#     particles: np.ndarray = dists == 0
-#     matrix = dists > num_layers
-#     interphase = ~(matrix | particles)
-#     return 2 * matrix.view("u1") + interphase.view("u1")
-
-def assign_intph(microstructure, num_layers):
+def assign_intph(microstructure: np.ndarray, num_layers_list: List[int]) -> np.ndarray:
     """Generate interphase layers around the particles.
-    Particles must be falsey, matrix must be truthy
+
+    Microstructure must have at least one zero value.
+
+    :rtype: numpy.ndarray
+    :param microstructure: The microstructure array. Particles must be zero,
+        matrix must be nonzero.
+    :type microstructure: numpy.ndarray
+
+    :param num_layers_list: The list of interphase thickness in pixels. The order of
+        the layer values is based on the sorted distances in num_layers_list from
+        the particles (near particles -> far from particles)
+    :type num_layer_list: List(int)
     """
     from scipy.ndimage import distance_transform_edt
 
-    # special case, matrix with 1 element
-    if len(np.unique(microstructure))==1:
-        return microstructure
-    # assign 0 to all non-matrix positions, assuming matrix positions have the max value
-    matrix_only = (microstructure==microstructure.max())
-    dists = distance_transform_edt(matrix_only)
-    particles: np.ndarray = dists == 0
-    matrix = dists > num_layers
-#     interphase = ~(matrix | particles)
-    return microstructure + matrix.view("u1")
+    dists = distance_transform_edt(microstructure)
+    intph_img = (dists != 0).view("u1")
+    for num_layers in sorted(num_layers_list):
+        intph_img += dists > num_layers
+    return intph_img
 
-def assign_multi_intph(microstructure, num_layers_list):
-    '''
-    Generate multiple layers of interphases around the particles.
-    
-    :param microstructure: The microstructure array. Particles must be falsey, matrix must be truthy
-    :type microstructure: numpy.ndarray
-    
-    :param num_layers_list: The list of interphase thickness in pixels. The order of
-        the num_layers in the num_layers_list should base on the distance from
-        the particles (near particles -> far from particles)
-    :type num_layer_list: List(int)
-    '''
-    for num_layers in num_layers_list:
-        microstructure = assign_intph(microstructure, num_layers)
-    return microstructure
 
 def run_job(job_name, cpus):
     """feed .inp file to ABAQUS and wait for the result"""

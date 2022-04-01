@@ -41,7 +41,7 @@ corners = {
 }
 
 ms_img = np.load("ms.npy")
-intph_img = assign_intph(ms_img, layers)
+intph_img = assign_intph(ms_img, [layers])
 
 sections = []
 
