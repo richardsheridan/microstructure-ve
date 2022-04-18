@@ -43,7 +43,7 @@ corners = {
 }
 
 ms_img = np.load("ms.npy")
-intph_img = assign_intph(ms_img, layers)
+intph_img = assign_intph(ms_img, [layers])
 
 base_path = pathlib.Path(__file__).parent
 youngs_path = base_path / "PMMA_shifted_R10_data.txt"
