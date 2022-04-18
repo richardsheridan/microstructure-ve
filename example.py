@@ -101,7 +101,7 @@ sections.extend([filler_material, intph_material, mat_material])
 step_parm = StepParameters(bnodes, displacement)
 sections.append(step_parm)
 
-with open("abaqus.inp", "w") as inp_file_obj:
+with open("example.inp", "w") as inp_file_obj:
     for section in sections:
         section.to_inp(inp_file_obj)
 
