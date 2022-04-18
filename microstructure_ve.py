@@ -225,7 +225,7 @@ class ViscoelasticMaterial(Material):
         """Convert to abaqus's preferred normalized moduli"""
         # Assume frequency-independent poisson's ratio
         shear_cplx = self.youngs_cplx / (2 * (1 + self.poisson))
-        bulk_cplx = self.youngs_cplx / (3 * (1 + 2 * self.poisson))
+        bulk_cplx = self.youngs_cplx / (3 * (1 - 2 * self.poisson))
 
         # special normalized shear modulus used by abaqus
         wgstar = np.empty_like(shear_cplx)
