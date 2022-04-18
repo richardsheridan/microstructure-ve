@@ -8,7 +8,6 @@ from dataclasses import dataclass
 
 ABAQUS_PATH = pathlib.Path("/var/DassaultSystemes/SIMULIA/Commands/abaqus")
 BASE_PATH = pathlib.Path(__file__).parent
-YOUNGS_DATA_PATH = BASE_PATH / "PMMA_shifted_R10_data.txt"
 
 
 def load_viscoelasticity(matrl_name):
@@ -18,9 +17,6 @@ def load_viscoelasticity(matrl_name):
     youngs.imag = youngs_imag
     sortind = np.argsort(freq)
     return freq[sortind], youngs[sortind]
-
-
-FREQ, YOUNGS_CPLX = load_viscoelasticity(YOUNGS_DATA_PATH)
 
 
 @dataclass
@@ -187,9 +183,9 @@ class ElementSet:
 @dataclass
 class Material:
     elset: ElementSet
-    density: float = 1.18e-15  # kg/micron^3
-    poisson: float = 0.35
-    youngs: float = 3e3  # MPa
+    density: float  # kg/micron^3
+    poisson: float
+    youngs: float  # MPa, long term, low freq modulus
 
     def to_inp(self, inp_file_obj):
         inp_file_obj.write(
@@ -205,11 +201,11 @@ class Material:
 
 @dataclass
 class ViscoelasticMaterial(Material):
-    freq: np.ndarray = FREQ  # excitation freq in Hz
-    youngs_cplx: np.ndarray = YOUNGS_CPLX  # complex youngs modulus
-    shift: float = 2.0  # frequency shift induced relative to nominal properties
-    left_broadening: float = 1.8
-    right_broadening: float = 1.5
+    freq: np.ndarray  # excitation freq in Hz
+    youngs_cplx: np.ndarray  # complex youngs modulus
+    shift: float = 0.0  # frequency shift induced relative to nominal properties
+    left_broadening: float = 0.0
+    right_broadening: float = 0.0
 
     def apply_shift(self):
         """Apply shift and broadening factors to frequency.
@@ -229,11 +225,9 @@ class ViscoelasticMaterial(Material):
         super().to_inp(inp_file_obj)
         inp_file_obj.write("*Viscoelastic, frequency=TABULAR\n")
 
-        youngs_cplx = self.youngs_cplx + self.youngs
-
         # Assume frequency-independent poisson's ratio
-        shear_cplx = youngs_cplx / (2 * (1 + self.poisson))
-        bulk_cplx = youngs_cplx / (3 * (1 + 2 * self.poisson))
+        shear_cplx = self.youngs_cplx / (2 * (1 + self.poisson))
+        bulk_cplx = self.youngs_cplx / (3 * (1 + 2 * self.poisson))
 
         # special normalized shear modulus used by abaqus
         wgstar = np.empty_like(shear_cplx)
