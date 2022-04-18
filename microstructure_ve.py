@@ -221,10 +221,8 @@ class ViscoelasticMaterial(Material):
         freq[i:] = self.right_broadening * (freq[i:] - f) + f
         return 10 ** freq
 
-    def to_inp(self, inp_file_obj):
-        super().to_inp(inp_file_obj)
-        inp_file_obj.write("*Viscoelastic, frequency=TABULAR\n")
-
+    def normalize_modulus(self):
+        """Convert to abaqus's preferred normalized moduli"""
         # Assume frequency-independent poisson's ratio
         shear_cplx = self.youngs_cplx / (2 * (1 + self.poisson))
         bulk_cplx = self.youngs_cplx / (3 * (1 + 2 * self.poisson))
@@ -241,6 +239,13 @@ class ViscoelasticMaterial(Material):
         wkstar.real = bulk_cplx.imag / bulk_inf
         wkstar.imag = 1 - bulk_cplx.real / bulk_inf
 
+        return wgstar, wkstar
+
+    def to_inp(self, inp_file_obj):
+        super().to_inp(inp_file_obj)
+        inp_file_obj.write("*Viscoelastic, frequency=TABULAR\n")
+
+        wgstar, wkstar = self.normalize_modulus()
         freq = self.apply_shift()
 
         for wgr, wgi, wkr, wki, f in zip(
