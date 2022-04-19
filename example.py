@@ -1,3 +1,5 @@
+import pathlib
+
 import numpy as np
 
 from microstructure_ve import (
@@ -13,13 +15,13 @@ from microstructure_ve import (
     Material,
     StepParameters,
     assign_intph,
+    load_viscoelasticity,
 )
 
 
 scale = 0.0025
 layers = 5
 displacement = 0.005
-youngs_plat = 100  # MegaPascals
 
 sides_lr = {
     "LeftSurface": np.s_[:, 0],
@@ -42,6 +44,14 @@ corners = {
 
 ms_img = np.load("ms.npy")
 intph_img = assign_intph(ms_img, [layers])
+
+base_path = pathlib.Path(__file__).parent
+youngs_path = base_path / "PMMA_shifted_R10_data.txt"
+freq, youngs_cplx = load_viscoelasticity(youngs_path)
+# This is one way to assign a long term modulus, but it is not universal!
+# Another strategy is to use 0 for true viscoelastic liquids.
+# Pick something physically reasonable for your system.
+youngs_plat = youngs_cplx[0].real
 
 sections = []
 
@@ -68,18 +78,30 @@ sections.extend([filler_elset, intph_elset, mat_elset])
 filler_material = Material(filler_elset, density=2.65e-15, youngs=5e5, poisson=0.15)
 intph_material = ViscoelasticMaterial(
     intph_elset,
+    density=1.18e-15,
+    poisson=0.35,
+    shift=-4.0,
     youngs=youngs_plat,
-    shift=-6.0,
-    left_broadening=1.0,
-    right_broadening=1.0,
+    freq=freq,
+    youngs_cplx=youngs_cplx,
+    left_broadening=1.8,
+    right_broadening=1.5,
 )
-mat_material = ViscoelasticMaterial(mat_elset, shift=-4.0, youngs=youngs_plat)
+mat_material = ViscoelasticMaterial(
+    mat_elset,
+    density=1.18e-15,
+    poisson=0.35,
+    youngs=youngs_plat,
+    freq=freq,
+    youngs_cplx=youngs_cplx,
+    shift=-6.0,
+)
 sections.extend([filler_material, intph_material, mat_material])
 
 step_parm = StepParameters(bnodes, displacement)
 sections.append(step_parm)
 
-with open("abaqus.inp", "w") as inp_file_obj:
+with open("example.inp", "w") as inp_file_obj:
     for section in sections:
         section.to_inp(inp_file_obj)
 

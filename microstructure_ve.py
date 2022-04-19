@@ -8,7 +8,6 @@ from dataclasses import dataclass
 
 ABAQUS_PATH = pathlib.Path("/var/DassaultSystemes/SIMULIA/Commands/abaqus")
 BASE_PATH = pathlib.Path(__file__).parent
-YOUNGS_DATA_PATH = BASE_PATH / "PMMA_shifted_R10_data.txt"
 
 
 def load_viscoelasticity(matrl_name):
@@ -18,9 +17,6 @@ def load_viscoelasticity(matrl_name):
     youngs.imag = youngs_imag
     sortind = np.argsort(freq)
     return freq[sortind], youngs[sortind]
-
-
-FREQ, YOUNGS_CPLX = load_viscoelasticity(YOUNGS_DATA_PATH)
 
 
 @dataclass
@@ -187,9 +183,9 @@ class ElementSet:
 @dataclass
 class Material:
     elset: ElementSet
-    density: float = 1.18e-15  # kg/micron^3
-    poisson: float = 0.35
-    youngs: float = 3e3  # MPa
+    density: float  # kg/micron^3
+    poisson: float
+    youngs: float  # MPa, long term, low freq modulus
 
     def to_inp(self, inp_file_obj):
         inp_file_obj.write(
@@ -205,11 +201,11 @@ class Material:
 
 @dataclass
 class ViscoelasticMaterial(Material):
-    freq: np.ndarray = FREQ  # excitation freq in Hz
-    youngs_cplx: np.ndarray = YOUNGS_CPLX  # complex youngs modulus
-    shift: float = 2.0  # frequency shift induced relative to nominal properties
-    left_broadening: float = 1.8
-    right_broadening: float = 1.5
+    freq: np.ndarray  # excitation freq in Hz
+    youngs_cplx: np.ndarray  # complex youngs modulus
+    shift: float = 0.0  # frequency shift induced relative to nominal properties
+    left_broadening: float = 0.0
+    right_broadening: float = 0.0
 
     def apply_shift(self):
         """Apply shift and broadening factors to frequency.
@@ -225,15 +221,11 @@ class ViscoelasticMaterial(Material):
         freq[i:] = self.right_broadening * (freq[i:] - f) + f
         return 10 ** freq
 
-    def to_inp(self, inp_file_obj):
-        super().to_inp(inp_file_obj)
-        inp_file_obj.write("*Viscoelastic, frequency=TABULAR\n")
-
-        youngs_cplx = self.youngs_cplx + self.youngs
-
-        # Assume frequency-independent poisson's ratio
-        shear_cplx = youngs_cplx / (2 * (1 + self.poisson))
-        bulk_cplx = youngs_cplx / (3 * (1 + 2 * self.poisson))
+    def normalize_modulus(self):
+        """Convert to abaqus's preferred normalized moduli"""
+        # Only works with frequency-dependent poisson's ratio
+        shear_cplx = self.youngs_cplx / (2 * (1 + self.poisson))
+        bulk_cplx = self.youngs_cplx / (3 * (1 - 2 * self.poisson))
 
         # special normalized shear modulus used by abaqus
         wgstar = np.empty_like(shear_cplx)
@@ -247,11 +239,21 @@ class ViscoelasticMaterial(Material):
         wkstar.real = bulk_cplx.imag / bulk_inf
         wkstar.imag = 1 - bulk_cplx.real / bulk_inf
 
-        freq = self.apply_shift()
+        return wgstar, wkstar
 
-        for wgr, wgi, wkr, wki, f in zip(
-            wgstar.real, wgstar.imag, wkstar.real, wkstar.imag, freq
-        ):
+    def to_inp(self, inp_file_obj):
+        super().to_inp(inp_file_obj)
+        inp_file_obj.write("*Viscoelastic, frequency=TABULAR\n")
+
+        # special normalized bulk modulus used by abaqus
+        # if poisson's ratio is frequency-independent, it drops out
+        # and youngs=shear=bulk when normalized
+        youngs_inf = self.youngs_cplx[0].real
+        real = (self.youngs_cplx.imag / youngs_inf).tolist()
+        imag = (1 - self.youngs_cplx.real / youngs_inf).tolist()
+        freq = self.apply_shift().tolist()
+
+        for wgr, wgi, wkr, wki, f in zip(real, imag, real, imag, freq):
             inp_file_obj.write(f"{wgr:.6e}, {wgi:.6e}, {wkr:.6e}, {wki:.6e}, {f:.6e}\n")
 
 
