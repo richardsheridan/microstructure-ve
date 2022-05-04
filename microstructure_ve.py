@@ -329,6 +329,25 @@ def assign_intph(microstructure: np.ndarray, num_layers_list: List[int]) -> np.n
         intph_img += dists > num_layers
     return intph_img
 
+def periodic_assign_intph(microstructure: np.ndarray, num_layers_list: List[int]) -> np.ndarray:
+    """Generate interphase layers around the particles with periodic BC.
+
+    Microstructure must have at least one zero value.
+
+    :rtype: numpy.ndarray
+    :param microstructure: The microstructure array. Particles must be zero,
+        matrix must be nonzero.
+    :type microstructure: numpy.ndarray
+
+    :param num_layers_list: The list of interphase thickness in pixels. The order of
+        the layer values is based on the sorted distances in num_layers_list from
+        the particles (near particles -> far from particles)
+    :type num_layer_list: List(int)
+    """
+    tiled = np.tile(microstructure, (3,3))
+    dimx,dimy = microstructure.shape
+    intph_tiled = assign_intph(tiled, num_layers_list)
+    return intph_tiled[dimx:dimx+dimx,dimy:dimy+dimy]
 
 def run_job(job_name, cpus):
     """feed .inp file to ABAQUS and wait for the result"""
