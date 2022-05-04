@@ -347,7 +347,7 @@ def periodic_assign_intph(microstructure: np.ndarray, num_layers_list: List[int]
     tiled = np.tile(microstructure, (3,3))
     dimx,dimy = microstructure.shape
     intph_tiled = assign_intph(tiled, num_layers_list)
-    return intph_tiled[dimx:dimx+dimx,dimy:dimy+dimy]
+    return intph_tiled[dimx:dimx+dimx,dimy:dimy+dimy].copy()  # free tiled's memory
 
 def run_job(job_name, cpus):
     """feed .inp file to ABAQUS and wait for the result"""
