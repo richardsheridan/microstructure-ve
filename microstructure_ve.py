@@ -325,17 +325,27 @@ class StepParameters:
     displacement: float = 0.005
 
     def to_inp(self, inp_file_obj):
+        row_ind, col_ind = np.indices(self.nodes.shape)
         # select surface to drive
-        side = "RightSurface"
+        side1 = "RightSurface"
         # and which way to push
         dof = "1"
-        sl = sides[side]
+        sl = sides[side1]
+        inds = 1 + np.ravel_multi_index(
+            (row_ind[sl].ravel(), col_ind[sl].ravel()),
+            dims=self.nodes.shape,
+        )
+        nset = NodeSet(side1, inds)
+        nset.to_inp(inp_file_obj)
+        # select surface to hold (opposing surface)
+        side2 = "LeftSurface"
+        sl = sides[side2]
         row_ind, col_ind = np.indices(self.nodes.shape)
         inds = 1 + np.ravel_multi_index(
             (row_ind[sl].ravel(), col_ind[sl].ravel()),
             dims=self.nodes.shape,
         )
-        nset = NodeSet(side, inds)
+        nset = NodeSet(side2, inds)
         nset.to_inp(inp_file_obj)
         inp_file_obj.write(
             f"""\
@@ -343,8 +353,9 @@ class StepParameters:
 *STEADY STATE DYNAMICS, DIRECT
 {self.f_initial}, {self.f_final}, {self.f_count}, {self.bias}
 *BOUNDARY, TYPE=DISPLACEMENT
-** strain in x direction
-{side}, {dof}, {dof}, {self.displacement}
+{side1}, {dof}, {dof}, {self.displacement}
+*BOUNDARY, TYPE=DISPLACEMENT
+{side2}, {dof}, {dof}, 0
 *RESTART,WRITE,frequency=0
 *Output, field, variable=PRESELECT
 *Output, field

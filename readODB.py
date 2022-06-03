@@ -11,7 +11,7 @@ out = open(name+'-Modulii.tsv', 'w')
 out.write('frequency (Hz)\tE_Real (Pa)\tE_Imag (Pa)\n')
 odb = openOdb(name+'.odb')
 mySteps = odb.steps['STEP-1']
-ref_nSet = odb.rootAssembly.instances['PART-1-1'].nodeSets['SET-LR']
+ref_nSet = odb.rootAssembly.instances['PART-1-1'].nodeSets['RIGHTSURFACE']
 numberFrame = len(odb.steps['STEP-1'].frames)
 for iFrame in range(1, numberFrame):
 	frame = mySteps.frames[iFrame]
