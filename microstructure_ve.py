@@ -16,9 +16,6 @@ sides = {
     "RightSurface": np.s_[1:-1, -1],
     "BotmSurface": np.s_[0, 1:-1],
     "TopSurface": np.s_[-1, 1:-1],
-}
-
-corners = {
     "BotmLeft": np.s_[0, 0],
     "TopLeft": np.s_[-1, 0],
     "BotmRight": np.s_[0, -1],
@@ -59,6 +56,31 @@ class GridNodes:
     def from_intph_img(cls, intph_img, scale):
         nodes_shape = np.array(intph_img.shape) + 1
         return cls(nodes_shape, scale)
+
+    def get_nsets(self):
+        row_ind, col_ind = np.indices(self.shape)
+
+        def node_inds(sl):
+            """Efficiently convert numpy slices of the index arrays into abaqus inds"""
+            return 1 + np.ravel_multi_index(
+                (row_ind[sl].ravel(), col_ind[sl].ravel()),
+                dims=self.shape,
+            )
+
+        def make_set(name):
+            return NodeSet(name, node_inds(sides[name]))
+
+        set_l = make_set("LeftSurface")
+        set_r = make_set("RightSurface")
+        set_b = make_set("BotmSurface")
+        set_t = make_set("TopSurface")
+        set_bl = make_set("BotmLeft")
+        set_tl = make_set("TopLeft")
+        set_br = make_set("BotmRight")
+        set_tr = make_set("TopRight")
+        surfaces = [(set_l, set_r), (set_b, set_t)]
+        vertices = (set_bl, set_tl, set_br, set_tr)
+        return surfaces, vertices
 
     def to_inp(self, inp_file_obj):
         y_pos, x_pos = self.scale * np.indices(self.shape)
@@ -120,22 +142,22 @@ class EqualityEquation:
         )
 
 
-# @dataclass
-# class BoundaryEquation:
-#     nsets: Sequence[NodeSet]
-#     dof: int
-#     boundary_name: str
-#
-#     def to_inp(self, inp_file_obj):
-#         inp_file_obj.write(
-#             f"""\
-# *Equation
-# 3
-# {self.nsets[0].name:s}, {self.dof:d}, 1.
-# {self.nsets[1].name:s}, {self.dof:d}, -1.
-# {self.boundary_name:s}, {self.dof:d}, 1.
-# """
-#         )
+@dataclass
+class BoundaryEquation:
+    nsets: Sequence[NodeSet]
+    dof: int
+    boundary_name: str
+
+    def to_inp(self, inp_file_obj):
+        inp_file_obj.write(
+            f"""\
+*Equation
+3
+{self.nsets[0].name:s}, {self.dof:d}, 1.
+{self.nsets[1].name:s}, {self.dof:d}, -1.
+{self.boundary_name:s}, {self.dof:d}, 1.
+"""
+        )
 
 
 @dataclass
@@ -254,61 +276,35 @@ class ViscoelasticMaterial(Material):
 
 @dataclass
 class PeriodicBoundaryConditions:
-    nodes: GridNodes
+    surface_nset_pairs: List[List[NodeSet]]
+    corner_nsets: List[NodeSet]
 
     def to_inp(self, inp_file_obj):
-        row_ind, col_ind = np.indices(self.nodes.shape)
-
-        def node_inds(sl):
-            """Efficiently convert numpy slices of the index arrays into abaqus inds"""
-            return 1 + np.ravel_multi_index(
-                (row_ind[sl].ravel(), col_ind[sl].ravel()),
-                dims=self.nodes.shape,
-            )
-
         # Displacement at any surface node is equal to the opposing surface node
-        inds_l = node_inds(sides["LeftSurface"])
-        inds_r = node_inds(sides["RightSurface"])
-        for ind_l, ind_r in zip(inds_l, inds_r):
-            node_l = NodeSet(f"LeftSurface{ind_l:d}", [ind_l])
-            node_r = NodeSet(f"RightSurface{ind_r:d}", [ind_r])
-            eq1 = EqualityEquation([node_l, node_r], 1)
-            eq2 = EqualityEquation([node_l, node_r], 2)
-            node_l.to_inp(inp_file_obj)
-            node_r.to_inp(inp_file_obj)
-            eq1.to_inp(inp_file_obj)
-            eq2.to_inp(inp_file_obj)
-
-        inds_b = node_inds(sides["BotmSurface"])
-        inds_t = node_inds(sides["TopSurface"])
-        for ind_b, ind_t in zip(inds_b, inds_t):
-            node_b = NodeSet(f"BotmSurface{ind_b:d}", [ind_b])
-            node_t = NodeSet(f"TopSurface{ind_t:d}", [ind_t])
-            eq1 = EqualityEquation([node_b, node_t], 1)
-            eq2 = EqualityEquation([node_b, node_t], 2)
-            node_b.to_inp(inp_file_obj)
-            node_t.to_inp(inp_file_obj)
-            eq1.to_inp(inp_file_obj)
-            eq2.to_inp(inp_file_obj)
+        for i, (set_a, set_b) in enumerate(self.surface_nset_pairs):
+            set_a: NodeSet
+            set_b: NodeSet
+            for ind_a, ind_b in zip(set_a.node_inds, set_b.node_inds):
+                node_a = NodeSet(f"{set_a.name}{ind_a:d}", [ind_a])
+                node_b = NodeSet(f"{set_b.name}{ind_b:d}", [ind_b])
+                # First pair is special, that is how we drive the system
+                if i == 0:
+                    eq1 = BoundaryEquation([node_a, node_b], 1, set_b.name)
+                else:
+                    eq1 = EqualityEquation([node_a, node_b], 1)
+                eq2 = EqualityEquation([node_a, node_b], 2)
+                node_a.to_inp(inp_file_obj)
+                node_b.to_inp(inp_file_obj)
+                eq1.to_inp(inp_file_obj)
+                eq2.to_inp(inp_file_obj)
 
         # All corner nodes displacement should be identical as they
         # represent the same conceptual point in periodic space (north pole?).
-        ind_bl = node_inds(corners["BotmLeft"])
-        ind_tl = node_inds(corners["TopLeft"])
-        ind_br = node_inds(corners["BotmRight"])
-        ind_tr = node_inds(corners["TopRight"])
-        node_bl = NodeSet("BotmLeft", ind_bl)
-        node_tl = NodeSet("TopLeft", ind_tl)
-        node_br = NodeSet("BotmRight", ind_br)
-        node_tr = NodeSet("TopRight", ind_tr)
-        node_bl.to_inp(inp_file_obj)
-        node_tl.to_inp(inp_file_obj)
-        node_br.to_inp(inp_file_obj)
-        node_tr.to_inp(inp_file_obj)
+        for nset in self.corner_nsets:
+            nset.to_inp(inp_file_obj)
 
         # We can only equate pairs of nodes in this sense so chain the eqns
-        for node_a, node_b in zip([node_bl, node_tl, node_br],
-                                  [node_tl, node_br, node_tr]):
+        for node_a, node_b in zip(self.corner_nsets[:-1], self.corner_nsets[1:]):
             EqualityEquation([node_b, node_a], 1).to_inp(inp_file_obj)
             EqualityEquation([node_b, node_a], 2).to_inp(inp_file_obj)
 
@@ -317,7 +313,7 @@ class PeriodicBoundaryConditions:
 class StepParameters:
     """Data for the ABAQUS STEP keyword"""
 
-    nodes: GridNodes
+    drive_nodes: NodeSet
     f_initial: float = 1e-7  # min frequency
     f_final: float = 1e5  # max frequency
     f_count: int = 30  # number of interval picked
@@ -325,37 +321,13 @@ class StepParameters:
     displacement: float = 0.005
 
     def to_inp(self, inp_file_obj):
-        row_ind, col_ind = np.indices(self.nodes.shape)
-        # select surface to drive
-        side1 = "RightSurface"
-        # and which way to push
-        dof = "1"
-        sl = sides[side1]
-        inds = 1 + np.ravel_multi_index(
-            (row_ind[sl].ravel(), col_ind[sl].ravel()),
-            dims=self.nodes.shape,
-        )
-        nset = NodeSet(side1, inds)
-        nset.to_inp(inp_file_obj)
-        # select surface to hold (opposing surface)
-        side2 = "LeftSurface"
-        sl = sides[side2]
-        row_ind, col_ind = np.indices(self.nodes.shape)
-        inds = 1 + np.ravel_multi_index(
-            (row_ind[sl].ravel(), col_ind[sl].ravel()),
-            dims=self.nodes.shape,
-        )
-        nset = NodeSet(side2, inds)
-        nset.to_inp(inp_file_obj)
         inp_file_obj.write(
             f"""\
 *STEP,NAME=STEP-1,PERTURBATION
 *STEADY STATE DYNAMICS, DIRECT
 {self.f_initial}, {self.f_final}, {self.f_count}, {self.bias}
 *BOUNDARY, TYPE=DISPLACEMENT
-{side1}, {dof}, {dof}, {self.displacement}
-*BOUNDARY, TYPE=DISPLACEMENT
-{side2}, {dof}, {dof}, 0
+{self.drive_nodes.name}, {dof}, {dof}, {self.displacement}
 *RESTART,WRITE,frequency=0
 *Output, field, variable=PRESELECT
 *Output, field
