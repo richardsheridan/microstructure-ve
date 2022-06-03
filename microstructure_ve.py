@@ -1,22 +1,39 @@
 import pathlib
 import subprocess
-from typing import Optional, Sequence, List
+from os import PathLike
+from typing import Optional, Sequence, List, Union, TextIO
 
 import numpy as np
 from dataclasses import dataclass
 
-
 ABAQUS_PATH = pathlib.Path("/var/DassaultSystemes/SIMULIA/Commands/abaqus")
 BASE_PATH = pathlib.Path(__file__).parent
 
+# discard corners
+# "top" is image rather than matrix convention
+sides = {
+    "LeftSurface": np.s_[1:-1, 0],
+    "RightSurface": np.s_[1:-1, -1],
+    "BotmSurface": np.s_[0, 1:-1],
+    "TopSurface": np.s_[-1, 1:-1],
+}
 
-def load_viscoelasticity(matrl_name):
-    freq, youngs_real, youngs_imag = np.loadtxt(matrl_name, unpack=True)
-    youngs = np.empty_like(youngs_real, dtype=complex)
-    youngs.real = youngs_real
-    youngs.imag = youngs_imag
-    sortind = np.argsort(freq)
-    return freq[sortind], youngs[sortind]
+corners = {
+    "BotmLeft": np.s_[0, 0],
+    "TopLeft": np.s_[-1, 0],
+    "BotmRight": np.s_[0, -1],
+    "TopRight": np.s_[-1, -1],
+}
+
+
+###################
+# Keyword Classes #
+###################
+
+# Each keyword class represents a specific ABAQUS keyword.
+# They know what the structure of the keyword section is and what data
+# are needed to fill it out. They should do minimize computation outside
+# of a to_inp method that actually writes directly to the input file.
 
 
 @dataclass
@@ -38,48 +55,28 @@ class GridNodes:
     shape: np.ndarray
     scale: float
 
+    @classmethod
+    def from_intph_img(cls, intph_img, scale):
+        nodes_shape = np.array(intph_img.shape) + 1
+        return cls(nodes_shape, scale)
+
     def to_inp(self, inp_file_obj):
         y_pos, x_pos = self.scale * np.indices(self.shape)
         node_nums = range(1, 1 + x_pos.size)  # 1-indexing for ABAQUS
         inp_file_obj.write("*Node\n")
-        # noinspection PyDataclass
         for node_num, x, y in zip(node_nums, x_pos.ravel(), y_pos.ravel()):
             inp_file_obj.write(f"{node_num:d},\t{x:.6e},\t{y:.6e}\n")
 
 
 @dataclass
-class BoundaryNodes:
-    offset: int = 10000000
-    lr_nset: str = "SET-LR"
-    tb_nset: str = "SET-TB"
-
-    def to_inp(self, inp_file_obj):
-        # create two dummy nodes for PBC in x and y directions
-        inp_file_obj.write(
-            f"""\
-{self.offset:d}, 1.0, 0.0
-{self.offset+1:d}, 0.0, 1.0
-*Nset, nset={self.lr_nset:s}
-{self.offset:d}
-*Nset, nset={self.tb_nset:s}
-{self.offset+1:d}
-"""
-        )
-
-
-def node_index_helper(row_ind, col_ind, dims):
-    return 1 + np.ravel_multi_index((row_ind.ravel(), col_ind.ravel()), dims=dims)
-
-
-@dataclass
 class CPE4RElements:
-    node_shape: np.ndarray
+    nodes: GridNodes
 
     def to_inp(self, inp_file_obj):
         # strategy: generate one array representing all nodes, then make slices of it
         # that represent offsets to the right, top, and topright nodes to iterate
         all_nodes = 1 + np.ravel_multi_index(
-            np.indices(self.node_shape), self.node_shape
+            np.indices(self.nodes.shape), self.nodes.shape
         )
         # elements are defined counterclockwise
         right_nodes = all_nodes[:-1, 1:].ravel()
@@ -88,9 +85,8 @@ class CPE4RElements:
         topright_nodes = all_nodes[1:, 1:].ravel()
         element_nums = range(1, 1 + key_nodes.size)
         inp_file_obj.write("*Element, type=CPE4R\n")
-        # noinspection PyDataclass
         for elem_num, tn, kn, rn, trn in zip(
-            element_nums, top_nodes, key_nodes, right_nodes, topright_nodes
+                element_nums, top_nodes, key_nodes, right_nodes, topright_nodes
         ):
             inp_file_obj.write(
                 f"{elem_num:d},\t{tn:d},\t{kn:d},\t{rn:d},\t{trn:d},\t\n"
@@ -100,84 +96,79 @@ class CPE4RElements:
 @dataclass
 class NodeSet:
     name: str
-    nodes: np.ndarray
-
-    @classmethod
-    def from_image_and_slicedict(cls, intph_img, slicedict):
-        nodes_shape = np.array(intph_img.shape) + 1
-        row_ind, col_ind = np.indices(nodes_shape)
-        # noinspection PyArgumentList
-        return [
-            cls(name, node_index_helper(row_ind[sl], col_ind[sl], nodes_shape))
-            for name, sl in slicedict.items()
-        ]
-
-    def __iter__(self):
-        for node in self.nodes:
-            # noinspection PyArgumentList
-            yield type(self)(f"{self.name:s}{node:d}", [node])
+    node_inds: Union[np.ndarray, List[int]]
 
     def to_inp(self, inp_file_obj):
-        for node in self.nodes:
-            inp_file_obj.write(f"*Nset, nset={self.name:s}{node:d}\n{node:d}\n")
-
-
-@dataclass
-class BigNodeSet(NodeSet):
-    """Like a NodeSet but also grouping all nodes into an additional unified set"""
-
-    def to_inp(self, inp_file_obj):
-        super().to_inp(inp_file_obj)
         inp_file_obj.write(f"*Nset, nset={self.name}\n")
-        for node in self.nodes:
-            inp_file_obj.write(f"{node:d}\n")
+        for i in self.node_inds:
+            inp_file_obj.write(f"{i:d}\n")
 
 
 @dataclass
 class EqualityEquation:
     nsets: Sequence[NodeSet]
     dof: int
-    boundary_name: Optional[str] = None
 
     def to_inp(self, inp_file_obj):
-        bnode = self.boundary_name is not None
         inp_file_obj.write(
             f"""\
 *Equation
-{2 + bnode:d}
+2
 {self.nsets[0].name:s}, {self.dof:d}, 1.
 {self.nsets[1].name:s}, {self.dof:d}, -1.
 """
         )
-        if bnode:
-            inp_file_obj.write(f"{self.boundary_name:s}, {self.dof:d}, 1.\n")
+
+
+# @dataclass
+# class BoundaryEquation:
+#     nsets: Sequence[NodeSet]
+#     dof: int
+#     boundary_name: str
+#
+#     def to_inp(self, inp_file_obj):
+#         inp_file_obj.write(
+#             f"""\
+# *Equation
+# 3
+# {self.nsets[0].name:s}, {self.dof:d}, 1.
+# {self.nsets[1].name:s}, {self.dof:d}, -1.
+# {self.boundary_name:s}, {self.dof:d}, 1.
+# """
+#         )
 
 
 @dataclass
 class ElementSet:
     matl_code: int
-    elements: list
+    elements: np.ndarray
 
     @classmethod
     def from_intph_image(cls, intph_img):
+        """Produce a list of ElementSets corresponding to unique pixel values.
+
+        Materials are ordered by distance from filler
+        i.e. [filler, interphase, matrix]
+        """
         intph_img = intph_img.ravel()
         uniq = np.unique(intph_img)  # sorted!
         indices = np.arange(1, 1 + intph_img.size)
 
-        # noinspection PyArgumentList
         return [cls(matl_code, indices[intph_img == matl_code]) for matl_code in uniq]
 
     def to_inp(self, inp_file_obj):
-        mc = self.matl_code
-        inp_file_obj.write(f"*Elset, elset=SET-{mc:d}\n")
+        inp_file_obj.write(f"*Elset, elset=SET-{self.matl_code:d}\n")
         for element in self.elements:
             inp_file_obj.write(f"{element:d}\n")
-        inp_file_obj.write(
-            f"""\
-*Solid Section, elset=SET-{mc:d}, material=MAT-{mc:d}
-1.
-"""
-        )
+
+
+#################
+# Combo classes #
+#################
+
+# These represent the structure of several keywords that need to be
+# ordered or depend on each other's information somehow. They create a graph
+# of information for a complete conceptual component of the input file.
 
 
 @dataclass
@@ -188,9 +179,13 @@ class Material:
     youngs: float  # MPa, long term, low freq modulus
 
     def to_inp(self, inp_file_obj):
+        self.elset.to_inp(inp_file_obj)
+        mc = self.elset.matl_code
         inp_file_obj.write(
             f"""\
-*Material, name=MAT-{self.elset.matl_code:d}
+*Solid Section, elset=SET-{mc:d}, material=MAT-{mc:d}
+1.
+*Material, name=MAT-{mc:d}
 *Density
 {self.density:.6e}
 *Elastic
@@ -204,8 +199,8 @@ class ViscoelasticMaterial(Material):
     freq: np.ndarray  # excitation freq in Hz
     youngs_cplx: np.ndarray  # complex youngs modulus
     shift: float = 0.0  # frequency shift induced relative to nominal properties
-    left_broadening: float = 0.0
-    right_broadening: float = 0.0
+    left_broadening: float = 1.0  # 1 is no broadening
+    right_broadening: float = 1.0  # 1 is no broadening
 
     def apply_shift(self):
         """Apply shift and broadening factors to frequency.
@@ -258,29 +253,98 @@ class ViscoelasticMaterial(Material):
 
 
 @dataclass
+class PeriodicBoundaryConditions:
+    nodes: GridNodes
+
+    def to_inp(self, inp_file_obj):
+        row_ind, col_ind = np.indices(self.nodes.shape)
+
+        def node_inds(sl):
+            """Efficiently convert numpy slices of the index arrays into abaqus inds"""
+            return 1 + np.ravel_multi_index(
+                (row_ind[sl].ravel(), col_ind[sl].ravel()),
+                dims=self.nodes.shape,
+            )
+
+        # Displacement at any surface node is equal to the opposing surface node
+        inds_l = node_inds(sides["LeftSurface"])
+        inds_r = node_inds(sides["RightSurface"])
+        for ind_l, ind_r in zip(inds_l, inds_r):
+            node_l = NodeSet(f"LeftSurface{ind_l:d}", [ind_l])
+            node_r = NodeSet(f"RightSurface{ind_r:d}", [ind_r])
+            eq1 = EqualityEquation([node_l, node_r], 1)
+            eq2 = EqualityEquation([node_l, node_r], 2)
+            node_l.to_inp(inp_file_obj)
+            node_r.to_inp(inp_file_obj)
+            eq1.to_inp(inp_file_obj)
+            eq2.to_inp(inp_file_obj)
+
+        inds_b = node_inds(sides["BotmSurface"])
+        inds_t = node_inds(sides["TopSurface"])
+        for ind_b, ind_t in zip(inds_b, inds_t):
+            node_b = NodeSet(f"BotmSurface{ind_b:d}", [ind_b])
+            node_t = NodeSet(f"TopSurface{ind_t:d}", [ind_t])
+            eq1 = EqualityEquation([node_b, node_t], 1)
+            eq2 = EqualityEquation([node_b, node_t], 2)
+            node_b.to_inp(inp_file_obj)
+            node_t.to_inp(inp_file_obj)
+            eq1.to_inp(inp_file_obj)
+            eq2.to_inp(inp_file_obj)
+
+        # All corner nodes displacement should be identical as they
+        # represent the same conceptual point in periodic space (north pole?).
+        ind_bl = node_inds(corners["BotmLeft"])
+        ind_tl = node_inds(corners["TopLeft"])
+        ind_br = node_inds(corners["BotmRight"])
+        ind_tr = node_inds(corners["TopRight"])
+        node_bl = NodeSet("BotmLeft", ind_bl)
+        node_tl = NodeSet("TopLeft", ind_tl)
+        node_br = NodeSet("BotmRight", ind_br)
+        node_tr = NodeSet("TopRight", ind_tr)
+        node_bl.to_inp(inp_file_obj)
+        node_tl.to_inp(inp_file_obj)
+        node_br.to_inp(inp_file_obj)
+        node_tr.to_inp(inp_file_obj)
+
+        # We can only equate pairs of nodes in this sense so chain the eqns
+        for node_a, node_b in zip([node_bl, node_tl, node_br],
+                                  [node_tl, node_br, node_tr]):
+            EqualityEquation([node_b, node_a], 1).to_inp(inp_file_obj)
+            EqualityEquation([node_b, node_a], 2).to_inp(inp_file_obj)
+
+
+@dataclass
 class StepParameters:
     """Data for the ABAQUS STEP keyword"""
 
-    bnodes: BoundaryNodes
+    nodes: GridNodes
     f_initial: float = 1e-7  # min frequency
     f_final: float = 1e5  # max frequency
-    NoF: int = 30  # number of interval picked
-    Bias: int = 1  # bias parameter
-    displacement: float = 0.005  # displacement
+    f_count: int = 30  # number of interval picked
+    bias: int = 1  # bias parameter
+    displacement: float = 0.005
 
     def to_inp(self, inp_file_obj):
+        # select surface to drive
+        side = "RightSurface"
+        # and which way to push
+        dof = "1"
+        sl = sides[side]
+        row_ind, col_ind = np.indices(self.nodes.shape)
+        inds = 1 + np.ravel_multi_index(
+            (row_ind[sl].ravel(), col_ind[sl].ravel()),
+            dims=self.nodes.shape,
+        )
+        nset = NodeSet(side, inds)
+        nset.to_inp(inp_file_obj)
         inp_file_obj.write(
             f"""\
 *STEP,NAME=STEP-1,PERTURBATION
 *STEADY STATE DYNAMICS, DIRECT
-{self.f_initial}, {self.f_final}, {self.NoF}, {self.Bias}
-*BOUNDARY
+{self.f_initial}, {self.f_final}, {self.f_count}, {self.bias}
+*BOUNDARY, TYPE=DISPLACEMENT
 ** strain in x direction
-{self.bnodes.lr_nset}, 1, 1, {self.displacement}
-*BOUNDARY
-{self.bnodes.lr_nset}, 2, 2, 0
-*BOUNDARY
-{self.bnodes.tb_nset}, 1, 2, 0
+{side}, {dof}, {dof}, {self.displacement}
 *RESTART,WRITE,frequency=0
 *Output, field, variable=PRESELECT
 *Output, field
@@ -292,6 +356,40 @@ ALLAE, ALLCD, ALLEE, ALLFD, ALLJD, ALLKE, ALLPD, ALLSD, ALLSE, ALLVD, ALLWK, ETO
 *END STEP
 """
         )
+
+
+####################
+# Helper functions #
+####################
+
+# High level functions representing important transformations or steps.
+# Probably the most important part is the name and docstring, to explain
+# WHY a certain procedure is being taken/option being input.
+
+
+def write_abaqus_input(
+        heading: Heading,
+        nodes: GridNodes,
+        elements: CPE4RElements,
+        materials: List[Material],
+        bcs: PeriodicBoundaryConditions,
+        step_parm: StepParameters,
+        *,
+        path: Union[None, str, PathLike[str]] = None,
+        inp_file_obj: Optional[TextIO] = None
+):
+    if inp_file_obj is None:
+        with open(path, mode="w", encoding="ascii") as f:
+            return write_abaqus_input(heading, nodes, elements, materials, bcs,
+                                      step_parm, inp_file_obj=f)
+
+    heading.to_inp(inp_file_obj)
+    nodes.to_inp(inp_file_obj)
+    elements.to_inp(inp_file_obj)
+    for m in materials:
+        m.to_inp(inp_file_obj)
+    bcs.to_inp(inp_file_obj)
+    step_parm.to_inp(inp_file_obj)
 
 
 def load_matlab_microstructure(matfile, var_name):
@@ -319,7 +417,7 @@ def assign_intph(microstructure: np.ndarray, num_layers_list: List[int]) -> np.n
     :param num_layers_list: The list of interphase thickness in pixels. The order of
         the layer values is based on the sorted distances in num_layers_list from
         the particles (near particles -> far from particles)
-    :type num_layer_list: List(int)
+    :type num_layers_list: List(int)
     """
     from scipy.ndimage import distance_transform_edt
 
@@ -329,7 +427,9 @@ def assign_intph(microstructure: np.ndarray, num_layers_list: List[int]) -> np.n
         intph_img += dists > num_layers
     return intph_img
 
-def periodic_assign_intph(microstructure: np.ndarray, num_layers_list: List[int]) -> np.ndarray:
+
+def periodic_assign_intph(microstructure: np.ndarray,
+                          num_layers_list: List[int]) -> np.ndarray:
     """Generate interphase layers around the particles with periodic BC.
 
     Microstructure must have at least one zero value.
@@ -342,12 +442,31 @@ def periodic_assign_intph(microstructure: np.ndarray, num_layers_list: List[int]
     :param num_layers_list: The list of interphase thickness in pixels. The order of
         the layer values is based on the sorted distances in num_layers_list from
         the particles (near particles -> far from particles)
-    :type num_layer_list: List(int)
+    :type num_layers_list: List(int)
     """
-    tiled = np.tile(microstructure, (3,3))
-    dimx,dimy = microstructure.shape
+    tiled = np.tile(microstructure, (3, 3))
+    dimx, dimy = microstructure.shape
     intph_tiled = assign_intph(tiled, num_layers_list)
-    return intph_tiled[dimx:dimx+dimx,dimy:dimy+dimy].copy()  # free tiled's memory
+    # trim tiling
+    intph = intph_tiled[dimx:dimx + dimx, dimy:dimy + dimy]
+    # free intph's view on intph_tiled's memory
+    intph = intph.copy()
+    return intph
+
+
+def load_viscoelasticity(matrl_name):
+    """load VE data from a text file according to ABAQUS requirements
+
+    mainly the frequency array needs to be strictly increasing, but also having
+    the storage/loss data in complex numbers helps our calculations.
+    """
+    freq, youngs_real, youngs_imag = np.loadtxt(matrl_name, unpack=True)
+    youngs = np.empty_like(youngs_real, dtype=complex)
+    youngs.real = youngs_real
+    youngs.imag = youngs_imag
+    sortind = np.argsort(freq)
+    return freq[sortind], youngs[sortind]
+
 
 def run_job(job_name, cpus):
     """feed .inp file to ABAQUS and wait for the result"""
