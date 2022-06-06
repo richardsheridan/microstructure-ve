@@ -13,11 +13,19 @@ from microstructure_ve import (
     StepParameters,
     periodic_assign_intph,
     load_viscoelasticity,
-    write_abaqus_input,
+    write_abaqus_input, NodeSet,
 )
 
 scale = 0.0025
 layers = 5
+
+# "top" is image rather than matrix convention
+side_slice = {
+    "LeftSurface": np.s_[:, 0],
+    "RightSurface": np.s_[:, -1],
+    "BotmSurface": np.s_[0, :],
+    "TopSurface": np.s_[-1, :],
+}
 
 ms_img = np.load("ms.npy")
 intph_img = periodic_assign_intph(ms_img, [layers])
@@ -34,7 +42,16 @@ heading = Heading()
 nodes = GridNodes.from_intph_img(intph_img, scale)
 elements = CPE4RElements(nodes)
 
-bcs = PeriodicBoundaryConditions(nodes)
+make_set = lambda name: NodeSet.from_side_name(name, nodes)
+drive_nset = make_set("RightSurface")
+surfaces = [
+    [make_set("LeftSurface"), drive_nset],
+    [make_set("BotmSurface"), make_set("TopSurface")],
+    [make_set("TopLeft"), make_set("TopRight")],
+    [make_set("TopLeft"), make_set("BotmLeft")],
+    [make_set("TopRight"), make_set("BotmRight")],
+]
+bcs = PeriodicBoundaryConditions(surfaces, drive_nset=drive_nset, drive_dof=1)
 filler_elset, intph_elset, mat_elset = ElementSet.from_intph_image(intph_img)
 
 filler_material = Material(filler_elset, density=2.65e-15, youngs=5e5, poisson=0.15)
@@ -60,7 +77,7 @@ mat_material = ViscoelasticMaterial(
 )
 materials = [filler_material, intph_material, mat_material]
 
-step_parm = StepParameters(nodes)
+step_parm = StepParameters(drive_nset=drive_nset, drive_dof=1)
 
 write_abaqus_input(heading=heading, nodes=nodes, elements=elements, materials=materials,
                    bcs=bcs, step_parm=step_parm, path="example.inp")
