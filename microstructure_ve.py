@@ -45,17 +45,26 @@ class GridNodes:
         nodes_shape = np.array(intph_img.shape) + 1
         return cls(nodes_shape, scale)
 
+    def __post_init__(self):
+        self.node_nums = range(1, 1 + np.prod(self.shape))  # 1-indexing for ABAQUS
+        self.virtual_node = self.node_nums[-1]+1
+
     def to_inp(self, inp_file_obj):
         y_pos, x_pos = self.scale * np.indices(self.shape)
-        node_nums = range(1, 1 + x_pos.size)  # 1-indexing for ABAQUS
         inp_file_obj.write("*Node\n")
-        for node_num, x, y in zip(node_nums, x_pos.ravel(), y_pos.ravel()):
+        for node_num, x, y in zip(self.node_nums, x_pos.ravel(), y_pos.ravel()):
             inp_file_obj.write(f"{node_num:d},\t{x:.6e},\t{y:.6e}\n")
+        # noinspection PyUnboundLocalVariable
+        # quirk: we abuse the loop variables to put another "virtual" node at the corner
+        inp_file_obj.write(f"{node_num+1:d},\t{x:.6e},\t{y:.6e}\n")
 
 
 @dataclass
 class CPE4RElements:
     nodes: GridNodes
+
+    def __post_init__(self):
+        self.element_nums = range(1, 1 + np.prod(self.nodes.shape - 1))
 
     def to_inp(self, inp_file_obj):
         # strategy: generate one array representing all nodes, then make slices of it
@@ -68,10 +77,9 @@ class CPE4RElements:
         key_nodes = all_nodes[:-1, :-1].ravel()
         top_nodes = all_nodes[1:, :-1].ravel()
         topright_nodes = all_nodes[1:, 1:].ravel()
-        element_nums = range(1, 1 + key_nodes.size)
         inp_file_obj.write("*Element, type=CPE4R\n")
         for elem_num, tn, kn, rn, trn in zip(
-                element_nums, top_nodes, key_nodes, right_nodes, topright_nodes
+                self.element_nums, top_nodes, key_nodes, right_nodes, topright_nodes
         ):
             inp_file_obj.write(
                 f"{elem_num:d},\t{tn:d},\t{kn:d},\t{rn:d},\t{trn:d},\t\n"
@@ -91,7 +99,7 @@ sides = {
 }
 
 
-@dataclass
+@dataclass(eq=False)
 class NodeSet:
     name: str
     node_inds: Union[np.ndarray, List[int]]
@@ -106,6 +114,9 @@ class NodeSet:
         )
         return cls(name, node_inds)
 
+    def __str__(self):
+        return self.name
+
     def to_inp(self, inp_file_obj):
         inp_file_obj.write(f"*Nset, nset={self.name}\n")
         for i in self.node_inds:
@@ -114,7 +125,7 @@ class NodeSet:
 
 @dataclass
 class EqualityEquation:
-    nsets: Sequence[NodeSet]
+    nsets: Sequence[Union[NodeSet, int]]
     dof: int
 
     def to_inp(self, inp_file_obj):
@@ -122,24 +133,24 @@ class EqualityEquation:
             f"""\
 *Equation
 2
-{self.nsets[0].name:s}, {self.dof:d}, 1.
-{self.nsets[1].name:s}, {self.dof:d}, -1.
+{self.nsets[0]}, {self.dof}, 1.
+{self.nsets[1]}, {self.dof}, -1.
 """
         )
 
 
 @dataclass
-class BoundaryEquation(EqualityEquation):
-    boundary_name: str
+class DriveEquation(EqualityEquation):
+    drive_node: Union[NodeSet, int]
 
     def to_inp(self, inp_file_obj):
         inp_file_obj.write(
             f"""\
 *Equation
 3
-{self.nsets[0].name:s}, {self.dof:d}, 1.
-{self.nsets[1].name:s}, {self.dof:d}, -1.
-{self.boundary_name:s}, {self.dof:d}, 1.
+{self.nsets[0]}, {self.dof}, 1.
+{self.nsets[1]}, {self.dof}, -1.
+{self.drive_node}, {self.dof}, 1.
 """
         )
 
@@ -175,6 +186,23 @@ class ElementSet:
 # These represent the structure of several keywords that need to be
 # ordered or depend on each other's information somehow. They create a graph
 # of information for a complete conceptual component of the input file.
+
+
+@dataclass
+class DisplacementBoundaryNode:
+    virtual_node: GridNodes
+    first_dof: int
+    last_dof: int
+    displacement: Optional[float] = None
+
+    def to_inp(self, inp_file_obj):
+        disp = self.displacement if self.displacement is not None else ""
+        inp_file_obj.write(
+            f"""\
+*BOUNDARY, TYPE=DISPLACEMENT
+{self.virtual_node}, {self.first_dof}, {self.last_dof}, {disp}
+"""
+        )
 
 
 @dataclass
@@ -260,39 +288,32 @@ class ViscoelasticMaterial(Material):
 
 @dataclass
 class PeriodicBoundaryConditions:
-    nset_pairs: List[List[NodeSet]]
-    drive_nset: NodeSet
-    drive_dof: int
+    node_pairs: List[List[NodeSet]]
+    driving_nset: NodeSet
+    disp_bnd_node: DisplacementBoundaryNode
 
     def to_inp(self, inp_file_obj):
-        self.drive_nset.to_inp(inp_file_obj)
-        for set_a, set_b in self.nset_pairs:
+        self.driving_nset.to_inp(inp_file_obj)
+        for set_a, set_b in self.node_pairs:
             eq_type = [EqualityEquation, EqualityEquation]
-            if self.drive_nset is set_a or self.drive_nset is set_b:
-                eq_type[self.drive_dof-1] = partial(
-                    BoundaryEquation, boundary_name=self.drive_nset.name
+            if self.driving_nset is set_a or self.driving_nset is set_b:
+                eq_type[self.disp_bnd_node.first_dof - 1] = partial(
+                    DriveEquation, drive_node=self.disp_bnd_node.virtual_node
                 )
             for ind_a, ind_b in zip(set_a.node_inds, set_b.node_inds):
                 # Displacement at any surface node is equal to the opposing surface node
-                node_a = NodeSet(f"{set_a.name}{ind_a:d}", [ind_a])
-                node_b = NodeSet(f"{set_b.name}{ind_b:d}", [ind_b])
-                node_a.to_inp(inp_file_obj)
-                node_b.to_inp(inp_file_obj)
-                eq_type[0]([node_a, node_b], 1).to_inp(inp_file_obj)
-                eq_type[1]([node_a, node_b], 2).to_inp(inp_file_obj)
+                eq_type[0]([ind_a, ind_b], 1).to_inp(inp_file_obj)
+                eq_type[1]([ind_a, ind_b], 2).to_inp(inp_file_obj)
 
 
 @dataclass
 class StepParameters:
     """Data for the ABAQUS STEP keyword"""
-
-    drive_nset: NodeSet
-    drive_dof: int
-    drive_disp: float = 0.005
-    f_initial: float = 1e-7  # min frequency
-    f_final: float = 1e5  # max frequency
-    f_count: int = 30  # number of interval picked
-    bias: int = 1  # bias parameter
+    disp_bnd_nodes: List[DisplacementBoundaryNode]
+    f_initial: float
+    f_final: float
+    f_count: int
+    bias: int
 
     def to_inp(self, inp_file_obj):
         inp_file_obj.write(
@@ -300,8 +321,12 @@ class StepParameters:
 *STEP,NAME=STEP-1,PERTURBATION
 *STEADY STATE DYNAMICS, DIRECT
 {self.f_initial}, {self.f_final}, {self.f_count}, {self.bias}
-*BOUNDARY, TYPE=DISPLACEMENT
-{self.drive_nset.name}, {self.drive_dof}, {self.drive_dof}, {self.drive_disp}
+"""
+        )
+        for n in self.disp_bnd_nodes:
+            n.to_inp(inp_file_obj)
+        inp_file_obj.write(
+            f"""\
 *RESTART,WRITE,frequency=0
 *Output, field, variable=PRESELECT
 *Output, field
@@ -347,6 +372,15 @@ def write_abaqus_input(
         m.to_inp(inp_file_obj)
     bcs.to_inp(inp_file_obj)
     step_parm.to_inp(inp_file_obj)
+
+
+def in_sorted(arr, val):
+    """Determine if val is contained in arr, assuming arr is sorted"""
+    index = np.searchsorted(arr, val)
+    if index < len(arr):
+        return val == arr[index]
+    else:
+        return False
 
 
 def load_matlab_microstructure(matfile, var_name):
