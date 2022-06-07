@@ -190,7 +190,7 @@ class ElementSet:
 
 @dataclass
 class DisplacementBoundaryNode:
-    virtual_node: GridNodes
+    drive_node: Union[NodeSet, int]
     first_dof: int
     last_dof: int
     displacement: Optional[float] = None
@@ -199,8 +199,10 @@ class DisplacementBoundaryNode:
         disp = self.displacement if self.displacement is not None else ""
         inp_file_obj.write(
             f"""\
-*BOUNDARY, TYPE=DISPLACEMENT
-{self.virtual_node}, {self.first_dof}, {self.last_dof}, {disp}
+*Nset, nset=drive
+{self.drive_node}
+*Boundary, type=displacement
+{self.drive_node}, {self.first_dof}, {self.last_dof}, {disp}
 """
         )
 
@@ -298,7 +300,7 @@ class PeriodicBoundaryConditions:
             eq_type = [EqualityEquation, EqualityEquation]
             if self.driving_nset is set_a or self.driving_nset is set_b:
                 eq_type[self.disp_bnd_node.first_dof - 1] = partial(
-                    DriveEquation, drive_node=self.disp_bnd_node.virtual_node
+                    DriveEquation, drive_node=self.disp_bnd_node.drive_node
                 )
             for ind_a, ind_b in zip(set_a.node_inds, set_b.node_inds):
                 # Displacement at any surface node is equal to the opposing surface node
