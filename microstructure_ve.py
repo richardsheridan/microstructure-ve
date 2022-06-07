@@ -204,8 +204,8 @@ class ViscoelasticMaterial(Material):
     freq: np.ndarray  # excitation freq in Hz
     youngs_cplx: np.ndarray  # complex youngs modulus
     shift: float = 0.0  # frequency shift induced relative to nominal properties
-    left_broadening: float = 0.0
-    right_broadening: float = 0.0
+    left_broadening: float = 1.0
+    right_broadening: float = 1.0
 
     def apply_shift(self):
         """Apply shift and broadening factors to frequency.
