@@ -88,8 +88,8 @@ class CPE4RElements:
 
 # "top" is image rather than matrix convention
 sides = {
-    "LeftSurface": np.s_[1:-1, 0],
-    "RightSurface": np.s_[1:-1, -1],
+    "LeftSurface": np.s_[:, 0],
+    "RightSurface": np.s_[:, -1],
     "BotmSurface": np.s_[0, 1:-1],
     "TopSurface": np.s_[-1, 1:-1],
     "BotmLeft": np.s_[0, 0],
@@ -295,17 +295,17 @@ class PeriodicBoundaryConditions:
     disp_bnd_node: DisplacementBoundaryNode
 
     def to_inp(self, inp_file_obj):
-        self.driving_nset.to_inp(inp_file_obj)
-        for set_a, set_b in self.node_pairs:
+        for node_pair in self.node_pairs:
+            node_pair[0].to_inp(inp_file_obj)
+            node_pair[1].to_inp(inp_file_obj)
             eq_type = [EqualityEquation, EqualityEquation]
-            if self.driving_nset is set_a or self.driving_nset is set_b:
+            if self.driving_nset in node_pair:
                 eq_type[self.disp_bnd_node.first_dof - 1] = partial(
                     DriveEquation, drive_node=self.disp_bnd_node.drive_node
                 )
-            for ind_a, ind_b in zip(set_a.node_inds, set_b.node_inds):
-                # Displacement at any surface node is equal to the opposing surface node
-                eq_type[0]([ind_a, ind_b], 1).to_inp(inp_file_obj)
-                eq_type[1]([ind_a, ind_b], 2).to_inp(inp_file_obj)
+            # Displacement at any surface node is equal to the opposing surface node
+            eq_type[0]([node_pair[0].name, node_pair[1].name], 1).to_inp(inp_file_obj)
+            eq_type[1]([node_pair[0].name, node_pair[1].name], 2).to_inp(inp_file_obj)
 
 
 @dataclass

@@ -20,14 +20,6 @@ scale = 0.0025
 displacement = .005
 layers = 5
 
-# "top" is image rather than matrix convention
-side_slice = {
-    "LeftSurface": np.s_[:, 0],
-    "RightSurface": np.s_[:, -1],
-    "BotmSurface": np.s_[0, :],
-    "TopSurface": np.s_[-1, :],
-}
-
 ms_img = np.load("ms.npy")
 intph_img = periodic_assign_intph(ms_img, [layers])
 
@@ -48,9 +40,6 @@ driving_nset = make_set("RightSurface")
 surfaces = [
     [make_set("LeftSurface"), driving_nset],
     [make_set("BotmSurface"), make_set("TopSurface")],
-    [make_set("TopLeft"), make_set("TopRight")],
-    [make_set("BotmLeft"), make_set("TopLeft")],
-    [make_set("BotmRight"), make_set("BotmLeft")],
 ]
 disp_bnd_node = DisplacementBoundaryNode(
     nodes.virtual_node,
