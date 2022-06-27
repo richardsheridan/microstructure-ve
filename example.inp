@@ -1,4 +1,5 @@
 *Heading
+Example RVE simulation
 *Node
 1,	0.000000e+00,	0.000000e+00
 2,	2.500000e-03,	0.000000e+00
@@ -2601,12 +2602,7 @@
 2599,	1.200000e-01,	1.250000e-01
 2600,	1.225000e-01,	1.250000e-01
 2601,	1.250000e-01,	1.250000e-01
-10000000, 1.0, 0.0
-10000001, 0.0, 1.0
-*Nset, nset=SET-LR
-10000000
-*Nset, nset=SET-TB
-10000001
+2602,	1.250000e-01,	1.250000e-01
 *Element, type=CPE4R
 1,	52,	1,	2,	53,	
 2,	53,	2,	3,	54,	
@@ -5108,1267 +5104,6 @@
 2498,	2598,	2547,	2548,	2599,	
 2499,	2599,	2548,	2549,	2600,	
 2500,	2600,	2549,	2550,	2601,	
-*Nset, nset=LeftSurface1
-1
-*Nset, nset=LeftSurface52
-52
-*Nset, nset=LeftSurface103
-103
-*Nset, nset=LeftSurface154
-154
-*Nset, nset=LeftSurface205
-205
-*Nset, nset=LeftSurface256
-256
-*Nset, nset=LeftSurface307
-307
-*Nset, nset=LeftSurface358
-358
-*Nset, nset=LeftSurface409
-409
-*Nset, nset=LeftSurface460
-460
-*Nset, nset=LeftSurface511
-511
-*Nset, nset=LeftSurface562
-562
-*Nset, nset=LeftSurface613
-613
-*Nset, nset=LeftSurface664
-664
-*Nset, nset=LeftSurface715
-715
-*Nset, nset=LeftSurface766
-766
-*Nset, nset=LeftSurface817
-817
-*Nset, nset=LeftSurface868
-868
-*Nset, nset=LeftSurface919
-919
-*Nset, nset=LeftSurface970
-970
-*Nset, nset=LeftSurface1021
-1021
-*Nset, nset=LeftSurface1072
-1072
-*Nset, nset=LeftSurface1123
-1123
-*Nset, nset=LeftSurface1174
-1174
-*Nset, nset=LeftSurface1225
-1225
-*Nset, nset=LeftSurface1276
-1276
-*Nset, nset=LeftSurface1327
-1327
-*Nset, nset=LeftSurface1378
-1378
-*Nset, nset=LeftSurface1429
-1429
-*Nset, nset=LeftSurface1480
-1480
-*Nset, nset=LeftSurface1531
-1531
-*Nset, nset=LeftSurface1582
-1582
-*Nset, nset=LeftSurface1633
-1633
-*Nset, nset=LeftSurface1684
-1684
-*Nset, nset=LeftSurface1735
-1735
-*Nset, nset=LeftSurface1786
-1786
-*Nset, nset=LeftSurface1837
-1837
-*Nset, nset=LeftSurface1888
-1888
-*Nset, nset=LeftSurface1939
-1939
-*Nset, nset=LeftSurface1990
-1990
-*Nset, nset=LeftSurface2041
-2041
-*Nset, nset=LeftSurface2092
-2092
-*Nset, nset=LeftSurface2143
-2143
-*Nset, nset=LeftSurface2194
-2194
-*Nset, nset=LeftSurface2245
-2245
-*Nset, nset=LeftSurface2296
-2296
-*Nset, nset=LeftSurface2347
-2347
-*Nset, nset=LeftSurface2398
-2398
-*Nset, nset=LeftSurface2449
-2449
-*Nset, nset=LeftSurface2500
-2500
-*Nset, nset=LeftSurface2551
-2551
-*Nset, nset=RightSurface51
-51
-*Nset, nset=RightSurface102
-102
-*Nset, nset=RightSurface153
-153
-*Nset, nset=RightSurface204
-204
-*Nset, nset=RightSurface255
-255
-*Nset, nset=RightSurface306
-306
-*Nset, nset=RightSurface357
-357
-*Nset, nset=RightSurface408
-408
-*Nset, nset=RightSurface459
-459
-*Nset, nset=RightSurface510
-510
-*Nset, nset=RightSurface561
-561
-*Nset, nset=RightSurface612
-612
-*Nset, nset=RightSurface663
-663
-*Nset, nset=RightSurface714
-714
-*Nset, nset=RightSurface765
-765
-*Nset, nset=RightSurface816
-816
-*Nset, nset=RightSurface867
-867
-*Nset, nset=RightSurface918
-918
-*Nset, nset=RightSurface969
-969
-*Nset, nset=RightSurface1020
-1020
-*Nset, nset=RightSurface1071
-1071
-*Nset, nset=RightSurface1122
-1122
-*Nset, nset=RightSurface1173
-1173
-*Nset, nset=RightSurface1224
-1224
-*Nset, nset=RightSurface1275
-1275
-*Nset, nset=RightSurface1326
-1326
-*Nset, nset=RightSurface1377
-1377
-*Nset, nset=RightSurface1428
-1428
-*Nset, nset=RightSurface1479
-1479
-*Nset, nset=RightSurface1530
-1530
-*Nset, nset=RightSurface1581
-1581
-*Nset, nset=RightSurface1632
-1632
-*Nset, nset=RightSurface1683
-1683
-*Nset, nset=RightSurface1734
-1734
-*Nset, nset=RightSurface1785
-1785
-*Nset, nset=RightSurface1836
-1836
-*Nset, nset=RightSurface1887
-1887
-*Nset, nset=RightSurface1938
-1938
-*Nset, nset=RightSurface1989
-1989
-*Nset, nset=RightSurface2040
-2040
-*Nset, nset=RightSurface2091
-2091
-*Nset, nset=RightSurface2142
-2142
-*Nset, nset=RightSurface2193
-2193
-*Nset, nset=RightSurface2244
-2244
-*Nset, nset=RightSurface2295
-2295
-*Nset, nset=RightSurface2346
-2346
-*Nset, nset=RightSurface2397
-2397
-*Nset, nset=RightSurface2448
-2448
-*Nset, nset=RightSurface2499
-2499
-*Nset, nset=RightSurface2550
-2550
-*Nset, nset=RightSurface2601
-2601
-*Nset, nset=BotmLeft1
-1
-*Nset, nset=TopLeft2551
-2551
-*Nset, nset=BotmRight51
-51
-*Nset, nset=TopRight2601
-2601
-*Nset, nset=BotmSurface2
-2
-*Nset, nset=BotmSurface3
-3
-*Nset, nset=BotmSurface4
-4
-*Nset, nset=BotmSurface5
-5
-*Nset, nset=BotmSurface6
-6
-*Nset, nset=BotmSurface7
-7
-*Nset, nset=BotmSurface8
-8
-*Nset, nset=BotmSurface9
-9
-*Nset, nset=BotmSurface10
-10
-*Nset, nset=BotmSurface11
-11
-*Nset, nset=BotmSurface12
-12
-*Nset, nset=BotmSurface13
-13
-*Nset, nset=BotmSurface14
-14
-*Nset, nset=BotmSurface15
-15
-*Nset, nset=BotmSurface16
-16
-*Nset, nset=BotmSurface17
-17
-*Nset, nset=BotmSurface18
-18
-*Nset, nset=BotmSurface19
-19
-*Nset, nset=BotmSurface20
-20
-*Nset, nset=BotmSurface21
-21
-*Nset, nset=BotmSurface22
-22
-*Nset, nset=BotmSurface23
-23
-*Nset, nset=BotmSurface24
-24
-*Nset, nset=BotmSurface25
-25
-*Nset, nset=BotmSurface26
-26
-*Nset, nset=BotmSurface27
-27
-*Nset, nset=BotmSurface28
-28
-*Nset, nset=BotmSurface29
-29
-*Nset, nset=BotmSurface30
-30
-*Nset, nset=BotmSurface31
-31
-*Nset, nset=BotmSurface32
-32
-*Nset, nset=BotmSurface33
-33
-*Nset, nset=BotmSurface34
-34
-*Nset, nset=BotmSurface35
-35
-*Nset, nset=BotmSurface36
-36
-*Nset, nset=BotmSurface37
-37
-*Nset, nset=BotmSurface38
-38
-*Nset, nset=BotmSurface39
-39
-*Nset, nset=BotmSurface40
-40
-*Nset, nset=BotmSurface41
-41
-*Nset, nset=BotmSurface42
-42
-*Nset, nset=BotmSurface43
-43
-*Nset, nset=BotmSurface44
-44
-*Nset, nset=BotmSurface45
-45
-*Nset, nset=BotmSurface46
-46
-*Nset, nset=BotmSurface47
-47
-*Nset, nset=BotmSurface48
-48
-*Nset, nset=BotmSurface49
-49
-*Nset, nset=BotmSurface50
-50
-*Nset, nset=BotmSurface
-2
-3
-4
-5
-6
-7
-8
-9
-10
-11
-12
-13
-14
-15
-16
-17
-18
-19
-20
-21
-22
-23
-24
-25
-26
-27
-28
-29
-30
-31
-32
-33
-34
-35
-36
-37
-38
-39
-40
-41
-42
-43
-44
-45
-46
-47
-48
-49
-50
-*Nset, nset=TopSurface2552
-2552
-*Nset, nset=TopSurface2553
-2553
-*Nset, nset=TopSurface2554
-2554
-*Nset, nset=TopSurface2555
-2555
-*Nset, nset=TopSurface2556
-2556
-*Nset, nset=TopSurface2557
-2557
-*Nset, nset=TopSurface2558
-2558
-*Nset, nset=TopSurface2559
-2559
-*Nset, nset=TopSurface2560
-2560
-*Nset, nset=TopSurface2561
-2561
-*Nset, nset=TopSurface2562
-2562
-*Nset, nset=TopSurface2563
-2563
-*Nset, nset=TopSurface2564
-2564
-*Nset, nset=TopSurface2565
-2565
-*Nset, nset=TopSurface2566
-2566
-*Nset, nset=TopSurface2567
-2567
-*Nset, nset=TopSurface2568
-2568
-*Nset, nset=TopSurface2569
-2569
-*Nset, nset=TopSurface2570
-2570
-*Nset, nset=TopSurface2571
-2571
-*Nset, nset=TopSurface2572
-2572
-*Nset, nset=TopSurface2573
-2573
-*Nset, nset=TopSurface2574
-2574
-*Nset, nset=TopSurface2575
-2575
-*Nset, nset=TopSurface2576
-2576
-*Nset, nset=TopSurface2577
-2577
-*Nset, nset=TopSurface2578
-2578
-*Nset, nset=TopSurface2579
-2579
-*Nset, nset=TopSurface2580
-2580
-*Nset, nset=TopSurface2581
-2581
-*Nset, nset=TopSurface2582
-2582
-*Nset, nset=TopSurface2583
-2583
-*Nset, nset=TopSurface2584
-2584
-*Nset, nset=TopSurface2585
-2585
-*Nset, nset=TopSurface2586
-2586
-*Nset, nset=TopSurface2587
-2587
-*Nset, nset=TopSurface2588
-2588
-*Nset, nset=TopSurface2589
-2589
-*Nset, nset=TopSurface2590
-2590
-*Nset, nset=TopSurface2591
-2591
-*Nset, nset=TopSurface2592
-2592
-*Nset, nset=TopSurface2593
-2593
-*Nset, nset=TopSurface2594
-2594
-*Nset, nset=TopSurface2595
-2595
-*Nset, nset=TopSurface2596
-2596
-*Nset, nset=TopSurface2597
-2597
-*Nset, nset=TopSurface2598
-2598
-*Nset, nset=TopSurface2599
-2599
-*Nset, nset=TopSurface2600
-2600
-*Nset, nset=TopSurface
-2552
-2553
-2554
-2555
-2556
-2557
-2558
-2559
-2560
-2561
-2562
-2563
-2564
-2565
-2566
-2567
-2568
-2569
-2570
-2571
-2572
-2573
-2574
-2575
-2576
-2577
-2578
-2579
-2580
-2581
-2582
-2583
-2584
-2585
-2586
-2587
-2588
-2589
-2590
-2591
-2592
-2593
-2594
-2595
-2596
-2597
-2598
-2599
-2600
-*Equation
-3
-LeftSurface1, 1, 1.
-RightSurface51, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface52, 1, 1.
-RightSurface102, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface103, 1, 1.
-RightSurface153, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface154, 1, 1.
-RightSurface204, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface205, 1, 1.
-RightSurface255, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface256, 1, 1.
-RightSurface306, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface307, 1, 1.
-RightSurface357, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface358, 1, 1.
-RightSurface408, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface409, 1, 1.
-RightSurface459, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface460, 1, 1.
-RightSurface510, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface511, 1, 1.
-RightSurface561, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface562, 1, 1.
-RightSurface612, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface613, 1, 1.
-RightSurface663, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface664, 1, 1.
-RightSurface714, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface715, 1, 1.
-RightSurface765, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface766, 1, 1.
-RightSurface816, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface817, 1, 1.
-RightSurface867, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface868, 1, 1.
-RightSurface918, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface919, 1, 1.
-RightSurface969, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface970, 1, 1.
-RightSurface1020, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1021, 1, 1.
-RightSurface1071, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1072, 1, 1.
-RightSurface1122, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1123, 1, 1.
-RightSurface1173, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1174, 1, 1.
-RightSurface1224, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1225, 1, 1.
-RightSurface1275, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1276, 1, 1.
-RightSurface1326, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1327, 1, 1.
-RightSurface1377, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1378, 1, 1.
-RightSurface1428, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1429, 1, 1.
-RightSurface1479, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1480, 1, 1.
-RightSurface1530, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1531, 1, 1.
-RightSurface1581, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1582, 1, 1.
-RightSurface1632, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1633, 1, 1.
-RightSurface1683, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1684, 1, 1.
-RightSurface1734, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1735, 1, 1.
-RightSurface1785, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1786, 1, 1.
-RightSurface1836, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1837, 1, 1.
-RightSurface1887, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1888, 1, 1.
-RightSurface1938, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1939, 1, 1.
-RightSurface1989, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface1990, 1, 1.
-RightSurface2040, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface2041, 1, 1.
-RightSurface2091, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface2092, 1, 1.
-RightSurface2142, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface2143, 1, 1.
-RightSurface2193, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface2194, 1, 1.
-RightSurface2244, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface2245, 1, 1.
-RightSurface2295, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface2296, 1, 1.
-RightSurface2346, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface2347, 1, 1.
-RightSurface2397, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface2398, 1, 1.
-RightSurface2448, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface2449, 1, 1.
-RightSurface2499, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface2500, 1, 1.
-RightSurface2550, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface2551, 1, 1.
-RightSurface2601, 1, -1.
-SET-LR, 1, 1.
-*Equation
-3
-LeftSurface52, 2, 1.
-RightSurface102, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface103, 2, 1.
-RightSurface153, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface154, 2, 1.
-RightSurface204, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface205, 2, 1.
-RightSurface255, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface256, 2, 1.
-RightSurface306, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface307, 2, 1.
-RightSurface357, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface358, 2, 1.
-RightSurface408, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface409, 2, 1.
-RightSurface459, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface460, 2, 1.
-RightSurface510, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface511, 2, 1.
-RightSurface561, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface562, 2, 1.
-RightSurface612, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface613, 2, 1.
-RightSurface663, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface664, 2, 1.
-RightSurface714, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface715, 2, 1.
-RightSurface765, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface766, 2, 1.
-RightSurface816, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface817, 2, 1.
-RightSurface867, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface868, 2, 1.
-RightSurface918, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface919, 2, 1.
-RightSurface969, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface970, 2, 1.
-RightSurface1020, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1021, 2, 1.
-RightSurface1071, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1072, 2, 1.
-RightSurface1122, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1123, 2, 1.
-RightSurface1173, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1174, 2, 1.
-RightSurface1224, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1225, 2, 1.
-RightSurface1275, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1276, 2, 1.
-RightSurface1326, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1327, 2, 1.
-RightSurface1377, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1378, 2, 1.
-RightSurface1428, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1429, 2, 1.
-RightSurface1479, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1480, 2, 1.
-RightSurface1530, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1531, 2, 1.
-RightSurface1581, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1582, 2, 1.
-RightSurface1632, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1633, 2, 1.
-RightSurface1683, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1684, 2, 1.
-RightSurface1734, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1735, 2, 1.
-RightSurface1785, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1786, 2, 1.
-RightSurface1836, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1837, 2, 1.
-RightSurface1887, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1888, 2, 1.
-RightSurface1938, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1939, 2, 1.
-RightSurface1989, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface1990, 2, 1.
-RightSurface2040, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface2041, 2, 1.
-RightSurface2091, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface2092, 2, 1.
-RightSurface2142, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface2143, 2, 1.
-RightSurface2193, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface2194, 2, 1.
-RightSurface2244, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface2245, 2, 1.
-RightSurface2295, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface2296, 2, 1.
-RightSurface2346, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface2347, 2, 1.
-RightSurface2397, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface2398, 2, 1.
-RightSurface2448, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface2449, 2, 1.
-RightSurface2499, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-LeftSurface2500, 2, 1.
-RightSurface2550, 2, -1.
-SET-LR, 2, 1.
-*Equation
-3
-BotmSurface2, 1, 1.
-TopSurface2552, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface3, 1, 1.
-TopSurface2553, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface4, 1, 1.
-TopSurface2554, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface5, 1, 1.
-TopSurface2555, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface6, 1, 1.
-TopSurface2556, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface7, 1, 1.
-TopSurface2557, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface8, 1, 1.
-TopSurface2558, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface9, 1, 1.
-TopSurface2559, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface10, 1, 1.
-TopSurface2560, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface11, 1, 1.
-TopSurface2561, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface12, 1, 1.
-TopSurface2562, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface13, 1, 1.
-TopSurface2563, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface14, 1, 1.
-TopSurface2564, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface15, 1, 1.
-TopSurface2565, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface16, 1, 1.
-TopSurface2566, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface17, 1, 1.
-TopSurface2567, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface18, 1, 1.
-TopSurface2568, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface19, 1, 1.
-TopSurface2569, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface20, 1, 1.
-TopSurface2570, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface21, 1, 1.
-TopSurface2571, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface22, 1, 1.
-TopSurface2572, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface23, 1, 1.
-TopSurface2573, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface24, 1, 1.
-TopSurface2574, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface25, 1, 1.
-TopSurface2575, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface26, 1, 1.
-TopSurface2576, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface27, 1, 1.
-TopSurface2577, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface28, 1, 1.
-TopSurface2578, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface29, 1, 1.
-TopSurface2579, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface30, 1, 1.
-TopSurface2580, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface31, 1, 1.
-TopSurface2581, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface32, 1, 1.
-TopSurface2582, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface33, 1, 1.
-TopSurface2583, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface34, 1, 1.
-TopSurface2584, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface35, 1, 1.
-TopSurface2585, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface36, 1, 1.
-TopSurface2586, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface37, 1, 1.
-TopSurface2587, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface38, 1, 1.
-TopSurface2588, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface39, 1, 1.
-TopSurface2589, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface40, 1, 1.
-TopSurface2590, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface41, 1, 1.
-TopSurface2591, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface42, 1, 1.
-TopSurface2592, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface43, 1, 1.
-TopSurface2593, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface44, 1, 1.
-TopSurface2594, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface45, 1, 1.
-TopSurface2595, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface46, 1, 1.
-TopSurface2596, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface47, 1, 1.
-TopSurface2597, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface48, 1, 1.
-TopSurface2598, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface49, 1, 1.
-TopSurface2599, 1, -1.
-SET-TB, 1, 1.
-*Equation
-3
-BotmSurface50, 1, 1.
-TopSurface2600, 1, -1.
-SET-TB, 1, 1.
-*Equation
-2
-BotmSurface, 2, 1.
-BotmLeft1, 2, -1.
-*Equation
-2
-TopSurface, 2, 1.
-TopLeft2551, 2, -1.
 *Elset, elset=SET-0
 6
 55
@@ -6776,6 +5511,11 @@ TopLeft2551, 2, -1.
 2485
 *Solid Section, elset=SET-0, material=MAT-0
 1.
+*Material, name=MAT-0
+*Density
+2.650000e-15
+*Elastic
+5.000000e+05, 1.500000e-01
 *Elset, elset=SET-1
 1
 2
@@ -6792,6 +5532,8 @@ TopLeft2551, 2, -1.
 14
 15
 16
+17
+18
 19
 20
 21
@@ -6807,6 +5549,14 @@ TopLeft2551, 2, -1.
 31
 32
 33
+34
+35
+36
+37
+38
+39
+40
+41
 42
 43
 44
@@ -6847,6 +5597,12 @@ TopLeft2551, 2, -1.
 82
 83
 84
+85
+86
+87
+88
+89
+90
 92
 93
 94
@@ -6888,6 +5644,10 @@ TopLeft2551, 2, -1.
 133
 134
 135
+136
+137
+138
+139
 141
 142
 143
@@ -6927,6 +5687,7 @@ TopLeft2551, 2, -1.
 185
 186
 187
+188
 192
 193
 194
@@ -7352,6 +6113,7 @@ TopLeft2551, 2, -1.
 697
 698
 700
+701
 702
 703
 704
@@ -8652,6 +7414,7 @@ TopLeft2551, 2, -1.
 2303
 2304
 2305
+2306
 2307
 2308
 2309
@@ -8694,6 +7457,8 @@ TopLeft2551, 2, -1.
 2353
 2354
 2355
+2356
+2357
 2358
 2359
 2360
@@ -8736,7 +7501,14 @@ TopLeft2551, 2, -1.
 2402
 2403
 2404
+2405
+2406
+2407
+2408
+2409
+2410
 2411
+2412
 2414
 2415
 2416
@@ -8766,6 +7538,20 @@ TopLeft2551, 2, -1.
 2449
 2450
 2451
+2452
+2453
+2454
+2455
+2456
+2457
+2458
+2459
+2460
+2461
+2462
+2463
+2464
+2465
 2466
 2467
 2468
@@ -8800,89 +7586,6 @@ TopLeft2551, 2, -1.
 2500
 *Solid Section, elset=SET-1, material=MAT-1
 1.
-*Elset, elset=SET-2
-17
-18
-34
-35
-36
-37
-38
-39
-40
-41
-85
-86
-87
-88
-89
-90
-91
-136
-137
-138
-139
-140
-188
-189
-190
-191
-239
-240
-241
-290
-291
-341
-342
-560
-609
-610
-611
-660
-661
-662
-701
-711
-712
-1856
-1869
-1870
-1988
-1989
-1991
-1992
-2306
-2356
-2357
-2405
-2406
-2407
-2408
-2409
-2410
-2412
-2413
-2452
-2453
-2454
-2455
-2456
-2457
-2458
-2459
-2460
-2461
-2462
-2463
-2464
-2465
-*Solid Section, elset=SET-2, material=MAT-2
-1.
-*Material, name=MAT-0
-*Density
-2.650000e-15
-*Elastic
-5.000000e+05, 1.500000e-01
 *Material, name=MAT-1
 *Density
 1.180000e-15
@@ -10010,6 +8713,38 @@ TopLeft2551, 2, -1.
 1.735135e+02, -1.944946e+03, 1.735135e+02, -1.944946e+03, 1.504756e+23
 1.708108e+02, -1.944946e+03, 1.708108e+02, -1.944946e+03, 2.125486e+23
 1.702703e+02, -1.944946e+03, 1.702703e+02, -1.944946e+03, 3.002347e+23
+*Elset, elset=SET-2
+91
+140
+189
+190
+191
+239
+240
+241
+290
+291
+341
+342
+560
+609
+610
+611
+660
+661
+662
+711
+712
+1856
+1869
+1870
+1988
+1989
+1991
+1992
+2413
+*Solid Section, elset=SET-2, material=MAT-2
+1.
 *Material, name=MAT-2
 *Density
 1.180000e-15
@@ -11137,16 +9872,246 @@ TopLeft2551, 2, -1.
 1.735135e+02, -1.944946e+03, 1.735135e+02, -1.944946e+03, 5.047700e+17
 1.708108e+02, -1.944946e+03, 1.708108e+02, -1.944946e+03, 6.354600e+17
 1.702703e+02, -1.944946e+03, 1.702703e+02, -1.944946e+03, 8.000000e+17
+*Nset, nset=LeftSurface
+1
+52
+103
+154
+205
+256
+307
+358
+409
+460
+511
+562
+613
+664
+715
+766
+817
+868
+919
+970
+1021
+1072
+1123
+1174
+1225
+1276
+1327
+1378
+1429
+1480
+1531
+1582
+1633
+1684
+1735
+1786
+1837
+1888
+1939
+1990
+2041
+2092
+2143
+2194
+2245
+2296
+2347
+2398
+2449
+2500
+2551
+*Nset, nset=RightSurface
+51
+102
+153
+204
+255
+306
+357
+408
+459
+510
+561
+612
+663
+714
+765
+816
+867
+918
+969
+1020
+1071
+1122
+1173
+1224
+1275
+1326
+1377
+1428
+1479
+1530
+1581
+1632
+1683
+1734
+1785
+1836
+1887
+1938
+1989
+2040
+2091
+2142
+2193
+2244
+2295
+2346
+2397
+2448
+2499
+2550
+2601
+*Equation
+3
+LeftSurface, 1, 1.
+RightSurface, 1, -1.
+2602, 1, 1.
+*Equation
+2
+LeftSurface, 2, 1.
+RightSurface, 2, -1.
+*Nset, nset=BotmSurface
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+*Nset, nset=TopSurface
+2552
+2553
+2554
+2555
+2556
+2557
+2558
+2559
+2560
+2561
+2562
+2563
+2564
+2565
+2566
+2567
+2568
+2569
+2570
+2571
+2572
+2573
+2574
+2575
+2576
+2577
+2578
+2579
+2580
+2581
+2582
+2583
+2584
+2585
+2586
+2587
+2588
+2589
+2590
+2591
+2592
+2593
+2594
+2595
+2596
+2597
+2598
+2599
+2600
+*Equation
+2
+BotmSurface, 1, 1.
+TopSurface, 1, -1.
+*Equation
+2
+BotmSurface, 2, 1.
+TopSurface, 2, -1.
+*Nset, nset=BotmRight
+51
+*Nset, nset=TopRight
+2601
+*Equation
+2
+BotmRight, 1, 1.
+TopRight, 1, -1.
+*Equation
+2
+BotmRight, 2, 1.
+TopRight, 2, -1.
 *STEP,NAME=STEP-1,PERTURBATION
 *STEADY STATE DYNAMICS, DIRECT
-0.005, 100000.0, 30, 1
-*BOUNDARY
-** strain in x direction
-SET-LR, 1, 1, 0.005
-*BOUNDARY
-SET-LR, 2, 2, 0
-*BOUNDARY
-SET-TB, 1, 2, 0
+1e-07, 100000.0, 30, 1
+*Nset, nset=drive
+2602
+*Boundary, type=displacement
+2602, 1, 1, 0.005
 *RESTART,WRITE,frequency=0
 *Output, field, variable=PRESELECT
 *Output, field
