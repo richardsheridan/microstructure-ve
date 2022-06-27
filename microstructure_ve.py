@@ -2,7 +2,7 @@ import pathlib
 import subprocess
 from functools import partial
 from os import PathLike
-from typing import Optional, Sequence, List, Union, TextIO
+from typing import Optional, Sequence, List, Union, TextIO, Iterable
 
 import numpy as np
 from dataclasses import dataclass
@@ -26,8 +26,12 @@ class Heading:
     text: str = ""
 
     def to_inp(self, inp_file_obj):
-        inp_file_obj.write("*Heading\n")
-        inp_file_obj.write(self.text)
+        inp_file_obj.write(
+            f"""\
+*Heading
+{self.text}
+"""
+        )
 
 
 # NOTE: every "1 +" you see is correcting the array indexing mismatch between
@@ -189,7 +193,7 @@ class ElementSet:
 
 
 @dataclass
-class DisplacementBoundaryNode:
+class DisplacementBoundaryCondition:
     drive_node: Union[NodeSet, int]
     first_dof: int
     last_dof: int
@@ -290,19 +294,26 @@ class ViscoelasticMaterial(Material):
 
 @dataclass
 class PeriodicBoundaryConditions:
-    node_pairs: List[List[NodeSet]]
-    driving_nsets: List[NodeSet]
-    disp_bnd_node: DisplacementBoundaryNode
+    nodes: GridNodes
+    disp_bnd: DisplacementBoundaryCondition
+
+    def __post_init__(self):
+        make_set = partial(NodeSet.from_side_name, nodes=self.nodes)
+        self.driving_nset = make_set("RightSurface")
+        self.node_pairs: List[List[NodeSet]] = [
+            [make_set("LeftSurface"), self.driving_nset],
+            [make_set("BotmSurface"), make_set("TopSurface")],
+            [make_set("BotmRight"), make_set("TopRight")],
+        ]
 
     def to_inp(self, inp_file_obj):
-        driving_nsets = set(self.driving_nsets)
         for node_pair in self.node_pairs:
             node_pair[0].to_inp(inp_file_obj)
             node_pair[1].to_inp(inp_file_obj)
             eq_type = [EqualityEquation, EqualityEquation]
-            if driving_nsets & set(node_pair):
-                eq_type[self.disp_bnd_node.first_dof - 1] = partial(
-                    DriveEquation, drive_node=self.disp_bnd_node.drive_node
+            if self.driving_nset in node_pair:
+                eq_type[self.disp_bnd.first_dof - 1] = partial(
+                    DriveEquation, drive_node=self.disp_bnd.drive_node
                 )
             # Displacement at any surface node is equal to the opposing surface node
             # TODO: Is it necessary to unpack, get name, and repack?
@@ -313,7 +324,7 @@ class PeriodicBoundaryConditions:
 @dataclass
 class StepParameters:
     """Data for the ABAQUS STEP keyword"""
-    disp_bnd_nodes: List[DisplacementBoundaryNode]
+    disp_bnd_nodes: Iterable[DisplacementBoundaryCondition]
     f_initial: float
     f_final: float
     f_count: int
@@ -354,23 +365,30 @@ ALLAE, ALLCD, ALLEE, ALLFD, ALLJD, ALLKE, ALLPD, ALLSD, ALLSE, ALLVD, ALLWK, ETO
 
 
 def write_abaqus_input(
-        heading: Heading,
+        *,
         nodes: GridNodes,
         elements: CPE4RElements,
-        materials: List[Material],
+        materials: Iterable[Material],
         bcs: PeriodicBoundaryConditions,
         step_parm: StepParameters,
-        *,
+        heading: Optional[Heading] = None,
+        extra_nsets: Iterable[NodeSet] = (),
         path: Union[None, str, PathLike[str]] = None,
         inp_file_obj: Optional[TextIO] = None
 ):
     if inp_file_obj is None:
+        if path is None:
+            raise ValueError("Supply either path or inp_file_obj")
         with open(path, mode="w", encoding="ascii") as f:
-            return write_abaqus_input(heading, nodes, elements, materials, bcs,
-                                      step_parm, inp_file_obj=f)
+            return write_abaqus_input(heading=heading, nodes=nodes, elements=elements,
+                                      materials=materials, bcs=bcs, step_parm=step_parm,
+                                      extra_nsets=extra_nsets, inp_file_obj=f)
 
-    heading.to_inp(inp_file_obj)
+    if heading is not None:
+        heading.to_inp(inp_file_obj)
     nodes.to_inp(inp_file_obj)
+    for nset in extra_nsets:
+        nset.to_inp(inp_file_obj)
     elements.to_inp(inp_file_obj)
     for m in materials:
         m.to_inp(inp_file_obj)

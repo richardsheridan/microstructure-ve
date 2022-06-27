@@ -13,7 +13,8 @@ from microstructure_ve import (
     StepParameters,
     periodic_assign_intph,
     load_viscoelasticity,
-    write_abaqus_input, NodeSet, DisplacementBoundaryNode
+    write_abaqus_input,
+    DisplacementBoundaryCondition,
 )
 
 scale = 0.0025
@@ -31,26 +32,9 @@ freq, youngs_cplx = load_viscoelasticity(youngs_path)
 # Pick something physically reasonable for your system.
 youngs_plat = youngs_cplx[0].real
 
-heading = Heading()
+heading = Heading("Example RVE simulation")
 nodes = GridNodes.from_intph_img(intph_img, scale)
 elements = CPE4RElements(nodes)
-
-make_set = lambda name: NodeSet.from_side_name(name, nodes)
-right, botmright = driving_nsets = [make_set("RightSurface"), make_set("BotmRight")]
-surfaces = [
-    [make_set("LeftSurface"), right],
-    [make_set("BotmSurface"), make_set("TopSurface")],
-    # [make_set("TopLeft"), make_set("TopRight")],
-    [botmright, make_set("TopLeft")],
-    # [make_set("BotmRight"), make_set("BotmLeft")],
-]
-disp_bnd_node = DisplacementBoundaryNode(
-    nodes.virtual_node,
-    first_dof=1,
-    last_dof=1,
-    displacement=displacement,
-)
-bcs = PeriodicBoundaryConditions(surfaces, driving_nsets=driving_nsets, disp_bnd_node=disp_bnd_node)
 filler_elset, intph_elset, mat_elset = ElementSet.from_intph_image(intph_img)
 
 filler_material = Material(filler_elset, density=2.65e-15, youngs=5e5, poisson=0.15)
@@ -76,8 +60,15 @@ mat_material = ViscoelasticMaterial(
 )
 materials = [filler_material, intph_material, mat_material]
 
+disp_bnd = DisplacementBoundaryCondition(
+    nodes.virtual_node,
+    first_dof=1,
+    last_dof=1,
+    displacement=displacement,
+)
+pbcs = PeriodicBoundaryConditions(nodes=nodes, disp_bnd=disp_bnd)
 step_parm = StepParameters(
-    [disp_bnd_node],
+    [disp_bnd],
     f_initial=1e-7,
     f_final=1e5,
     f_count=30,
@@ -85,7 +76,7 @@ step_parm = StepParameters(
 )
 
 write_abaqus_input(heading=heading, nodes=nodes, elements=elements, materials=materials,
-                   bcs=bcs, step_parm=step_parm, path="example.inp")
+                   bcs=pbcs, step_parm=step_parm, path="example.inp")
 
 # from microstructure_ve import run_job, read_odb
 #
