@@ -300,7 +300,7 @@ class PeriodicBoundaryConditions:
             node_pair[0].to_inp(inp_file_obj)
             node_pair[1].to_inp(inp_file_obj)
             eq_type = [EqualityEquation, EqualityEquation]
-            if driving_nsets | set(node_pair):
+            if driving_nsets & set(node_pair):
                 eq_type[self.disp_bnd_node.first_dof - 1] = partial(
                     DriveEquation, drive_node=self.disp_bnd_node.drive_node
                 )
