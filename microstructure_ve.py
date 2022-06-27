@@ -47,7 +47,7 @@ class GridNodes:
 
     def __post_init__(self):
         self.node_nums = range(1, 1 + np.prod(self.shape))  # 1-indexing for ABAQUS
-        self.virtual_node = self.node_nums[-1]+1
+        self.virtual_node = self.node_nums[-1] + 1
 
     def to_inp(self, inp_file_obj):
         y_pos, x_pos = self.scale * np.indices(self.shape)
@@ -56,7 +56,7 @@ class GridNodes:
             inp_file_obj.write(f"{node_num:d},\t{x:.6e},\t{y:.6e}\n")
         # noinspection PyUnboundLocalVariable
         # quirk: we abuse the loop variables to put another "virtual" node at the corner
-        inp_file_obj.write(f"{node_num+1:d},\t{x:.6e},\t{y:.6e}\n")
+        inp_file_obj.write(f"{self.virtual_node:d},\t{x:.6e},\t{y:.6e}\n")
 
 
 @dataclass
@@ -291,19 +291,21 @@ class ViscoelasticMaterial(Material):
 @dataclass
 class PeriodicBoundaryConditions:
     node_pairs: List[List[NodeSet]]
-    driving_nset: NodeSet
+    driving_nsets: List[NodeSet]
     disp_bnd_node: DisplacementBoundaryNode
 
     def to_inp(self, inp_file_obj):
+        driving_nsets = set(self.driving_nsets)
         for node_pair in self.node_pairs:
             node_pair[0].to_inp(inp_file_obj)
             node_pair[1].to_inp(inp_file_obj)
             eq_type = [EqualityEquation, EqualityEquation]
-            if self.driving_nset in node_pair:
+            if driving_nsets | set(node_pair):
                 eq_type[self.disp_bnd_node.first_dof - 1] = partial(
                     DriveEquation, drive_node=self.disp_bnd_node.drive_node
                 )
             # Displacement at any surface node is equal to the opposing surface node
+            # TODO: Is it necessary to unpack, get name, and repack?
             eq_type[0]([node_pair[0].name, node_pair[1].name], 1).to_inp(inp_file_obj)
             eq_type[1]([node_pair[0].name, node_pair[1].name], 2).to_inp(inp_file_obj)
 

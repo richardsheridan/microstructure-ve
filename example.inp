@@ -10085,13 +10085,26 @@ RightSurface, 2, -1.
 2599
 2600
 *Equation
-2
+3
 BotmSurface, 1, 1.
 TopSurface, 1, -1.
+2602, 1, 1.
 *Equation
 2
 BotmSurface, 2, 1.
 TopSurface, 2, -1.
+*Nset, nset=BotmRight
+51
+*Nset, nset=TopLeft
+2551
+*Equation
+2
+BotmRight, 1, 1.
+TopLeft, 1, -1.
+*Equation
+2
+BotmRight, 2, 1.
+TopLeft, 2, -1.
 *STEP,NAME=STEP-1,PERTURBATION
 *STEADY STATE DYNAMICS, DIRECT
 1e-07, 100000.0, 30, 1

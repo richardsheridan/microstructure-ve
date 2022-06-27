@@ -36,10 +36,13 @@ nodes = GridNodes.from_intph_img(intph_img, scale)
 elements = CPE4RElements(nodes)
 
 make_set = lambda name: NodeSet.from_side_name(name, nodes)
-driving_nset = make_set("RightSurface")
+right, botmright = driving_nsets = [make_set("RightSurface"), make_set("BotmRight")]
 surfaces = [
-    [make_set("LeftSurface"), driving_nset],
+    [make_set("LeftSurface"), right],
     [make_set("BotmSurface"), make_set("TopSurface")],
+    # [make_set("TopLeft"), make_set("TopRight")],
+    [botmright, make_set("TopLeft")],
+    # [make_set("BotmRight"), make_set("BotmLeft")],
 ]
 disp_bnd_node = DisplacementBoundaryNode(
     nodes.virtual_node,
@@ -47,7 +50,7 @@ disp_bnd_node = DisplacementBoundaryNode(
     last_dof=1,
     displacement=displacement,
 )
-bcs = PeriodicBoundaryConditions(surfaces, driving_nset=driving_nset, disp_bnd_node=disp_bnd_node)
+bcs = PeriodicBoundaryConditions(surfaces, driving_nsets=driving_nsets, disp_bnd_node=disp_bnd_node)
 filler_elset, intph_elset, mat_elset = ElementSet.from_intph_image(intph_img)
 
 filler_material = Material(filler_elset, density=2.65e-15, youngs=5e5, poisson=0.15)
