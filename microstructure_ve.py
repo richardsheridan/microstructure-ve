@@ -310,15 +310,16 @@ class PeriodicBoundaryConditions:
         for node_pair in self.node_pairs:
             node_pair[0].to_inp(inp_file_obj)
             node_pair[1].to_inp(inp_file_obj)
+            # Displacement at any surface node is equal to the opposing surface
+            # node in both degrees of freedom
             eq_type = [EqualityEquation, EqualityEquation]
+            # Unless one of the surfaces is a driver. Then add the avg displacement
             if self.driving_nset in node_pair:
                 eq_type[self.disp_bnd.first_dof - 1] = partial(
                     DriveEquation, drive_node=self.disp_bnd.drive_node
                 )
-            # Displacement at any surface node is equal to the opposing surface node
-            # TODO: Is it necessary to unpack, get name, and repack?
-            eq_type[0]([node_pair[0].name, node_pair[1].name], 1).to_inp(inp_file_obj)
-            eq_type[1]([node_pair[0].name, node_pair[1].name], 2).to_inp(inp_file_obj)
+            eq_type[0](node_pair, 1).to_inp(inp_file_obj)
+            eq_type[1](node_pair, 2).to_inp(inp_file_obj)
 
 
 @dataclass
