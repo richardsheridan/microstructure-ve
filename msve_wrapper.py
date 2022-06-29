@@ -2,14 +2,11 @@
 import numpy as np
 import os
 
-from microstructure_ve.microstructure_ve_periodic import (
+from microstructure_ve.microstructure_ve import (
     Heading,
     GridNodes,
-    BoundaryNodes,
+    PeriodicBoundaryConditions,
     CPE4RElements,
-    NodeSet,
-    BigNodeSet,
-    EqualityEquation,
     ElementSet,
     ViscoelasticMaterial,
     Material,
@@ -17,7 +14,9 @@ from microstructure_ve.microstructure_ve_periodic import (
     assign_intph,
     periodic_assign_intph,
     load_matlab_microstructure,
-    load_viscoelasticity
+    load_viscoelasticity,
+    write_abaqus_input,
+    DisplacementBoundaryCondition,
 )
 
 class msve_wrapper(object):
@@ -34,10 +33,13 @@ class msve_wrapper(object):
         :param mtx_density: matrix density in kg/micron**3
         :type mtx_density: float
 
-        :param mtx_youngs: matrix instantaneous Young's modulus in MPa
+        :param mtx_youngs: matrix long-term Young's modulus in MPa, if it is not
+            passed in, the storage modulus of at the lowest freq in the master
+            curve will be used as the long-term Young's modulus.
         :type mtx_youngs: float
 
-        :param master_curve: filename of the master curve for the matrix, three column format: freq, E', E''
+        :param master_curve: filename of the master curve for the matrix, three
+            column format: freq, E', E''. Assumed to be sorted by freq.
         :type master_curve: str
 
         :param mtx_poisson: matrix instantaneous poisson ratio
@@ -54,8 +56,9 @@ class msve_wrapper(object):
         :type fil_poisson: float
 
         -------interphase properties-------
-        :param layers: a list for number of interphase layers
-        :type layers: List(int)
+        :param layers: a list for number of interphase layers, if an int is 
+            passed in, it will be automatically wrapped into a list
+        :type layers: List(int) or int
 
         :param periodic_intph: assign periodic interphase on True
         :type periodic_intph: boolean
@@ -82,10 +85,14 @@ class msve_wrapper(object):
         :param displacement: step parameter displacement
         :type displacement: float
 
-        -------global properties-------
-        :param scale: scale in nm per pixel
-        :type scale: float
+        :param disp_BC_dof_first: first degree of freedom to apply displacement
+        :type disp_BC_dof_first: int
 
+        :param disp_BC_dof_last: last degree of freedom to apply displacement
+        :type disp_BC_dof_last: int
+    
+
+        -------step parameters-------
         :param fmin: lower limit of frequency range for a steady-state dynamics analysis in Abaqus
         :type fmin: float
 
@@ -95,7 +102,10 @@ class msve_wrapper(object):
         :param num_freq: number of frequency interval
         :type num_freq: int
 
-        -------global properties-------
+        -------microstructure properties-------
+        :param scale: scale in nm per pixel
+        :type scale: float
+
         :param ms_filename: filename of the microstructure data, .mat or .npy
         :type ms_filename: str
 
@@ -106,43 +116,53 @@ class msve_wrapper(object):
         :type reverse: bool
         '''
         self.params = kwargs
+        ## matrix properties
+        # load master curve
+        if 'master_curve' not in kwargs:
+            raise Exception("master_curve parameter undefined in the input!")
+        self.master_curve = kwargs['master_curve']
+        # excitation freq in Hz and complex modulus
+        self.mtx_freq, self.mtx_youngs_cplx = load_viscoelasticity(self.master_curve)
         # load parameters
         if 'mtx_youngs' not in kwargs:
-            self.mtx_youngs = 0
+            self.mtx_youngs = self.mtx_youngs_cplx[0].real
         else:
             self.mtx_youngs = kwargs['mtx_youngs']
         self.mtx_density = kwargs['mtx_density']
         self.mtx_poisson = kwargs['mtx_poisson']
-        if 'master_curve' not in kwargs:
-            raise Exception("master_curve parameter undefined in the input!")
-        self.master_curve = kwargs['master_curve']
         if 'mtx_shift' not in kwargs:
             self.mtx_shift = 0
         else:
             self.mtx_shift = kwargs['mtx_shift']
+        ## filler properties
         self.fil_density = kwargs['fil_density']
         self.fil_youngs = kwargs['fil_youngs']
         self.fil_poisson = kwargs['fil_poisson']
+        ## interphase properties
         self.layers = kwargs['layers']
-        if 'periodic_intph' not in kwargs:
+        # if layers is passed in as an int, put it in a list
+        if type(self.layers) == int:
+            self.layers = [self.layers]
+        if 'periodic_intph' in kwargs:
             periodic_intph = kwargs['periodic_intph']
         else:
             periodic_intph = False
         self.intph_density = kwargs['intph_density']
-        self.intph_youngs = kwargs['intph_youngs']
+        if 'intph_youngs' not in kwargs:
+            self.intph_youngs = self.mtx_youngs_cplx[0].real
+        else:
+            self.intph_youngs = kwargs['intph_youngs']
         self.intph_poisson = kwargs['intph_poisson']
         self.intph_shift = kwargs['intph_shift']
         self.intph_l_brd = kwargs['intph_l_brd']
         self.intph_r_brd = kwargs['intph_r_brd']
+        ## boundary conditions
         self.displacement = kwargs['displacement']
+        self.disp_BC_dof_first = kwargs['disp_BC_dof_first']
+        self.disp_BC_dof_last = kwargs['disp_BC_dof_last']
+        ## microstructure properties
         self.scale = kwargs['scale']
         self.ms_filename = kwargs['ms_filename']
-        self.fmin = kwargs['fmin']
-        self.fmax = kwargs['fmax']
-        if 'num_freq' not in kwargs:
-            self.num_freq = 30
-        else:
-            self.num_freq = kwargs['num_freq']
         # load microstructure
         if 'ms_mat_var' not in kwargs:
             self.ms_img = self.load_microstructure(self.ms_filename)
@@ -151,19 +171,21 @@ class msve_wrapper(object):
         # swap matrix and filler if reverse set to be True
         if 'reverse' in kwargs and kwargs['reverse']:
             self.ms_img = self.ms_img.max() - self.ms_img
-        # load master curve
-        # excitation freq in Hz and complex modulus
-        self.mtx_freq, self.mtx_youngs_cplx = load_viscoelasticity(self.master_curve)
+        ## step parameters
+        self.fmin = kwargs['fmin']
+        self.fmax = kwargs['fmax']
+        if 'num_freq' not in kwargs:
+            self.num_freq = 30
+        else:
+            self.num_freq = kwargs['num_freq']
+        # a flag for interphased or not
+        self.has_interphase = True if self.layers[0] > 0 else False
         # assign interphase if needed
-        if self.layers[0] > 0:
-            if periodic_intph:
-                self.intph_img = periodic_assign_intph(self.ms_img, self.layers)
-            else:
-                self.intph_img = assign_intph(self.ms_img, self.layers)
+        if self.has_interphase:
+            self.intph_img = periodic_assign_intph(self.ms_img, self.layers
+                ) if periodic_intph else assign_intph(self.ms_img, self.layers)
         else:
             self.intph_img = self.ms_img
-        # build inp
-        self.sections = self.build_inp()
 
     def load_microstructure(self, ms_filename, ms_varname = ''):
         # check extension
@@ -176,54 +198,21 @@ class msve_wrapper(object):
             return load_matlab_microstructure(ms_filename,ms_varname).astype('uint8')
         raise Exception(f"File extension {ext} is not a valid microstructure file format.")
     
-    def build_inp(self):
-        sides_lr = {
-            "LeftSurface": np.s_[:, 0],
-            "RightSurface": np.s_[:, -1],
-        }
-
-        sides_tb = {
-            # discard results redundant to an entry in left or right
-            # also note "top" is image rather than matrix convention
-            "BotmSurface": np.s_[0, 1:-1],
-            "TopSurface": np.s_[-1, 1:-1],
-        }
-
-        corners = {
-            "BotmLeft": np.s_[0, 0],
-            "TopLeft": np.s_[-1, 0],
-            "BotmRight": np.s_[0, -1],
-            "TopRight": np.s_[-1, -1],
-        }
-
-        sections = []
-
+    def build_inp(self, inp_filename):
         heading = Heading()
-        nodes = GridNodes(1 + np.array(self.intph_img.shape), self.scale)
-        bnodes = BoundaryNodes()
-        elements = CPE4RElements(nodes.shape)
-        sections.extend((heading, nodes, bnodes, elements))
-
-        nsets_lr = NodeSet.from_image_and_slicedict(self.intph_img, sides_lr)
-        nsets_c = NodeSet.from_image_and_slicedict(self.intph_img, corners)
-        nsets_tb = BigNodeSet.from_image_and_slicedict(self.intph_img, sides_tb)
-        sections.extend((*nsets_lr, *nsets_c, *nsets_tb))
-
-        eqs = [EqualityEquation(nsets, 1, bnodes.lr_nset) for nsets in zip(*nsets_lr)]
-        eqs += [EqualityEquation(nsets, 2, bnodes.lr_nset) for nsets in zip(*nsets_lr)][1:-1]
-        eqs += [EqualityEquation(nsets, 1, bnodes.tb_nset) for nsets in zip(*nsets_tb)]
-        eqs += [EqualityEquation([f, c], 2) for f, (c,) in zip(nsets_tb, nsets_c)]
-        sections.extend(eqs)
-
-        if self.layers[0] > 0:
-            filler_elset, intph_elset, mat_elset = ElementSet.from_intph_image(self.intph_img)
-            sections.extend([filler_elset, intph_elset, mat_elset])
-
+        nodes = GridNodes.from_intph_img(self.intph_img, self.scale)
+        elements = CPE4RElements(nodes)
+        # MATERIALS
+        if self.has_interphase:
+            filler_elset, intph_elset, mat_elset = ElementSet.from_intph_image(
+                self.intph_img)
             # filler
-            filler_material = Material(filler_elset,
+            filler_material = Material(
+                filler_elset,
                 density=self.fil_density,
                 youngs=self.fil_youngs,
-                poisson=self.fil_poisson)
+                poisson=self.fil_poisson
+            )
             # interphase
             intph_material = ViscoelasticMaterial(
                 intph_elset,
@@ -237,7 +226,8 @@ class msve_wrapper(object):
                 right_broadening=self.intph_r_brd
             )
             # matrix
-            mat_material = ViscoelasticMaterial(mat_elset,
+            mat_material = ViscoelasticMaterial(
+                mat_elset,
                 density=self.mtx_density,
                 poisson=self.mtx_poisson,
                 shift=self.mtx_shift,
@@ -245,40 +235,47 @@ class msve_wrapper(object):
                 right_broadening=1,
                 youngs=self.mtx_youngs,
                 freq=self.mtx_freq,
-                youngs_cplx=self.mtx_youngs_cplx)
-            
-            sections.extend([filler_material, intph_material, mat_material])
+                youngs_cplx=self.mtx_youngs_cplx
+            )
+            materials = [filler_material, intph_material, mat_material]
         else:
             filler_elset, mat_elset = ElementSet.from_intph_image(self.intph_img)
-            sections.extend([filler_elset, mat_elset])
-
             # filler
-            filler_material = Material(filler_elset,
+            filler_material = Material(
+                filler_elset,
                 density=self.fil_density,
                 youngs=self.fil_youngs,
-                poisson=self.fil_poisson)
+                poisson=self.fil_poisson
+            )
             # matrix
-            mat_material = ViscoelasticMaterial(mat_elset,
+            mat_material = ViscoelasticMaterial(
+                mat_elset,
                 density=self.mtx_density,
                 poisson=self.mtx_poisson,
                 shift=self.mtx_shift,
-                left_broadening=1,
-                right_broadening=1,
+                left_broadening=1, # no broadening for matrix
+                right_broadening=1, # no broadening for matrix
                 youngs=self.mtx_youngs,
                 freq=self.mtx_freq,
-                youngs_cplx=self.mtx_youngs_cplx)
-            
-            sections.extend([filler_material, mat_material])
-
-        step_parm = StepParameters(bnodes=bnodes,
+                youngs_cplx=self.mtx_youngs_cplx
+            )
+            materials = [filler_material, mat_material]
+        # BOUNDARY
+        disp_bnd = DisplacementBoundaryCondition(
+            nodes.virtual_node,
+            first_dof=self.disp_BC_dof_first,
+            last_dof=self.disp_BC_dof_last,
             displacement=self.displacement,
+        )
+        pbcs = PeriodicBoundaryConditions(nodes=nodes, disp_bnd=disp_bnd)
+
+        # StepParameters            
+        step_parm = StepParameters(
+            disp_bnd_nodes=[disp_bnd],
             f_initial=self.fmin,
             f_final=self.fmax,
-            NoF=self.num_freq)
-        sections.append(step_parm)
-        return sections
-
-    def to_inp(self, inp_filename):
-        with open(inp_filename, "w") as inp_file_obj:
-            for section in self.sections:
-                section.to_inp(inp_file_obj)
+            f_count=self.num_freq,
+            bias=1) # default value
+        # write to inp file
+        write_abaqus_input(heading=heading, nodes=nodes, elements=elements,
+            materials=materials, bcs=pbcs, step_parm=step_parm, path=inp_filename)
