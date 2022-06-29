@@ -5,45 +5,24 @@ import numpy as np
 from microstructure_ve import (
     Heading,
     GridNodes,
-    BoundaryNodes,
+    PeriodicBoundaryConditions,
     CPE4RElements,
-    NodeSet,
-    BigNodeSet,
-    EqualityEquation,
     ElementSet,
     ViscoelasticMaterial,
     Material,
     StepParameters,
-    assign_intph,
+    periodic_assign_intph,
     load_viscoelasticity,
+    write_abaqus_input,
+    DisplacementBoundaryCondition,
 )
 
-
 scale = 0.0025
+displacement = .005
 layers = 5
-displacement = 0.005
-
-sides_lr = {
-    "LeftSurface": np.s_[:, 0],
-    "RightSurface": np.s_[:, -1],
-}
-
-sides_tb = {
-    # discard results redundant to an entry in left or right
-    # also note "top" is image rather than matrix convention
-    "BotmSurface": np.s_[0, 1:-1],
-    "TopSurface": np.s_[-1, 1:-1],
-}
-
-corners = {
-    "BotmLeft": np.s_[0, 0],
-    "TopLeft": np.s_[-1, 0],
-    "BotmRight": np.s_[0, -1],
-    "TopRight": np.s_[-1, -1],
-}
 
 ms_img = np.load("ms.npy")
-intph_img = assign_intph(ms_img, [layers])
+intph_img = periodic_assign_intph(ms_img, [layers])
 
 base_path = pathlib.Path(__file__).parent
 youngs_path = base_path / "PMMA_shifted_R10_data.txt"
@@ -53,27 +32,10 @@ freq, youngs_cplx = load_viscoelasticity(youngs_path)
 # Pick something physically reasonable for your system.
 youngs_plat = youngs_cplx[0].real
 
-sections = []
-
-heading = Heading()
-nodes = GridNodes(1 + np.array(intph_img.shape), scale)
-bnodes = BoundaryNodes()
-elements = CPE4RElements(nodes.shape)
-sections.extend((heading, nodes, bnodes, elements))
-
-nsets_lr = NodeSet.from_image_and_slicedict(intph_img, sides_lr)
-nsets_c = NodeSet.from_image_and_slicedict(intph_img, corners)
-nsets_tb = BigNodeSet.from_image_and_slicedict(intph_img, sides_tb)
-sections.extend((*nsets_lr, *nsets_c, *nsets_tb))
-
-eqs = [EqualityEquation(nsets, 1, bnodes.lr_nset) for nsets in zip(*nsets_lr)]
-eqs += [EqualityEquation(nsets, 2, bnodes.lr_nset) for nsets in zip(*nsets_lr)][1:-1]
-eqs += [EqualityEquation(nsets, 1, bnodes.tb_nset) for nsets in zip(*nsets_tb)]
-eqs += [EqualityEquation([f, c], 2) for f, (c,) in zip(nsets_tb, nsets_c)]
-sections.extend(eqs)
-
+heading = Heading("Example RVE simulation")
+nodes = GridNodes.from_intph_img(intph_img, scale)
+elements = CPE4RElements(nodes)
 filler_elset, intph_elset, mat_elset = ElementSet.from_intph_image(intph_img)
-sections.extend([filler_elset, intph_elset, mat_elset])
 
 filler_material = Material(filler_elset, density=2.65e-15, youngs=5e5, poisson=0.15)
 intph_material = ViscoelasticMaterial(
@@ -96,14 +58,25 @@ mat_material = ViscoelasticMaterial(
     youngs_cplx=youngs_cplx,
     shift=-6.0,
 )
-sections.extend([filler_material, intph_material, mat_material])
+materials = [filler_material, intph_material, mat_material]
 
-step_parm = StepParameters(bnodes, displacement)
-sections.append(step_parm)
+disp_bnd = DisplacementBoundaryCondition(
+    nodes.virtual_node,
+    first_dof=1,
+    last_dof=1,
+    displacement=displacement,
+)
+pbcs = PeriodicBoundaryConditions(nodes=nodes, disp_bnd=disp_bnd)
+step_parm = StepParameters(
+    [disp_bnd],
+    f_initial=1e-7,
+    f_final=1e5,
+    f_count=30,
+    bias=1,
+)
 
-with open("example.inp", "w") as inp_file_obj:
-    for section in sections:
-        section.to_inp(inp_file_obj)
+write_abaqus_input(heading=heading, nodes=nodes, elements=elements, materials=materials,
+                   bcs=pbcs, step_parm=step_parm, path="example.inp")
 
 # from microstructure_ve import run_job, read_odb
 #
