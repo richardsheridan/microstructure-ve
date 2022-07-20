@@ -92,8 +92,8 @@ class CPE4RElements:
 
 # "top" is image rather than matrix convention
 sides = {
-    "LeftSurface": np.s_[:, 0],
-    "RightSurface": np.s_[:, -1],
+    "LeftSurface": np.s_[1:, 0], # include top left
+    "RightSurface": np.s_[1:, -1], # include top right
     "BotmSurface": np.s_[0, 1:-1],
     "TopSurface": np.s_[-1, 1:-1],
     "BotmLeft": np.s_[0, 0],
@@ -129,19 +129,28 @@ class NodeSet:
 
 @dataclass
 class EqualityEquation:
-    nsets: Sequence[Union[NodeSet, int]]
+    # A1*node1 + A2*node2 + ... = 0
+    nsets: Sequence[Union[NodeSet, int]] # nodes
+    factors: Sequence[int] # A's
     dof: int
 
     def to_inp(self, inp_file_obj):
+        # compute the number of terms in the equation on the fly
+        num_terms = len(self.nsets)
+        # write the section header
         inp_file_obj.write(
             f"""\
 *Equation
-2
-{self.nsets[0]}, {self.dof}, 1.
-{self.nsets[1]}, {self.dof}, -1.
+{num_terms}
 """
         )
-
+        # assemble nodes and A's
+        for i in range(num_terms):
+            inp_file_obj.write(
+                f"""\
+{self.nsets[i]}, {self.dof}, {self.factors[i]}.
+"""
+            )
 
 @dataclass
 class DriveEquation(EqualityEquation):
@@ -172,7 +181,8 @@ class ElementSet:
         i.e. [filler, interphase, matrix]
         """
         intph_img = intph_img.ravel()
-        uniq = np.unique(intph_img)  # sorted!
+        # must append .astype(int), pure polymer cases will have float type uniq
+        uniq = np.unique(intph_img).astype(int)  # sorted!
         indices = np.arange(1, 1 + intph_img.size)
 
         return [cls(matl_code, indices[intph_img == matl_code]) for matl_code in uniq]
@@ -299,28 +309,62 @@ class PeriodicBoundaryConditions:
 
     def __post_init__(self):
         make_set = partial(NodeSet.from_side_name, nodes=self.nodes)
-        self.driving_nset = make_set("RightSurface")
         self.node_pairs: List[List[NodeSet]] = [
-            [make_set("LeftSurface"), self.driving_nset],
-            [make_set("BotmSurface"), make_set("TopSurface")],
-            [make_set("BotmRight"), make_set("TopRight")],
+            [make_set("RightSurface"), make_set("LeftSurface")],
+            [make_set("TopSurface"), make_set("BotmSurface")],
         ]
+        bl = make_set("BotmLeft")
+        self.ref_node_pairs: List[List[NodeSet]] = [
+            [make_set("BotmRight"), bl],
+            [make_set("TopLeft"), bl],
+        ]
+        self.factors = [1,-1,-1,1]
 
     def to_inp(self, inp_file_obj):
-        for node_pair in self.node_pairs:
-            node_pair[0].to_inp(inp_file_obj)
-            node_pair[1].to_inp(inp_file_obj)
-            # Displacement at any surface node is equal to the opposing surface
-            # node in both degrees of freedom
-            eq_type = [EqualityEquation, EqualityEquation]
-            # Unless one of the surfaces is a driver. Then add the avg displacement
-            if self.driving_nset in node_pair:
-                eq_type[self.disp_bnd.first_dof - 1] = partial(
-                    DriveEquation, drive_node=self.disp_bnd.drive_node
-                )
-            eq_type[0](node_pair, 1).to_inp(inp_file_obj)
-            eq_type[1](node_pair, 2).to_inp(inp_file_obj)
+        # build PBC first
+        for s in range(len(self.node_pairs)):
+            # unpack reference nodes (corners)
+            ref_node_set_0, ref_node_set_1 = self.ref_node_pairs[s]
+            ref_node_0 = ref_node_set_0.node_inds[0]
+            ref_node_1 = ref_node_set_1.node_inds[0]
+            # loop through node pairs to build 4-node equation
+            node_set_0, node_set_1 = self.node_pairs[s]
+            # write the node set just for record
+            node_set_0.to_inp(inp_file_obj)
+            node_set_1.to_inp(inp_file_obj)
+            # build equation section
+            for i in range(len(node_set_0.node_inds)):
+                # Displacement at any surface node is equal to the opposing surface
+                # node in both degrees of freedom
+                eq_type = [EqualityEquation, EqualityEquation]
+                node_pair = [node_set_0.node_inds[i],node_set_1.node_inds[i],
+                             ref_node_0,ref_node_1]
+                eq_type[0](node_pair, self.factors, 1).to_inp(inp_file_obj)
+                eq_type[1](node_pair, self.factors, 2).to_inp(inp_file_obj)
 
+        # apply displacement
+        # self.disp_bnd must have dof between 1 and 2
+        # if first dof include 1, kinematically couple it with the ref nodes in
+        # dof 1
+        if self.disp_bnd.first_dof == 1:
+            ref_node_set_0, ref_node_set_1 = self.ref_node_pairs[
+                self.disp_bnd.first_dof-1]
+            ref_node_0 = ref_node_set_0.node_inds[0]
+            ref_node_1 = ref_node_set_1.node_inds[0]
+            node_pair = [ref_node_0, ref_node_1, self.disp_bnd.drive_node]
+            eq = EqualityEquation(node_pair, [-1,1,1], 1)
+            eq.to_inp(inp_file_obj)
+        # if last dof include 2, kinematically couple it with the ref nodes in
+        # dof 2
+        if self.disp_bnd.last_dof == 2:
+            ref_node_set_0, ref_node_set_1 = self.ref_node_pairs[
+                self.disp_bnd.last_dof-1]
+            ref_node_0 = ref_node_set_0.node_inds[0]
+            ref_node_1 = ref_node_set_1.node_inds[0]
+            node_pair = [ref_node_0, ref_node_1, self.disp_bnd.drive_node]
+            eq = EqualityEquation(node_pair, [-1,1,1], 2)
+            eq.to_inp(inp_file_obj)
+        
 
 @dataclass
 class StepParameters:
