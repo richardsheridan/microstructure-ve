@@ -534,13 +534,13 @@ def run_job(job_name, cpus):
     )
 
 
-def read_odb(job_name, displacement):
+def read_odb(job_name, displacement, poisson=0):
     """Extract viscoelastic response from abaqus output ODB
 
     Uses abaqus python api which is stuck in python 2.7 ancient history,
     so we need to farm it out to a subprocess.
     """
     subprocess.run(
-        [ABAQUS_PATH, "python", BASE_PATH / "readODB.py", job_name, str(displacement)],
+        [ABAQUS_PATH, "python", BASE_PATH / "readODB.py", job_name, str(displacement), str(poisson)],
         check=True,
     )
