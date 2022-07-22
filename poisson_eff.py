@@ -9,7 +9,7 @@ def parse_header(header_row):
             section_dict[attr.strip()] = val.strip()
     return section_dict
 
-def save_section(section_dict,row_count,summary):
+def save_section(section_dict,count,summary):
     # only save *Element, *Elset, *Solid Section, *Material, *Elastic
     if section_dict['section_name'] == '*Element':
         summary['*Element'] = count
