@@ -28,7 +28,7 @@ def save_section(section_dict,row_count,summary):
     return
 
 def poisson_mixture(summary):
-    count,poi_multi_count = 0,0
+    count,poi_multi_count = 0.0,0.0
     for key in summary:
         val = summary[key]
         if isinstance(val,dict) and 'count' in val and 'poisson' in val:
@@ -37,7 +37,7 @@ def poisson_mixture(summary):
     return poi_multi_count/count
 
 def get_poisson(job_name):
-    inp_file = f'{job_name}.inp'
+    inp_file = job_name + '.inp'
     inp = open(inp_file,'r')
     prev_section = None
     elset = {}
