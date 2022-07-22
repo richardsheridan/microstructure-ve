@@ -4,11 +4,12 @@ import csv
 
 from odbAccess import openOdb
 from abaqusConstants import NODAL
+from poisson_eff import get_poisson
 
 # abaqus trims sys.argv until after "python"
 if len(sys.argv) < 4:
 	this_script, name, displacement = sys.argv
-	poisson = 0
+	poisson = get_poisson(name)
 else:
 	this_script, name, displacement, poisson = sys.argv
 displacement = float(displacement)
