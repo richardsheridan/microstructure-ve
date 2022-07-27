@@ -321,10 +321,19 @@ class PeriodicBoundaryConditions:
         self.factors = [1,-1,-1,1]
 
     def to_inp(self, inp_file_obj):
+        # keep a set to avoid defining reference node sets repeatedly
+        seen_ref_node_sets = set()
         # build PBC first
         for s in range(len(self.node_pairs)):
-            # unpack reference nodes (corners)
             ref_node_set_0, ref_node_set_1 = self.ref_node_pairs[s]
+            # write the node set if not written yet for displacement calculation
+            if ref_node_set_0 not in seen_ref_node_sets:
+                ref_node_set_0.to_inp(inp_file_obj)
+                seen_ref_node_sets.add(ref_node_set_0)
+            if ref_node_set_1 not in seen_ref_node_sets:
+                ref_node_set_1.to_inp(inp_file_obj)
+                seen_ref_node_sets.add(ref_node_set_1)
+            # unpack reference nodes (corners)
             ref_node_0 = ref_node_set_0.node_inds[0]
             ref_node_1 = ref_node_set_1.node_inds[0]
             # loop through node pairs to build 4-node equation
