@@ -204,40 +204,53 @@ class msve_wrapper(object):
         elements = CPE4RElements(nodes)
         # MATERIALS
         if self.has_interphase:
-            filler_elset, intph_elset, mat_elset = ElementSet.from_intph_image(
-                self.intph_img)
+            has_matrix = True # flag indicating whether the matrix region still exists
+            # since increasing interphase thickness might cover the whole matrix region
+            materials = [] # init a list for Material objects
+            elsets = ElementSet.from_intph_image(self.intph_img)
+            # if len(elsets) <= 1 + len(self.layers) (number of interphase):
+            #     case 2: 1 filler set, multiple interphase set
+            # else:
+            #     case 1: 1 filler set, multiple interphase set, 1 matrix set
+            if len(elsets) <= 1 + len(self.layers):
+                has_matrix = False
             # filler
             filler_material = Material(
-                filler_elset,
+                elsets[0],
                 density=self.fil_density,
                 youngs=self.fil_youngs,
                 poisson=self.fil_poisson
             )
+            materials.append(filler_material)
             # interphase
-            intph_material = ViscoelasticMaterial(
-                intph_elset,
-                density=self.intph_density,
-                poisson=self.intph_poisson,
-                youngs=self.intph_youngs,
-                freq=self.mtx_freq,
-                youngs_cplx=self.mtx_youngs_cplx,
-                shift=self.intph_shift,
-                left_broadening=self.intph_l_brd,
-                right_broadening=self.intph_r_brd
-            )
+            intph_index_upper = len(elsets) - 1 if has_matrix else len(elsets)
+            for i in range(1,intph_index_upper):
+                intph_material = ViscoelasticMaterial(
+                    elsets[i],
+                    density=self.intph_density,
+                    poisson=self.intph_poisson,
+                    youngs=self.intph_youngs,
+                    freq=self.mtx_freq,
+                    youngs_cplx=self.mtx_youngs_cplx,
+                    shift=self.intph_shift,
+                    left_broadening=self.intph_l_brd,
+                    right_broadening=self.intph_r_brd
+                )
+                materials.append(intph_material)
             # matrix
-            mat_material = ViscoelasticMaterial(
-                mat_elset,
-                density=self.mtx_density,
-                poisson=self.mtx_poisson,
-                shift=self.mtx_shift,
-                left_broadening=1,
-                right_broadening=1,
-                youngs=self.mtx_youngs,
-                freq=self.mtx_freq,
-                youngs_cplx=self.mtx_youngs_cplx
-            )
-            materials = [filler_material, intph_material, mat_material]
+            if has_matrix:
+                mat_material = ViscoelasticMaterial(
+                    elsets[-1],
+                    density=self.mtx_density,
+                    poisson=self.mtx_poisson,
+                    shift=self.mtx_shift,
+                    left_broadening=1,
+                    right_broadening=1,
+                    youngs=self.mtx_youngs,
+                    freq=self.mtx_freq,
+                    youngs_cplx=self.mtx_youngs_cplx
+                )
+                materials.append(mat_material)
         else:
             filler_elset, mat_elset = ElementSet.from_intph_image(self.intph_img)
             # filler
