@@ -80,5 +80,8 @@ write_abaqus_input(heading=heading, nodes=nodes, elements=elements, materials=ma
 
 # from microstructure_ve import run_job, read_odb
 #
-# run_job("abaqus", 4)
-# read_odb("abaqus", displacement)
+# run_job("example", 4)
+# read_odb("example")
+
+# import csv
+# tsv = csv.reader(open("example-reaction-force.tsv", "r"), dialect=csv.excel_tab)
