@@ -66,7 +66,7 @@ class GridNodes:
 @dataclass
 class RectangularElements:
     nodes: GridNodes
-    type: str = "CPS4R"
+    type: str = "CPE4R"
 
     def __post_init__(self):
         self.element_nums = range(1, 1 + np.prod(self.nodes.shape - 1))
