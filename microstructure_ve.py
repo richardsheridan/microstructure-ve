@@ -381,10 +381,8 @@ def write_abaqus_input(
     if inp_file_obj is None:
         if path is None:
             raise ValueError("Supply either path or inp_file_obj")
-        with open(path, mode="w", encoding="ascii") as f:
-            return write_abaqus_input(heading=heading, nodes=nodes, elements=elements,
-                                      materials=materials, bcs=bcs, step_parm=step_parm,
-                                      extra_nsets=extra_nsets, inp_file_obj=f)
+        with open(path, mode="w", encoding="ascii") as inp_file_obj:
+            return write_abaqus_input(**locals())
 
     if heading is not None:
         heading.to_inp(inp_file_obj)
