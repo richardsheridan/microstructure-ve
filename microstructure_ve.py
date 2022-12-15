@@ -1,11 +1,12 @@
 import pathlib
 import subprocess
 from functools import partial
+from itertools import count
 from os import PathLike
 from typing import Optional, Sequence, List, Union, TextIO, Iterable
 
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 ABAQUS_PATH = pathlib.Path("/var/DassaultSystemes/SIMULIA/Commands/abaqus")
 BASE_PATH = pathlib.Path(__file__).parent
@@ -199,12 +200,13 @@ class DisplacementBoundaryCondition:
     first_dof: int
     last_dof: int
     displacement: Optional[float] = None
+    _count: int = field(default_factory=count().__next__, init=False, repr=False)
 
     def to_inp(self, inp_file_obj):
         disp = self.displacement if self.displacement is not None else ""
         inp_file_obj.write(
             f"""\
-*Nset, nset=drive
+*Nset, nset=drive{self._count}
 {self.drive_node}
 *Boundary, type=displacement
 {self.drive_node}, {self.first_dof}, {self.last_dof}, {disp}

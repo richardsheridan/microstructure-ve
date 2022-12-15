@@ -12,7 +12,7 @@ tsv = csv.writer(open(name+'-reaction-force.tsv', 'wb'), dialect=csv.excel_tab)
 #       as it depends on the interpretation of the inputs in the INP file.
 tsv.writerow(('frequency', 'RF_Real', 'RF_Imag'))
 odb = openOdb(name+'.odb', readOnly=True)
-drive_nset = odb.rootAssembly.instances['PART-1-1'].nodeSets['DRIVE']
+drive_nset = odb.rootAssembly.instances['PART-1-1'].nodeSets['DRIVE0']
 for frame in odb.steps['STEP-1'].frames:
 	frequency = frame.frameValue
 	if frequency == 0:

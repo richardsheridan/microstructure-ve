@@ -10108,7 +10108,7 @@ TopRight, 2, -1.
 *STEP,NAME=STEP-1,PERTURBATION
 *STEADY STATE DYNAMICS, DIRECT
 1e-07, 100000.0, 30, 1
-*Nset, nset=drive
+*Nset, nset=drive0
 2602
 *Boundary, type=displacement
 2602, 1, 1, 0.005
