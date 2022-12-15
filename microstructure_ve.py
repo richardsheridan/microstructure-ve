@@ -1,12 +1,11 @@
 import pathlib
 import subprocess
 from functools import partial
-from itertools import count
 from os import PathLike
 from typing import Optional, Sequence, List, Union, TextIO, Iterable
 
 import numpy as np
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 ABAQUS_PATH = pathlib.Path("/var/DassaultSystemes/SIMULIA/Commands/abaqus")
 BASE_PATH = pathlib.Path(__file__).parent
@@ -194,22 +193,25 @@ class ElementSet:
 # of information for a complete conceptual component of the input file.
 
 
+class BoundaryConditions:
+    def to_inp(self, inp_file_obj):
+        pass
+
+
+
 @dataclass
-class DisplacementBoundaryCondition:
-    drive_node: Union[NodeSet, int]
+class DisplacementBoundaryCondition(BoundaryConditions):
+    nset: Union[NodeSet, int]
     first_dof: int
     last_dof: int
     displacement: Optional[float] = None
-    _count: int = field(default_factory=count().__next__, init=False, repr=False)
 
     def to_inp(self, inp_file_obj):
         disp = self.displacement if self.displacement is not None else ""
         inp_file_obj.write(
             f"""\
-*Nset, nset=drive{self._count}
-{self.drive_node}
 *Boundary, type=displacement
-{self.drive_node}, {self.first_dof}, {self.last_dof}, {disp}
+{self.nset}, {self.first_dof}, {self.last_dof}, {disp}
 """
         )
 
@@ -296,9 +298,9 @@ class ViscoelasticMaterial(Material):
 
 
 @dataclass
-class PeriodicBoundaryConditions:
+class PeriodicBoundaryConditions(BoundaryConditions):
     nodes: GridNodes
-    disp_bnd: DisplacementBoundaryCondition
+    disp_bc: DisplacementBoundaryCondition
 
     def __post_init__(self):
         make_set = partial(NodeSet.from_side_name, nodes=self.nodes)
@@ -318,17 +320,29 @@ class PeriodicBoundaryConditions:
             eq_type = [EqualityEquation, EqualityEquation]
             # Unless one of the surfaces is a driver. Then add the avg displacement
             if self.driving_nset in node_pair:
-                eq_type[self.disp_bnd.first_dof - 1] = partial(
-                    DriveEquation, drive_node=self.disp_bnd.drive_node
+                eq_type[self.disp_bc.first_dof - 1] = partial(
+                    DriveEquation, drive_node=self.disp_bc.nset
                 )
             eq_type[0](node_pair, 1).to_inp(inp_file_obj)
             eq_type[1](node_pair, 2).to_inp(inp_file_obj)
 
 
 @dataclass
-class StepParameters:
-    """Data for the ABAQUS STEP keyword"""
-    disp_bnd_nodes: Iterable[DisplacementBoundaryCondition]
+class Static:
+    """Data for an ABAQUS STATIC subsection of STEP"""
+    long_term: bool = False
+
+    def to_inp(self, inp_file_obj):
+        inp_file_obj.write(
+            f"""\
+*STATIC{", LONG TERM" if self.long_term else ""}
+"""
+        )
+
+
+@dataclass
+class Dynamic:
+    """Data for an ABAQUS STEADY STATE DYNAMICS subsection of STEP"""
     f_initial: float
     f_final: float
     f_count: int
@@ -337,16 +351,26 @@ class StepParameters:
     def to_inp(self, inp_file_obj):
         inp_file_obj.write(
             f"""\
-*STEP,NAME=STEP-1,PERTURBATION
 *STEADY STATE DYNAMICS, DIRECT
 {self.f_initial}, {self.f_final}, {self.f_count}, {self.bias}
 """
         )
-        for n in self.disp_bnd_nodes:
+
+
+@dataclass
+class Step:
+    subsections: Iterable
+    perturbation: bool = False
+
+    def to_inp(self, inp_file_obj):
+        inp_file_obj.write(f"""\
+*STEP{",PERTURBATION" if self.perturbation else ""}
+"""
+        )
+        for n in self.subsections:
             n.to_inp(inp_file_obj)
         inp_file_obj.write(
             f"""\
-*RESTART,WRITE,frequency=0
 *END STEP
 """
         )
@@ -366,8 +390,8 @@ def write_abaqus_input(
         nodes: GridNodes,
         elements: RectangularElements,
         materials: Iterable[Material],
-        bcs: PeriodicBoundaryConditions,
-        step_parm: StepParameters,
+        bcs: Iterable,
+        steps: Iterable[Step],
         heading: Optional[Heading] = None,
         extra_nsets: Iterable[NodeSet] = (),
         path: Union[None, str, PathLike[str]] = None,
@@ -387,8 +411,10 @@ def write_abaqus_input(
     elements.to_inp(inp_file_obj)
     for m in materials:
         m.to_inp(inp_file_obj)
-    bcs.to_inp(inp_file_obj)
-    step_parm.to_inp(inp_file_obj)
+    for bc in bcs:
+        bc.to_inp(inp_file_obj)
+    for step in steps:
+        step.to_inp(inp_file_obj)
 
 
 def in_sorted(arr, val):
@@ -484,13 +510,13 @@ def run_job(job_name, cpus):
     )
 
 
-def read_odb(job_name):
+def read_odb(job_name, drive_nset):
     """Extract viscoelastic response from abaqus output ODB
 
     Uses abaqus python api which is stuck in python 2.7 ancient history,
     so we need to farm it out to a subprocess.
     """
     subprocess.run(
-        [ABAQUS_PATH, "python", BASE_PATH / "readODB.py", job_name],
+        [ABAQUS_PATH, "python", BASE_PATH / "readODB.py", job_name, drive_nset.name],
         check=True,
     )

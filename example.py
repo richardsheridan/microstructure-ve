@@ -10,11 +10,13 @@ from microstructure_ve import (
     ElementSet,
     ViscoelasticMaterial,
     Material,
-    StepParameters,
     periodic_assign_intph,
     load_viscoelasticity,
     write_abaqus_input,
     DisplacementBoundaryCondition,
+    Dynamic,
+    Step,
+    NodeSet,
 )
 
 scale = 0.0025
@@ -34,6 +36,8 @@ youngs_plat = youngs_cplx[0].real
 
 heading = Heading("Example RVE simulation")
 nodes = GridNodes.from_intph_img(intph_img, scale)
+drive_nset = NodeSet("DRIVE", [nodes.virtual_node])
+nsets = [drive_nset]
 elements = RectangularElements(nodes)
 filler_elset, intph_elset, mat_elset = ElementSet.from_intph_image(intph_img)
 
@@ -60,28 +64,28 @@ mat_material = ViscoelasticMaterial(
 )
 materials = [filler_material, intph_material, mat_material]
 
-disp_bnd = DisplacementBoundaryCondition(
-    nodes.virtual_node,
+disp_bc = DisplacementBoundaryCondition(
+    drive_nset,
     first_dof=1,
     last_dof=1,
     displacement=displacement,
 )
-pbcs = PeriodicBoundaryConditions(nodes=nodes, disp_bnd=disp_bnd)
-step_parm = StepParameters(
-    [disp_bnd],
+bcs = PeriodicBoundaryConditions(nodes=nodes, disp_bc=disp_bc)
+dyn = Dynamic(
     f_initial=1e-7,
     f_final=1e5,
     f_count=30,
     bias=1,
 )
+step = Step(subsections=[dyn, disp_bc], perturbation=True)
 
-write_abaqus_input(heading=heading, nodes=nodes, elements=elements, materials=materials,
-                   bcs=pbcs, step_parm=step_parm, path="example.inp")
+write_abaqus_input(heading=heading, nodes=nodes, extra_nsets=nsets, elements=elements,
+                   materials=materials, bcs=[bcs], steps=[step], path="example.inp")
 
 # from microstructure_ve import run_job, read_odb
 #
 # run_job("example", 4)
-# read_odb("example")
+# read_odb("example", drive_nset)
 
 # import csv
 # tsv = csv.reader(open("example-reaction-force.tsv", "r"), dialect=csv.excel_tab)

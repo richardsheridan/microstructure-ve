@@ -2603,6 +2603,8 @@ Example RVE simulation
 2600,	1.225000e-01,	1.250000e-01
 2601,	1.250000e-01,	1.250000e-01
 2602,	1.250000e-01,	1.250000e-01
+*Nset, nset=DRIVE
+2602
 *Element, type=CPE4R
 1,	52,	1,	2,	53,	
 2,	53,	2,	3,	54,	
@@ -9980,7 +9982,7 @@ Example RVE simulation
 3
 LeftSurface, 1, 1.
 RightSurface, 1, -1.
-2602, 1, 1.
+DRIVE, 1, 1.
 *Equation
 2
 LeftSurface, 2, 1.
@@ -10105,12 +10107,9 @@ TopRight, 1, -1.
 2
 BotmRight, 2, 1.
 TopRight, 2, -1.
-*STEP,NAME=STEP-1,PERTURBATION
+*STEP,PERTURBATION
 *STEADY STATE DYNAMICS, DIRECT
 1e-07, 100000.0, 30, 1
-*Nset, nset=drive0
-2602
 *Boundary, type=displacement
-2602, 1, 1, 0.005
-*RESTART,WRITE,frequency=0
+DRIVE, 1, 1, 0.005
 *END STEP
