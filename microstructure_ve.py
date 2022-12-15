@@ -345,13 +345,6 @@ class StepParameters:
         inp_file_obj.write(
             f"""\
 *RESTART,WRITE,frequency=0
-*Output, field, variable=PRESELECT
-*Output, field
-*Element output, directions=YES
-ELEDEN, ELEN, ENER, EVOL
-*Output, history
-*Energy Output
-ALLAE, ALLCD, ALLEE, ALLFD, ALLJD, ALLKE, ALLPD, ALLSD, ALLSE, ALLVD, ALLWK, ETOTAL
 *END STEP
 """
         )
