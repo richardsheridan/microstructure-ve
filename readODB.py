@@ -24,5 +24,6 @@ for step in odb.steps.values():
 		RF_Imag = 0
 		for v in RF.values:
 			RF_Real += v.data[0]
-			RF_Imag += v.conjugateData[0]
+			if v.conjugateData is not None:  # Dynamic data only
+				RF_Imag += v.conjugateData[0]
 		tsv.writerow((frequency, RF_Real, RF_Imag))
