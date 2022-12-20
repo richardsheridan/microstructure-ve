@@ -38,6 +38,7 @@ header = "\t".join(header)
 np.savetxt(
     name + "-reaction-force.tsv",
     step_results,
+    fmt="%.8e",
     delimiter="\t",
     comments="",
     header=header,
