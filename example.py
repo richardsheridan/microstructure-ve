@@ -20,7 +20,7 @@ from microstructure_ve import (
 )
 
 scale = 0.0025
-displacement = .005
+displacement = 0.005
 layers = 5
 
 ms_img = np.load("ms.npy")
@@ -79,8 +79,16 @@ dyn = Dynamic(
 )
 step = Step(subsections=[dyn, disp_bc], perturbation=True)
 
-write_abaqus_input(heading=heading, nodes=nodes, extra_nsets=nsets, elements=elements,
-                   materials=materials, bcs=[bcs], steps=[step], path="example.inp")
+write_abaqus_input(
+    heading=heading,
+    nodes=nodes,
+    extra_nsets=nsets,
+    elements=elements,
+    materials=materials,
+    bcs=[bcs],
+    steps=[step],
+    path="example.inp",
+)
 
 # from microstructure_ve import run_job, read_odb
 #

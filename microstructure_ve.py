@@ -84,7 +84,7 @@ class RectangularElements:
         topright_nodes = all_nodes[1:, 1:].ravel()
         inp_file_obj.write(f"*Element, type={self.type}\n")
         for elem_num, tn, kn, rn, trn in zip(
-                self.element_nums, top_nodes, key_nodes, right_nodes, topright_nodes
+            self.element_nums, top_nodes, key_nodes, right_nodes, topright_nodes
         ):
             inp_file_obj.write(
                 f"{elem_num:d},\t{tn:d},\t{kn:d},\t{rn:d},\t{trn:d},\t\n"
@@ -198,7 +198,6 @@ class BoundaryConditions:
         pass
 
 
-
 @dataclass
 class DisplacementBoundaryCondition(BoundaryConditions):
     nset: Union[NodeSet, int]
@@ -259,7 +258,7 @@ class ViscoelasticMaterial(Material):
 
         freq[:i] = self.left_broadening * (freq[:i] - f) + f
         freq[i:] = self.right_broadening * (freq[i:] - f) + f
-        return 10 ** freq
+        return 10**freq
 
     def normalize_modulus(self):
         """Convert to abaqus's preferred normalized moduli"""
@@ -330,6 +329,7 @@ class PeriodicBoundaryConditions(BoundaryConditions):
 @dataclass
 class Static:
     """Data for an ABAQUS STATIC subsection of STEP"""
+
     long_term: bool = False
 
     def to_inp(self, inp_file_obj):
@@ -343,6 +343,7 @@ class Static:
 @dataclass
 class Dynamic:
     """Data for an ABAQUS STEADY STATE DYNAMICS subsection of STEP"""
+
     f_initial: float
     f_final: float
     f_count: int
@@ -363,7 +364,8 @@ class Step:
     perturbation: bool = False
 
     def to_inp(self, inp_file_obj):
-        inp_file_obj.write(f"""\
+        inp_file_obj.write(
+            f"""\
 *STEP{",PERTURBATION" if self.perturbation else ""}
 """
         )
@@ -386,16 +388,16 @@ class Step:
 
 
 def write_abaqus_input(
-        *,
-        nodes: GridNodes,
-        elements: RectangularElements,
-        materials: Iterable[Material],
-        bcs: Iterable,
-        steps: Iterable[Step],
-        heading: Optional[Heading] = None,
-        extra_nsets: Iterable[NodeSet] = (),
-        path: Union[None, str, PathLike[str]] = None,
-        inp_file_obj: Optional[TextIO] = None
+    *,
+    nodes: GridNodes,
+    elements: RectangularElements,
+    materials: Iterable[Material],
+    bcs: Iterable,
+    steps: Iterable[Step],
+    heading: Optional[Heading] = None,
+    extra_nsets: Iterable[NodeSet] = (),
+    path: Union[None, str, PathLike[str]] = None,
+    inp_file_obj: Optional[TextIO] = None,
 ):
     if inp_file_obj is None:
         if path is None:
@@ -462,8 +464,9 @@ def assign_intph(microstructure: np.ndarray, num_layers_list: List[int]) -> np.n
     return intph_img
 
 
-def periodic_assign_intph(microstructure: np.ndarray,
-                          num_layers_list: List[int]) -> np.ndarray:
+def periodic_assign_intph(
+    microstructure: np.ndarray, num_layers_list: List[int]
+) -> np.ndarray:
     """Generate interphase layers around the particles with periodic BC.
 
     Microstructure must have at least one zero value.
@@ -482,7 +485,7 @@ def periodic_assign_intph(microstructure: np.ndarray,
     dimx, dimy = microstructure.shape
     intph_tiled = assign_intph(tiled, num_layers_list)
     # trim tiling
-    intph = intph_tiled[dimx:dimx + dimx, dimy:dimy + dimy]
+    intph = intph_tiled[dimx : dimx + dimx, dimy : dimy + dimy]
     # free intph's view on intph_tiled's memory
     intph = intph.copy()
     return intph
