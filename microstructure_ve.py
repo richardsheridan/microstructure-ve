@@ -1,28 +1,13 @@
 import pathlib
 import shutil
 import subprocess
-from functools import partial
+from functools import partial, cache
 from os import PathLike
 from typing import Optional, Sequence, List, Union, TextIO, Iterable
 
 import numpy as np
 from dataclasses import dataclass
 
-
-def _find_abaqus():
-    x = shutil.which("abaqus")
-    if x is None:
-        # maybe it's a shell alias?
-        if shutil.which("bash") is None:
-            return None
-        p = subprocess.run(["bash", "-i", "-c", "alias abaqus"], capture_output=True)
-        if p.returncode:
-            return None
-        x = p.stdout.split(b"'")[1].decode()
-    return pathlib.Path(x).resolve(strict=True)
-
-
-ABAQUS_PATH = _find_abaqus()
 BASE_PATH = pathlib.Path(__file__).parent
 
 
@@ -520,10 +505,24 @@ def load_viscoelasticity(matrl_name):
     return freq[sortind], youngs[sortind]
 
 
+@cache
+def find_abaqus():
+    x = shutil.which("abaqus")
+    if x is None:
+        # maybe it's a shell alias?
+        if shutil.which("bash") is None:
+            return None
+        p = subprocess.run(["bash", "-i", "-c", "alias abaqus"], capture_output=True)
+        if p.returncode:
+            return None
+        x = p.stdout.split(b"'")[1].decode()
+    return pathlib.Path(x).resolve(strict=True)
+
+
 def run_job(job_name, cpus):
     """feed .inp file to ABAQUS and wait for the result"""
     subprocess.run(
-        [ABAQUS_PATH, "job=" + job_name, "cpus=" + str(cpus), "interactive"],
+        [find_abaqus(), "job=" + job_name, "cpus=" + str(cpus), "interactive"],
         check=True,
     )
 
@@ -535,6 +534,6 @@ def read_odb(job_name, drive_nset):
     so we need to farm it out to a subprocess.
     """
     subprocess.run(
-        [ABAQUS_PATH, "python", BASE_PATH / "readODB.py", job_name, drive_nset.name],
+        [find_abaqus(), "python", BASE_PATH / "readODB.py", job_name, drive_nset.name],
         check=True,
     )
