@@ -1,4 +1,5 @@
 import pathlib
+import shutil
 import subprocess
 from functools import partial
 from os import PathLike
@@ -7,7 +8,21 @@ from typing import Optional, Sequence, List, Union, TextIO, Iterable
 import numpy as np
 from dataclasses import dataclass
 
-ABAQUS_PATH = pathlib.Path("/var/DassaultSystemes/SIMULIA/Commands/abaqus")
+
+def _find_abaqus():
+    x = shutil.which("abaqus")
+    if x is None:
+        # maybe it's a shell alias?
+        if shutil.which("bash") is None:
+            return None
+        p = subprocess.run(["bash", "-i", "-c", "alias abaqus"], capture_output=True)
+        if p.returncode:
+            return None
+        x = p.stdout.split(b"'")[1].decode()
+    return pathlib.Path(x).resolve(strict=True)
+
+
+ABAQUS_PATH = _find_abaqus()
 BASE_PATH = pathlib.Path(__file__).parent
 
 
