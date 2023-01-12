@@ -10107,6 +10107,8 @@ TopRight, 1, -1.
 2
 BotmRight, 2, 1.
 TopRight, 2, -1.
+*Boundary, type=displacement
+DRIVE, 1, 1, 0.0
 *STEP,PERTURBATION
 *STEADY STATE DYNAMICS, DIRECT
 1e-07, 100000.0, 30, 1

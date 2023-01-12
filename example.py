@@ -5,18 +5,19 @@ import numpy as np
 from microstructure_ve import (
     Heading,
     GridNodes,
-    PeriodicBoundaryConditions,
+    PeriodicBoundaryCondition,
     RectangularElements,
     ElementSet,
     ViscoelasticMaterial,
     Material,
     periodic_assign_intph,
     load_viscoelasticity,
-    write_abaqus_input,
     DisplacementBoundaryCondition,
     Dynamic,
     Step,
     NodeSet,
+    Model,
+    Simulation,
 )
 
 scale = 0.0025
@@ -37,7 +38,6 @@ youngs_plat = youngs_cplx[0].real
 heading = Heading("Example RVE simulation")
 nodes = GridNodes.from_intph_img(intph_img, scale)
 drive_nset = NodeSet("DRIVE", [nodes.virtual_node])
-nsets = [drive_nset]
 elements = RectangularElements(nodes)
 filler_elset, intph_elset, mat_elset = ElementSet.from_intph_image(intph_img)
 
@@ -62,7 +62,17 @@ mat_material = ViscoelasticMaterial(
     youngs_cplx=youngs_cplx,
     shift=-6.0,
 )
-materials = [filler_material, intph_material, mat_material]
+model = Model(
+    nodes=nodes,
+    nsets=[drive_nset],
+    elements=elements,
+    materials=[filler_material, intph_material, mat_material],
+    bcs=[
+        PeriodicBoundaryCondition(
+            nodes=nodes, nset=drive_nset, first_dof=1, last_dof=1, displacement=0.0
+        )
+    ],
+)
 
 disp_bc = DisplacementBoundaryCondition(
     drive_nset,
@@ -70,7 +80,6 @@ disp_bc = DisplacementBoundaryCondition(
     last_dof=1,
     displacement=displacement,
 )
-bcs = PeriodicBoundaryConditions(nodes=nodes, disp_bc=disp_bc)
 dyn = Dynamic(
     f_initial=1e-7,
     f_final=1e5,
@@ -79,16 +88,12 @@ dyn = Dynamic(
 )
 step = Step(subsections=[dyn, disp_bc], perturbation=True)
 
-write_abaqus_input(
-    heading=heading,
-    nodes=nodes,
-    extra_nsets=nsets,
-    elements=elements,
-    materials=materials,
-    bcs=[bcs],
-    steps=[step],
-    path="example.inp",
-)
+with open("example.inp", mode="w", encoding="ascii") as inp_file_obj:
+    Simulation(
+        heading=heading,
+        model=model,
+        steps=[step],
+    ).to_inp(inp_file_obj)
 
 # from microstructure_ve import run_job, read_odb
 #

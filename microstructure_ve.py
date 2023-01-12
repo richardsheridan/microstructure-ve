@@ -17,8 +17,8 @@ BASE_PATH = pathlib.Path(__file__).parent
 
 # Each keyword class represents a specific ABAQUS keyword.
 # They know what the structure of the keyword section is and what data
-# are needed to fill it out. They should do minimize computation outside
-# of a to_inp method that actually writes directly to the input file.
+# are needed to fill it out. They should minimize computation outside
+# the to_inp method that actually writes directly to the input file.
 
 
 @dataclass
@@ -203,14 +203,13 @@ class DisplacementBoundaryCondition(BoundaryConditions):
     nset: Union[NodeSet, int]
     first_dof: int
     last_dof: int
-    displacement: Optional[float] = None
+    displacement: float
 
     def to_inp(self, inp_file_obj):
-        disp = self.displacement if self.displacement is not None else ""
         inp_file_obj.write(
             f"""\
 *Boundary, type=displacement
-{self.nset}, {self.first_dof}, {self.last_dof}, {disp}
+{self.nset}, {self.first_dof}, {self.last_dof}, {self.displacement}
 """
         )
 
@@ -297,33 +296,40 @@ class ViscoelasticMaterial(Material):
 
 
 @dataclass
-class PeriodicBoundaryConditions(BoundaryConditions):
+class PeriodicBoundaryCondition(DisplacementBoundaryCondition):
     nodes: GridNodes
-    disp_bc: DisplacementBoundaryCondition
 
     def __post_init__(self):
         make_set = partial(NodeSet.from_side_name, nodes=self.nodes)
-        self.driving_nset = make_set("RightSurface")
+        ndim = len(self.nodes.shape)
+        self.driven_nset = make_set("RightSurface")
         self.node_pairs: List[List[NodeSet]] = [
-            [make_set("LeftSurface"), self.driving_nset],
+            [make_set("LeftSurface"), self.driven_nset],
             [make_set("BotmSurface"), make_set("TopSurface")],
             [make_set("BotmRight"), make_set("TopRight")],
         ]
+        # Displacement at any surface node is equal to the opposing surface
+        # node in both degrees of freedom unless one of the surfaces is a driver.
+        # in that case, add the avg displacement from the drive node
+        self.eq_pairs: List[List[EqualityEquation]] = [
+            [EqualityEquation(p, x + 1) for x in range(ndim)]
+            if (self.driven_nset not in p)
+            else [
+                DriveEquation(p, x + 1, drive_node=self.nset)
+                if x in range(self.first_dof - 1, self.last_dof)
+                else EqualityEquation(p, x + 1)
+                for x in range(ndim)
+            ]
+            for p in self.node_pairs
+        ]
 
     def to_inp(self, inp_file_obj):
-        for node_pair in self.node_pairs:
+        for node_pair, eq_pair in zip(self.node_pairs, self.eq_pairs):
             node_pair[0].to_inp(inp_file_obj)
             node_pair[1].to_inp(inp_file_obj)
-            # Displacement at any surface node is equal to the opposing surface
-            # node in both degrees of freedom
-            eq_type = [EqualityEquation, EqualityEquation]
-            # Unless one of the surfaces is a driver. Then add the avg displacement
-            if self.driving_nset in node_pair:
-                eq_type[self.disp_bc.first_dof - 1] = partial(
-                    DriveEquation, drive_node=self.disp_bc.nset
-                )
-            eq_type[0](node_pair, 1).to_inp(inp_file_obj)
-            eq_type[1](node_pair, 2).to_inp(inp_file_obj)
+            eq_pair[0].to_inp(inp_file_obj)
+            eq_pair[1].to_inp(inp_file_obj)
+        super().to_inp(inp_file_obj)
 
 
 @dataclass
@@ -378,6 +384,39 @@ class Step:
         )
 
 
+@dataclass
+class Model:
+    nodes: GridNodes
+    elements: RectangularElements
+    materials: Iterable[Material]
+    bcs: Iterable[BoundaryConditions] = ()
+    nsets: Iterable[NodeSet] = ()
+
+    def to_inp(self, inp_file_obj):
+        self.nodes.to_inp(inp_file_obj)
+        for nset in self.nsets:
+            nset.to_inp(inp_file_obj)
+        self.elements.to_inp(inp_file_obj)
+        for m in self.materials:
+            m.to_inp(inp_file_obj)
+        for bc in self.bcs:
+            bc.to_inp(inp_file_obj)
+
+
+@dataclass
+class Simulation:
+    model: Model
+    heading: Optional[Heading] = None
+    steps: Iterable[Step] = ()
+
+    def to_inp(self, inp_file_obj: TextIO):
+        if self.heading is not None:
+            self.heading.to_inp(inp_file_obj)
+        self.model.to_inp(inp_file_obj)
+        for step in self.steps:
+            step.to_inp(inp_file_obj)
+
+
 ####################
 # Helper functions #
 ####################
@@ -385,38 +424,6 @@ class Step:
 # High level functions representing important transformations or steps.
 # Probably the most important part is the name and docstring, to explain
 # WHY a certain procedure is being taken/option being input.
-
-
-def write_abaqus_input(
-    *,
-    nodes: GridNodes,
-    elements: RectangularElements,
-    materials: Iterable[Material],
-    bcs: Iterable,
-    steps: Iterable[Step],
-    heading: Optional[Heading] = None,
-    extra_nsets: Iterable[NodeSet] = (),
-    path: Union[None, str, PathLike[str]] = None,
-    inp_file_obj: Optional[TextIO] = None,
-):
-    if inp_file_obj is None:
-        if path is None:
-            raise ValueError("Supply either path or inp_file_obj")
-        with open(path, mode="w", encoding="ascii") as inp_file_obj:
-            return write_abaqus_input(**locals())
-
-    if heading is not None:
-        heading.to_inp(inp_file_obj)
-    nodes.to_inp(inp_file_obj)
-    for nset in extra_nsets:
-        nset.to_inp(inp_file_obj)
-    elements.to_inp(inp_file_obj)
-    for m in materials:
-        m.to_inp(inp_file_obj)
-    for bc in bcs:
-        bc.to_inp(inp_file_obj)
-    for step in steps:
-        step.to_inp(inp_file_obj)
 
 
 def in_sorted(arr, val):
