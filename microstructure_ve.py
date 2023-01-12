@@ -513,23 +513,34 @@ def load_viscoelasticity(matrl_name):
 
 
 @cache
-def find_abaqus():
-    x = shutil.which("abaqus")
+def find_command(command: str) -> Optional[PathLike]:
+    x = shutil.which(command)
     if x is None:
         # maybe it's a shell alias?
         if shutil.which("bash") is None:
             return None
-        p = subprocess.run(["bash", "-i", "-c", "alias abaqus"], capture_output=True)
+        p = subprocess.run(
+            ["bash", "-i", "-c", f"alias {command}"],
+            capture_output=True,
+        )
         if p.returncode:
             return None
         x = p.stdout.split(b"'")[1].decode()
-    return pathlib.Path(x).resolve(strict=True)
+    try:
+        return pathlib.Path(x).resolve(strict=True)
+    except FileNotFoundError:
+        return None
 
 
 def run_job(job_name, cpus):
     """feed .inp file to ABAQUS and wait for the result"""
     subprocess.run(
-        [find_abaqus(), "job=" + job_name, "cpus=" + str(cpus), "interactive"],
+        [
+            find_command("abaqus"),
+            "job=" + job_name,
+            "cpus=" + str(cpus),
+            "interactive",
+        ],
         check=True,
     )
 
@@ -541,6 +552,12 @@ def read_odb(job_name, drive_nset):
     so we need to farm it out to a subprocess.
     """
     subprocess.run(
-        [find_abaqus(), "python", BASE_PATH / "readODB.py", job_name, drive_nset.name],
+        [
+            find_command("abaqus"),
+            "python",
+            BASE_PATH / "readODB.py",
+            job_name,
+            drive_nset.name,
+        ],
         check=True,
     )
