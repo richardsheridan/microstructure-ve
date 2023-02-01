@@ -1,91 +1,104 @@
+import pathlib
+
 import numpy as np
 
 from microstructure_ve import (
     Heading,
     GridNodes,
-    BoundaryNodes,
-    CPE4RElements,
-    NodeSet,
-    BigNodeSet,
-    EqualityEquation,
+    PeriodicBoundaryCondition,
+    RectangularElements,
     ElementSet,
     ViscoelasticMaterial,
     Material,
-    StepParameters,
-    assign_intph,
+    periodic_assign_intph,
+    load_viscoelasticity,
+    DisplacementBoundaryCondition,
+    Dynamic,
+    Step,
+    NodeSet,
+    Model,
+    Simulation,
 )
-
 
 scale = 0.0025
-layers = 5
 displacement = 0.005
-youngs_plat = 100  # MegaPascals
-
-sides_lr = {
-    "LeftSurface": np.s_[:, 0],
-    "RightSurface": np.s_[:, -1],
-}
-
-sides_tb = {
-    # discard results redundant to an entry in left or right
-    # also note "top" is image rather than matrix convention
-    "BotmSurface": np.s_[0, 1:-1],
-    "TopSurface": np.s_[-1, 1:-1],
-}
-
-corners = {
-    "BotmLeft": np.s_[0, 0],
-    "TopLeft": np.s_[-1, 0],
-    "BotmRight": np.s_[0, -1],
-    "TopRight": np.s_[-1, -1],
-}
+layers = 5
 
 ms_img = np.load("ms.npy")
-intph_img = assign_intph(ms_img, layers)
+intph_img = periodic_assign_intph(ms_img, [layers])
 
-sections = []
+base_path = pathlib.Path(__file__).parent
+youngs_path = base_path / "PMMA_shifted_R10_data.txt"
+freq, youngs_cplx = load_viscoelasticity(youngs_path)
+# This is one way to assign a long term modulus, but it is not universal!
+# Another strategy is to use 0 for true viscoelastic liquids.
+# Pick something physically reasonable for your system.
+youngs_plat = youngs_cplx[0].real
 
-heading = Heading()
-nodes = GridNodes(1 + np.array(intph_img.shape), scale)
-bnodes = BoundaryNodes()
-elements = CPE4RElements(nodes.shape)
-sections.extend((heading, nodes, bnodes, elements))
+heading = Heading("Example RVE simulation")
+nodes = GridNodes.from_intph_img(intph_img, scale)
+drive_nset = NodeSet("DRIVE", [nodes.virtual_node])
+elements = RectangularElements(nodes)
+filler_elset, intph_elset, mat_elset = ElementSet.from_intph_image(intph_img)
 
-nsets_lr = NodeSet.from_image_and_slicedict(intph_img, sides_lr)
-nsets_c = NodeSet.from_image_and_slicedict(intph_img, corners)
-nsets_tb = BigNodeSet.from_image_and_slicedict(intph_img, sides_tb)
-sections.extend((*nsets_lr, *nsets_c, *nsets_tb))
-
-eqs = [EqualityEquation(nsets, 1, bnodes.lr_nset) for nsets in zip(*nsets_lr)]
-eqs += [EqualityEquation(nsets, 2, bnodes.lr_nset) for nsets in zip(*nsets_lr)][1:-1]
-eqs += [EqualityEquation(nsets, 1, bnodes.tb_nset) for nsets in zip(*nsets_tb)]
-eqs += [EqualityEquation([f, c], 2) for f, (c,) in zip(nsets_tb, nsets_c)]
-sections.extend(eqs)
-
-elsets = ElementSet.from_intph_image(intph_img)
-sections.extend(elsets)
-
-materials = [
-    ViscoelasticMaterial(elset, shift=-4.0, youngs=youngs_plat) for elset in elsets
-]
-materials[0] = Material(elsets[0], density=2.65e-15, youngs=5e5, poisson=0.15)
-materials[-1] = ViscoelasticMaterial(
-    elsets[-1],
+filler_material = Material(filler_elset, density=2.65e-15, youngs=5e5, poisson=0.15)
+intph_material = ViscoelasticMaterial(
+    intph_elset,
+    density=1.18e-15,
+    poisson=0.35,
+    shift=-4.0,
     youngs=youngs_plat,
-    shift=-6.0,
-    left_broadening=1.0,
-    right_broadening=1.0,
+    freq=freq,
+    youngs_cplx=youngs_cplx,
+    left_broadening=1.8,
+    right_broadening=1.5,
 )
-sections.extend(materials)
+mat_material = ViscoelasticMaterial(
+    mat_elset,
+    density=1.18e-15,
+    poisson=0.35,
+    youngs=youngs_plat,
+    freq=freq,
+    youngs_cplx=youngs_cplx,
+    shift=-6.0,
+)
+model = Model(
+    nodes=nodes,
+    nsets=[drive_nset],
+    elements=elements,
+    materials=[filler_material, intph_material, mat_material],
+    bcs=[
+        PeriodicBoundaryCondition(
+            nodes=nodes, nset=drive_nset, first_dof=1, last_dof=1, displacement=0.0
+        )
+    ],
+)
 
-step_parm = StepParameters(bnodes, displacement)
-sections.append(step_parm)
+disp_bc = DisplacementBoundaryCondition(
+    drive_nset,
+    first_dof=1,
+    last_dof=1,
+    displacement=displacement,
+)
+dyn = Dynamic(
+    f_initial=1e-7,
+    f_final=1e5,
+    f_count=30,
+    bias=1,
+)
+step = Step(subsections=[dyn, disp_bc], perturbation=True)
 
-with open("abaqus.inp", "w") as inp_file_obj:
-    for section in sections:
-        section.to_inp(inp_file_obj)
+with open("example.inp", mode="w", encoding="ascii") as inp_file_obj:
+    Simulation(
+        heading=heading,
+        model=model,
+        steps=[step],
+    ).to_inp(inp_file_obj)
 
 # from microstructure_ve import run_job, read_odb
 #
-# run_job("abaqus", 4)
-# read_odb("abaqus", displacement)
+# run_job("example", 4)
+# read_odb("example", drive_nset)
+
+# import csv
+# tsv = csv.reader(open("example-reaction-force.tsv", "r"), dialect=csv.excel_tab)
