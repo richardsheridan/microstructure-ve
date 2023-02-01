@@ -115,3 +115,14 @@ dmypy.json
 
 # Custom
 RVE.pkl
+test_bed/
+*.dat
+*.com
+*.msg
+*.odb
+*.prt
+*.sim
+*.sta
+test_*
+autoFEA.py
+plotter.py
