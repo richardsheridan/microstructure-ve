@@ -114,8 +114,6 @@ dmypy.json
 .pyre/
 
 # Custom
-RVE.pkl
-test_bed/
 *.dat
 *.com
 *.msg
@@ -123,7 +121,3 @@ test_bed/
 *.prt
 *.sim
 *.sta
-test_*
-autoFEA.py
-plotter.py
-WIP*

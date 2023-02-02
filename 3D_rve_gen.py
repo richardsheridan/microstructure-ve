@@ -11,10 +11,6 @@ Interactive Colaboratory file is located at
 import logging
 import numpy as np
 import pandas as pd
-from importlib import reload
-
-reload(logging)
-logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.WARNING)
 
 """Box object allows for the generation of RVE with randomly populated Spheres."""
 
@@ -197,7 +193,7 @@ class Box:
 
         def dist(self, secondSphere):
             vecd = self.pos - secondSphere.pos
-            return np.sqrt(vecd[0]**2 + vecd[1]**2 + vecd[2]**2)
+            return np.linalg.norm(vecd)
 
         def collide_wall(self, box):
             lowerBound = min(self.pos) < self.rad
