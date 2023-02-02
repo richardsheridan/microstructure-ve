@@ -10,7 +10,6 @@ Interactive Colaboratory file is located at
 
 import logging
 import numpy as np
-import pandas as pd
 
 """Box object allows for the generation of RVE with randomly populated Spheres."""
 
@@ -165,6 +164,8 @@ class Box:
         self.generateDf()
 
     def generateDf(self):
+        import pandas as pd
+        
         self.df = pd.DataFrame(np.concatenate([self.Positions,self.Radii[:, None]], axis=1), columns=['x', 'y', 'z', 'r'])
 
     def getRadii(self, spheres):
