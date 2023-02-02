@@ -35,19 +35,9 @@ for i in range(1, 1 + len(RF_Imag)):
     header.append("RF_Imag" + str(i))
 header = "\t".join(header)
 
-# Updated to fit numpy 1.6
-# print np.__version__
-np.savetxt(
-    name + "-reaction-force.tsv",
-    step_results,
-    fmt="%.8e",
-    delimiter="\t",
-    # comments="",
-    # header=header,
-)
-# add header
-filename = name + "-reaction-force.tsv"
-with open(filename, 'r+') as f:
-    content = f.read()
-    f.seek(0, 0)
-    f.write(header.rstrip('\r\n') + '\n' + content)
+# abaqus numpy is version 1.6 and doesn't know how to write headers
+with open(name + "-reaction-force.tsv", "w") as f:
+    f.write(header)
+    f.write("\n")
+
+    np.savetxt(f, step_results, fmt="%.8e", delimiter="\t")
