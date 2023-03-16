@@ -1,12 +1,14 @@
+import logging
 import pathlib
 import shutil
 import subprocess
 from functools import partial, cache
+from itertools import product
 from os import PathLike
 from typing import Optional, Sequence, List, Union, TextIO, Iterable
 
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 BASE_PATH = pathlib.Path(__file__).parent
 
@@ -43,6 +45,8 @@ class Heading:
 class GridNodes:
     shape: np.ndarray
     scale: float
+    dim: int = field(init = False)
+    Nsets: dict = field(init = False)
 
     @classmethod
     def from_intph_img(cls, intph_img, scale):
@@ -52,15 +56,62 @@ class GridNodes:
     def __post_init__(self):
         self.node_nums = range(1, 1 + np.prod(self.shape))  # 1-indexing for ABAQUS
         self.virtual_node = self.node_nums[-1] + 1
+        self.dim = len(self.shape)
+        # create nsets
+        self.Nsets = {}
+        # make_set = partial(NodeSet.from_side_name, nodes=self)
+        make_set = partial(NodeSet.from_slice, nodes=self)
+        if self.dim == 2:
+            # Declare nsets using "Sides_2d" slicer dictionary
+            for side, slice in Sides_2d.items():
+                self.Nsets[side] = make_set(side, slice)
+        elif self.dim == 3:
+            # Declare nsets using "Sides_3d" slicer dictionary
+            for side, slice in Sides_3d.items():
+                self.Nsets[side] = make_set(side, slice)
+        else:
+            logging.warning('specfied GridNodes has illegal number of dimensions')
+
 
     def to_inp(self, inp_file_obj):
-        y_pos, x_pos = self.scale * np.indices(self.shape)
+        pos = self.scale * np.indices(self.shape)[::-1]
         inp_file_obj.write("*Node\n")
-        for node_num, x, y in zip(self.node_nums, x_pos.ravel(), y_pos.ravel()):
-            inp_file_obj.write(f"{node_num:d},\t{x:.6e},\t{y:.6e}\n")
-        # noinspection PyUnboundLocalVariable
+        for node_num, *p in zip(self.node_nums, *map(np.ravel, pos)):
+            inp_file_obj.write(f"{node_num:d}")
+            for d in p:
+                inp_file_obj.write(f",\t{d:.6e}")
+            inp_file_obj.write("\n")
         # quirk: we abuse the loop variables to put another "virtual" node at the corner
-        inp_file_obj.write(f"{self.virtual_node:d},\t{x:.6e},\t{y:.6e}\n")
+        inp_file_obj.write(f"{self.virtual_node:d}")
+        # noinspection PyUnboundLocalVariable
+        for d in p:
+            inp_file_obj.write(f",\t{d:.6e}")
+        inp_file_obj.write("\n")
+
+# Function which returns the appropriate Element Type for the given nodes
+def Elements(nodes: GridNodes):
+    if nodes.dim == 2:
+        return RectangularElements(nodes)
+    elif nodes.dim == 3:
+        return CubicElements(nodes)
+    else:
+        logging.warning('specfied GridNodes has illegal number of dimensions')
+        return None
+
+# # Alternatively, if you prefer Classes:
+
+# @dataclass
+# class Elements:
+#     nodes: GridNodes
+
+#     def get_elements(self):
+#         if self.nodes.dim == 2:
+#             return RectangularElements(self.nodes)
+#         elif self.nodes.dim == 3:
+#             return CubicElements(self.nodes)
+#         else:
+#             logging.warning('specfied GridNodes has illegal number of dimensions')
+#             return None
 
 
 @dataclass
@@ -70,6 +121,11 @@ class RectangularElements:
 
     def __post_init__(self):
         self.element_nums = range(1, 1 + np.prod(self.nodes.shape - 1))
+        # # Declare nsets using "Sides_2d" slicer dictionary
+        # self.Nsets = {}
+        # make_set = partial(NodeSet.from_side_name, nodes=self.nodes)
+        # for side in Sides_2d:
+        #     self.Nsets[side] = make_set(side)
 
     def to_inp(self, inp_file_obj):
         # strategy: generate one array representing all nodes, then make slices of it
@@ -90,17 +146,160 @@ class RectangularElements:
                 f"{elem_num:d},\t{tn:d},\t{kn:d},\t{rn:d},\t{trn:d},\t\n"
             )
 
+@dataclass
+class CubicElements:
+    nodes: GridNodes
+    # type: str = "CPE4R"  # CPS4R, C3D8R
+    type: str = "C3D8R"  # CPS4R, C3D8R
+
+    def __post_init__(self):
+        self.element_nums = range(1, 1 + np.prod(self.nodes.shape - 1))
+        # # Declare nsets using "Sides_3d" slicer dictionary
+        # self.Nsets = {}
+        # make_set = partial(NodeSet.from_side_name, nodes=self.nodes)
+        # for side in Sides_3d:
+        #     self.Nsets[side] = make_set(side)
+
+    def to_inp(self, inp_file_obj):
+        # strategy: generate one array representing all nodes, then make slices of it
+        # that represent offsets to e.g. the right or top to iterate
+        all_nodes = 1 + np.ravel_multi_index(
+            np.indices(self.nodes.shape), self.nodes.shape
+        )
+        node_slices = list(product(
+            (np.s_[:-1], np.s_[1:]),
+            repeat=len(self.nodes.shape)
+        ))
+
+        # elements are defined counterclockwise, but product produces zigzag
+        # swapping the third and fourth elements works for squares and cubes
+        node_slices[2], node_slices[3] = node_slices[3], node_slices[2]
+        try:
+            node_slices[6], node_slices[7] = node_slices[7], node_slices[6]
+        except IndexError:
+            pass  # it's 2D
+
+        inp_file_obj.write(f"*Element, type={self.type}\n")
+        for elem_num, *ns in zip(
+            self.element_nums,
+            *(all_nodes[slice].ravel() for slice in node_slices),
+        ):
+            inp_file_obj.write(f"{elem_num:d}")
+            for n in ns:
+                inp_file_obj.write(f",\t{n:d}")
+            inp_file_obj.write("\n")
 
 # "top" is image rather than matrix convention
-sides = {
-    "LeftSurface": np.s_[:, 0],
-    "RightSurface": np.s_[:, -1],
-    "BotmSurface": np.s_[0, 1:-1],
-    "TopSurface": np.s_[-1, 1:-1],
-    "BotmLeft": np.s_[0, 0],
-    "TopLeft": np.s_[-1, 0],
-    "BotmRight": np.s_[0, -1],
-    "TopRight": np.s_[-1, -1],
+# sides = {
+#     "LeftSurface": np.s_[:, 0],
+#     "RightSurface": np.s_[:, -1],
+#     "BotmSurface": np.s_[0, 1:-1],
+#     "TopSurface": np.s_[-1, 1:-1],
+#     "BotmLeft": np.s_[0, 0],
+#     "TopLeft": np.s_[-1, 0],
+#     "BotmRight": np.s_[0, -1],
+#     "TopRight": np.s_[-1, -1],
+# }
+
+Sides_3d = {
+    # Abaqus interprets this as [Z, Y, X]
+    # Remeber that np arrays are written in [H, W, D] or [Y, X, Z]
+    # FACES
+    "X0": np.s_[1:-1, 1:-1, 0],  # Left (Face)
+    "X1": np.s_[1:-1, 1:-1, -1], # Right (Face)
+    "Y0": np.s_[1:-1, 0, 1:-1],  # Bottom (Face)
+    "Y1": np.s_[1:-1, -1, 1:-1], # Top (Face)
+    "Z0": np.s_[0, 1:-1, 1:-1],  # Back (Face)
+    "Z1": np.s_[-1, 1:-1, 1:-1], # Front (Face)
+
+    # EDGES
+    # on x axis
+    "Y0Z0": np.s_[0, 0, 1:-1],  # Bottom Back (Edge)
+    "Y0Z1": np.s_[-1, 0, 1:-1],  # Bottom Front (Edge)
+    "Y1Z0": np.s_[0, -1, 1:-1],  # Top Back (Edge)
+    "Y1Z1": np.s_[-1, -1, 1:-1],  # Top Front (Edge)
+
+    # on y axis
+    "X0Z0": np.s_[0, 1:-1, 0],  # Left Back (Edge)
+    "X0Z1": np.s_[-1, 1:-1, 0],  # Left Front (Edge)
+    "X1Z0": np.s_[0, 1:-1, -1],  # Right Back (Edge)
+    "X1Z1": np.s_[-1, 1:-1, -1],  # Right Front (Edge)
+
+    # on x axis
+    "X0Y0": np.s_[1:-1, 0, 0],  # Left Bottom (Edge)
+    "X0Y1": np.s_[1:-1, -1, 0],  # Left Top (Edge)
+    "X1Y0": np.s_[1:-1, 0, -1],  # Right Bottom (Edge)
+    "X1Y1": np.s_[1:-1, -1, -1],  # Right Top (Edge)
+
+    # VERTICES
+    "X0Y0Z0": np.s_[0, 0, 0],   # Left Bottom Back (Vertex)
+    "X0Y1Z0": np.s_[0, -1, 0],  # Left Top Back (Vertex)
+    "X1Y0Z0": np.s_[0, 0, -1],  # Right Bottom Back (Vertex)
+    "X1Y1Z0": np.s_[0, -1, -1], # Right Top Back (Vertex)
+
+    "X0Y0Z1": np.s_[-1, 0, 0],   # Left Bottom Front (Vertex)
+    "X0Y1Z1": np.s_[-1, -1, 0],  # Left Top Front (Vertex)
+    "X1Y0Z1": np.s_[-1, 0, -1],  # Right Bottom Front (Vertex)
+    "X1Y1Z1": np.s_[-1, -1, -1], # Right Top Front (Vertex)
+}
+
+Sides_2d = {
+    # Abaqus interprets this as [Z, Y, X]
+    # Remeber that np arrays are written in [H, W, D] or [Y, X, Z]
+    # 3D (Vestigial)
+    # # # FACES
+    # # "X0": np.s_[1:-1, 1:-1, 0],  # Left (Face)
+    # # "X1": np.s_[1:-1, 1:-1, -1], # Right (Face)
+    # # "Y0": np.s_[1:-1, 0, 1:-1],  # Bottom (Face)
+    # # "Y1": np.s_[1:-1, -1, 1:-1], # Top (Face)
+    # # "Z0": np.s_[0, 1:-1, 1:-1],  # Back (Face)
+    # # "Z1": np.s_[-1, 1:-1, 1:-1], # Front (Face)
+
+    # # EDGES
+    # # on x axis
+    # "Y0Z0": np.s_[0, 0, 1:-1],  # Bottom Back (Edge)
+    # # "Y0Z1": np.s_[-1, 0, 1:-1],  # Bottom Front (Edge)
+    # "Y1Z0": np.s_[0, -1, 1:-1],  # Top Back (Edge)
+    # # "Y1Z1": np.s_[-1, -1, 1:-1],  # Top Front (Edge)
+
+    # # on y axis
+    # "X0Z0": np.s_[0, 1:-1, 0],  # Left Back (Edge)
+    # # "X0Z1": np.s_[-1, 1:-1, 0],  # Left Front (Edge)
+    # "X1Z0": np.s_[0, 1:-1, -1],  # Right Back (Edge)
+    # # "X1Z1": np.s_[-1, 1:-1, -1],  # Right Front (Edge)
+
+    # # # on z axis
+    # # "X0Y0": np.s_[1:-1, 0, 0],  # Left Bottom (Edge)
+    # # "X0Y1": np.s_[1:-1, -1, 0],  # Left Top (Edge)
+    # # "X1Y0": np.s_[1:-1, 0, -1],  # Right Bottom (Edge)
+    # # "X1Y1": np.s_[1:-1, -1, -1],  # Right Top (Edge)
+
+    # # VERTICES
+    # "X0Y0Z0": np.s_[0, 0, 0],   # Left Bottom Back (Vertex)
+    # "X0Y1Z0": np.s_[0, -1, 0],  # Left Top Back (Vertex)
+    # "X1Y0Z0": np.s_[0, 0, -1],  # Right Bottom Back (Vertex)
+    # "X1Y1Z0": np.s_[0, -1, -1], # Right Top Back (Vertex)
+
+    # # "X0Y0Z1": np.s_[-1, 0, 0],   # Left Bottom Front (Vertex)
+    # # "X0Y1Z1": np.s_[-1, -1, 0],  # Left Top Front (Vertex)
+    # # "X1Y0Z1": np.s_[-1, 0, -1],  # Right Bottom Front (Vertex)
+    # # "X1Y1Z1": np.s_[-1, -1, -1], # Right Top Front (Vertex)
+
+    # 2D
+    # EDGES
+    # on x axis
+    "Y0": np.s_[0, 1:-1],  # Bottom (Edge)
+    "Y1": np.s_[-1, 1:-1],  # Top (Edge)
+
+    # on y axis
+    "X0": np.s_[1:-1, 0],  # Left (Edge)
+    "X1": np.s_[1:-1, -1],  # Right (Edge)
+
+    # VERTICES
+    "X0Y0Z0": np.s_[0, 0],   # Left Bottom (Vertex)
+    "X0Y1Z0": np.s_[-1, 0],  # Left Top (Vertex)
+    "X1Y0Z0": np.s_[0, -1],  # Right Bottom (Vertex)
+    "X1Y1Z0": np.s_[-1, -1], # Right Top (Vertex)
 }
 
 
@@ -111,10 +310,37 @@ class NodeSet:
 
     @classmethod
     def from_side_name(cls, name, nodes):
+        if nodes.dim == 2:
+            sides = Sides_2d
+        elif nodes.dim == 3:
+            sides = Sides_3d
+        else:
+            logging.warning('specfied GridNodes has illegal number of dimensions')
+            sides = None
         sl = sides[name]
-        row_ind, col_ind = np.indices(nodes.shape)
+        inds = np.indices(nodes.shape)
+        inds_list = []
+        for ind in inds:
+            inds_list.append(ind[sl].ravel())
+
+        inds_tuple = tuple(inds_list)
         node_inds = 1 + np.ravel_multi_index(
-            (row_ind[sl].ravel(), col_ind[sl].ravel()),
+            inds_tuple,
+            dims=nodes.shape,
+        )
+        return cls(name, node_inds)
+    
+    @classmethod
+    def from_slice(cls, name, slice, nodes):
+        sl = slice
+        inds = np.indices(nodes.shape)
+        inds_list = []
+        for ind in inds:
+            inds_list.append(ind[sl].ravel())
+
+        inds_tuple = tuple(inds_list)
+        node_inds = 1 + np.ravel_multi_index(
+            inds_tuple,
             dims=nodes.shape,
         )
         return cls(name, node_inds)
@@ -127,6 +353,23 @@ class NodeSet:
         for i in self.node_inds:
             inp_file_obj.write(f"{i:d}\n")
 
+@dataclass
+class SequentialDifferenceEquation:
+    nsets: Sequence[Union[NodeSet, int]]
+    dof: int
+
+    def to_inp(self, inp_file_obj):
+        for i, node0 in enumerate(self.nsets[0].node_inds):
+            inp_file_obj.write(
+                            f"""\
+*Equation
+4
+{self.nsets[0].node_inds[i]}, {self.dof}, 1.
+{self.nsets[1].node_inds[i]}, {self.dof}, -1.
+{self.nsets[2]}, {self.dof}, -1.
+{self.nsets[3]}, {self.dof}, 1.
+"""
+            )
 
 @dataclass
 class EqualityEquation:
@@ -197,6 +440,23 @@ class BoundaryConditions:
     def to_inp(self, inp_file_obj):
         pass
 
+
+@dataclass
+class FixedBoundaryCondition(BoundaryConditions):
+    node: Union[NodeSet, int]
+    dofs: Iterable
+    def to_inp(self, inp_file_obj):
+        inp_file_obj.write(
+            f"""\
+*Boundary
+"""
+        )
+        for dof in self.dofs:
+            inp_file_obj.write(
+            f"""\
+{self.node}, {dof}, {dof}
+"""
+            )
 
 @dataclass
 class DisplacementBoundaryCondition(BoundaryConditions):
@@ -294,9 +554,62 @@ class ViscoelasticMaterial(Material):
         for wgr, wgi, wkr, wki, f in zip(real, imag, real, imag, freq):
             inp_file_obj.write(f"{wgr:.6e}, {wgi:.6e}, {wkr:.6e}, {wki:.6e}, {f:.6e}\n")
 
+@dataclass
+class PeriodicBoundaryCondition:
+    nodes: GridNodes
+
+    def __post_init__(self):
+        Nsets = self.nodes.Nsets
+        if self.nodes.dim == 2:
+            # 2D boundaries
+            self.node_pairs: List[List[NodeSet]] = [
+            # Vertices
+            [Nsets["X1Y1"], Nsets["X0Y1"], Nsets["X1Y0"], Nsets["X0Y0"]], # 2-1 = 4-3
+
+            # Edges
+            [Nsets["X1"], Nsets["X0"], Nsets["X1Y0"], Nsets["X0Y0"]], # e6-e5 = 4-3
+            [Nsets["Y1"], Nsets["Y0"], Nsets["X0Y1"], Nsets["X0Y0"]], # e10-e9 = 1-3
+            ]
+        elif self.nodes.dim == 3:
+            # 3D boundaries
+            self.node_pairs: List[List[NodeSet]] = [
+            # Vertices
+            [Nsets["X1Y1Z0"], Nsets["X0Y1Z0"], Nsets["X1Y0Z0"], Nsets["X0Y0Z0"]], # 2-1 = 4-3
+            [Nsets["X1Y1Z1"], Nsets["X0Y1Z1"], Nsets["X1Y0Z0"], Nsets["X0Y0Z0"]], # 6-5 = 4-3
+            [Nsets["X1Y0Z1"], Nsets["X0Y0Z1"], Nsets["X1Y0Z0"], Nsets["X0Y0Z0"]], # 8-7 = 4-3
+            
+            [Nsets["X0Y1Z1"], Nsets["X0Y0Z1"], Nsets["X0Y1Z0"], Nsets["X0Y0Z0"]], # 5-7 = 1-3
+
+            # Edges
+            [Nsets["X1Y0"], Nsets["X0Y0"], Nsets["X1Y0Z0"], Nsets["X0Y0Z0"]], # e2-e1 = 4-3
+            [Nsets["X1Y1"], Nsets["X0Y1"], Nsets["X1Y0Z0"], Nsets["X0Y0Z0"]], # e3-e4 = 4-3
+            [Nsets["X1Z0"], Nsets["X0Z0"], Nsets["X1Y0Z0"], Nsets["X0Y0Z0"]], # e6-e5 = 4-3
+            [Nsets["X1Z1"], Nsets["X0Z1"], Nsets["X1Y0Z0"], Nsets["X0Y0Z0"]], # e7-e8 = 4-3
+
+            [Nsets["Y1Z0"], Nsets["Y0Z0"], Nsets["X0Y1Z0"], Nsets["X0Y0Z0"]], # e10-e9 = 1-3
+            [Nsets["Y1Z1"], Nsets["Y0Z1"], Nsets["X0Y1Z0"], Nsets["X0Y0Z0"]], # e11-e12 = 1-3
+            [Nsets["X0Y1"], Nsets["X0Y0"], Nsets["X0Y1Z0"], Nsets["X0Y0Z0"]], # e4-e1 = 1-3
+
+            [Nsets["X0Z1"], Nsets["X0Z0"], Nsets["X0Y0Z1"], Nsets["X0Y0Z0"]], # e8-e5 = 7-3
+            [Nsets["Y0Z1"], Nsets["Y0Z0"], Nsets["X0Y0Z1"], Nsets["X0Y0Z0"]], # e12-e9 = 7-3
+
+            # Faces
+            [Nsets["X1"], Nsets["X0"], Nsets["X1Y0Z0"], Nsets["X0Y0Z0"]], # xFront-xBack = 4-3
+            [Nsets["Y1"], Nsets["Y0"], Nsets["X0Y1Z0"], Nsets["X0Y0Z0"]], # yTop-yBottom = 1-3
+            [Nsets["Z1"], Nsets["Z0"], Nsets["X0Y0Z1"], Nsets["X0Y0Z0"]], # zLeft-zRight = 7-3
+            ]
+        else:
+            logging.warning('specfied GridNodes has illegal number of dimensions')
+    def to_inp(self, inp_file_obj):
+        for node_pair in self.node_pairs:
+            eq_type = [SequentialDifferenceEquation, SequentialDifferenceEquation, SequentialDifferenceEquation]
+            for i, eqn in enumerate(eq_type):
+                dof = i+1 #define for X, Y, (Z)
+                # Write Equations
+                eqn(node_pair, dof).to_inp(inp_file_obj)
 
 @dataclass
-class PeriodicBoundaryCondition(DisplacementBoundaryCondition):
+class OldPeriodicBoundaryCondition(DisplacementBoundaryCondition):
     nodes: GridNodes
 
     def __post_init__(self):
@@ -390,7 +703,17 @@ class Model:
     elements: RectangularElements
     materials: Iterable[Material]
     bcs: Iterable[BoundaryConditions] = ()
+    fixed_bnds: Iterable[FixedBoundaryCondition] = ()
     nsets: Iterable[NodeSet] = ()
+
+    # def __post_init__(self):
+    #     self.dim = self.nodes.dim
+    #     if self.dim == 2:
+    #         self.elements = RectangularElements
+    #     elif self.dim == 3:
+    #         self.elements = CubeElements
+    #     else:
+    #         logging.warning('specfied GridNode has illegal number of dimensions')
 
     def to_inp(self, inp_file_obj):
         self.nodes.to_inp(inp_file_obj)
@@ -401,6 +724,8 @@ class Model:
             m.to_inp(inp_file_obj)
         for bc in self.bcs:
             bc.to_inp(inp_file_obj)
+        for fixed_bnd in self.fixed_bnds:
+            fixed_bnd.to_inp(inp_file_obj)
 
 
 @dataclass
