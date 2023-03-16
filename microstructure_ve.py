@@ -296,10 +296,10 @@ Sides_2d = {
     "X1": np.s_[1:-1, -1],  # Right (Edge)
 
     # VERTICES
-    "X0Y0Z0": np.s_[0, 0],   # Left Bottom (Vertex)
-    "X0Y1Z0": np.s_[-1, 0],  # Left Top (Vertex)
-    "X1Y0Z0": np.s_[0, -1],  # Right Bottom (Vertex)
-    "X1Y1Z0": np.s_[-1, -1], # Right Top (Vertex)
+    "X0Y0": np.s_[0, 0],   # Left Bottom (Vertex)
+    "X0Y1": np.s_[-1, 0],  # Left Top (Vertex)
+    "X1Y0": np.s_[0, -1],  # Right Bottom (Vertex)
+    "X1Y1": np.s_[-1, -1], # Right Top (Vertex)
 }
 
 
@@ -615,11 +615,15 @@ class OldPeriodicBoundaryCondition(DisplacementBoundaryCondition):
     def __post_init__(self):
         make_set = partial(NodeSet.from_side_name, nodes=self.nodes)
         ndim = len(self.nodes.shape)
-        self.driven_nset = make_set("RightSurface")
+        # self.driven_nset = make_set("RightSurface")
+        self.driven_nset = make_set("X1")
         self.node_pairs: List[List[NodeSet]] = [
-            [make_set("LeftSurface"), self.driven_nset],
-            [make_set("BotmSurface"), make_set("TopSurface")],
-            [make_set("BotmRight"), make_set("TopRight")],
+            # [make_set("LeftSurface"), self.driven_nset],
+            # [make_set("BotmSurface"), make_set("TopSurface")],
+            # [make_set("BotmRight"), make_set("TopRight")],
+            [make_set("X0"), self.driven_nset],
+            [make_set("Y0"), make_set("Y1")],
+            [make_set("X1Y0"), make_set("X1Y1")],
         ]
         # Displacement at any surface node is equal to the opposing surface
         # node in both degrees of freedom unless one of the surfaces is a driver.

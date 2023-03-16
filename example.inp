@@ -9874,8 +9874,7 @@ Example RVE simulation
 1.735135e+02, -1.944946e+03, 1.735135e+02, -1.944946e+03, 5.047700e+17
 1.708108e+02, -1.944946e+03, 1.708108e+02, -1.944946e+03, 6.354600e+17
 1.702703e+02, -1.944946e+03, 1.702703e+02, -1.944946e+03, 8.000000e+17
-*Nset, nset=LeftSurface
-1
+*Nset, nset=X0
 52
 103
 154
@@ -9925,9 +9924,7 @@ Example RVE simulation
 2398
 2449
 2500
-2551
-*Nset, nset=RightSurface
-51
+*Nset, nset=X1
 102
 153
 204
@@ -9977,17 +9974,16 @@ Example RVE simulation
 2448
 2499
 2550
-2601
 *Equation
 3
-LeftSurface, 1, 1.
-RightSurface, 1, -1.
+X0, 1, 1.
+X1, 1, -1.
 DRIVE, 1, 1.
 *Equation
 2
-LeftSurface, 2, 1.
-RightSurface, 2, -1.
-*Nset, nset=BotmSurface
+X0, 2, 1.
+X1, 2, -1.
+*Nset, nset=Y0
 2
 3
 4
@@ -10037,7 +10033,7 @@ RightSurface, 2, -1.
 48
 49
 50
-*Nset, nset=TopSurface
+*Nset, nset=Y1
 2552
 2553
 2554
@@ -10089,24 +10085,24 @@ RightSurface, 2, -1.
 2600
 *Equation
 2
-BotmSurface, 1, 1.
-TopSurface, 1, -1.
+Y0, 1, 1.
+Y1, 1, -1.
 *Equation
 2
-BotmSurface, 2, 1.
-TopSurface, 2, -1.
-*Nset, nset=BotmRight
+Y0, 2, 1.
+Y1, 2, -1.
+*Nset, nset=X1Y0
 51
-*Nset, nset=TopRight
+*Nset, nset=X1Y1
 2601
 *Equation
 2
-BotmRight, 1, 1.
-TopRight, 1, -1.
+X1Y0, 1, 1.
+X1Y1, 1, -1.
 *Equation
 2
-BotmRight, 2, 1.
-TopRight, 2, -1.
+X1Y0, 2, 1.
+X1Y1, 2, -1.
 *Boundary, type=displacement
 DRIVE, 1, 1, 0.0
 *STEP,PERTURBATION

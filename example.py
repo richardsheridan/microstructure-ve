@@ -5,7 +5,7 @@ import numpy as np
 from microstructure_ve import (
     Heading,
     GridNodes,
-    PeriodicBoundaryCondition,
+    OldPeriodicBoundaryCondition,
     RectangularElements,
     ElementSet,
     ViscoelasticMaterial,
@@ -68,7 +68,7 @@ model = Model(
     elements=elements,
     materials=[filler_material, intph_material, mat_material],
     bcs=[
-        PeriodicBoundaryCondition(
+        OldPeriodicBoundaryCondition(
             nodes=nodes, nset=drive_nset, first_dof=1, last_dof=1, displacement=0.0
         )
     ],
