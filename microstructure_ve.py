@@ -231,27 +231,6 @@ class NodeSet:
     node_inds: Union[np.ndarray, List[int]]
 
     @classmethod
-    def from_side_name(cls, name, nodes):
-        if nodes.dim == 2:
-            sides = Sides_2d
-        elif nodes.dim == 3:
-            sides = Sides_3d
-        else:
-            raise ValueError('GridNodes has illegal number of dimensions', nodes.ndim)
-        sl = sides[name]
-        inds = np.indices(nodes.shape)
-        inds_list = []
-        for ind in inds:
-            inds_list.append(ind[sl].ravel())
-
-        inds_tuple = tuple(inds_list)
-        node_inds = 1 + np.ravel_multi_index(
-            inds_tuple,
-            dims=nodes.shape,
-        )
-        return cls(name, node_inds)
-
-    @classmethod
     def from_slice(cls, name, slice, nodes):
         sl = slice
         inds = np.indices(nodes.shape)
@@ -575,7 +554,7 @@ class OldPeriodicBoundaryCondition(DisplacementBoundaryCondition):
     nodes: GridNodes
 
     def __post_init__(self):
-        make_set = partial(NodeSet.from_side_name, nodes=self.nodes)
+        make_set = lambda name: NodeSet.from_slice(name, Sides_2d[name], self.nodes)
         ndim = len(self.nodes.shape)
         self.driven_nset = make_set("X1")
         self.node_pairs: List[List[NodeSet]] = [
