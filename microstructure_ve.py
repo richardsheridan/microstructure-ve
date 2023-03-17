@@ -594,9 +594,9 @@ class OldPeriodicBoundaryCondition(DisplacementBoundaryCondition):
     def __post_init__(self):
         make_set = lambda name: NodeSet.from_slice(name, Sides_2d[name], self.nodes)
         ndim = len(self.nodes.shape)
-        self.driven_nset = make_set("X1")
+        self.driven_nset = NodeSet.from_slice("X1ALL", np.s_[:, -1], self.nodes)
         self.node_pairs: List[List[NodeSet]] = [
-            [make_set("X0"), self.driven_nset],
+            [NodeSet.from_slice("X0ALL", np.s_[:, 0], self.nodes), self.driven_nset],
             [make_set("Y0"), make_set("Y1")],
             [make_set("X1Y0"), make_set("X1Y1")],
         ]
