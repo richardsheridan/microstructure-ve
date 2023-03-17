@@ -96,21 +96,6 @@ def Elements(nodes: GridNodes):
     else:
         raise ValueError('GridNodes has illegal number of dimensions', nodes.dim)
 
-# # Alternatively, if you prefer Classes:
-
-# @dataclass
-# class Elements:
-#     nodes: GridNodes
-
-#     def get_elements(self):
-#         if self.nodes.dim == 2:
-#             return RectangularElements(self.nodes)
-#         elif self.nodes.dim == 3:
-#             return CubicElements(self.nodes)
-#         else:
-#             logging.warning('specfied GridNodes has illegal number of dimensions')
-#             return None
-
 
 @dataclass
 class RectangularElements:
@@ -119,11 +104,6 @@ class RectangularElements:
 
     def __post_init__(self):
         self.element_nums = range(1, 1 + np.prod(self.nodes.shape - 1))
-        # # Declare nsets using "Sides_2d" slicer dictionary
-        # self.Nsets = {}
-        # make_set = partial(NodeSet.from_side_name, nodes=self.nodes)
-        # for side in Sides_2d:
-        #     self.Nsets[side] = make_set(side)
 
     def to_inp(self, inp_file_obj):
         # strategy: generate one array representing all nodes, then make slices of it
@@ -152,11 +132,6 @@ class CubicElements:
 
     def __post_init__(self):
         self.element_nums = range(1, 1 + np.prod(self.nodes.shape - 1))
-        # # Declare nsets using "Sides_3d" slicer dictionary
-        # self.Nsets = {}
-        # make_set = partial(NodeSet.from_side_name, nodes=self.nodes)
-        # for side in Sides_3d:
-        #     self.Nsets[side] = make_set(side)
 
     def to_inp(self, inp_file_obj):
         # strategy: generate one array representing all nodes, then make slices of it
@@ -187,17 +162,6 @@ class CubicElements:
                 inp_file_obj.write(f",\t{n:d}")
             inp_file_obj.write("\n")
 
-# "top" is image rather than matrix convention
-# sides = {
-#     "LeftSurface": np.s_[:, 0],
-#     "RightSurface": np.s_[:, -1],
-#     "BotmSurface": np.s_[0, 1:-1],
-#     "TopSurface": np.s_[-1, 1:-1],
-#     "BotmLeft": np.s_[0, 0],
-#     "TopLeft": np.s_[-1, 0],
-#     "BotmRight": np.s_[0, -1],
-#     "TopRight": np.s_[-1, -1],
-# }
 
 Sides_3d = {
     # Abaqus interprets this as [Z, Y, X]
@@ -242,46 +206,6 @@ Sides_3d = {
 }
 
 Sides_2d = {
-    # Abaqus interprets this as [Z, Y, X]
-    # Remeber that np arrays are written in [H, W, D] or [Y, X, Z]
-    # 3D (Vestigial)
-    # # # FACES
-    # # "X0": np.s_[1:-1, 1:-1, 0],  # Left (Face)
-    # # "X1": np.s_[1:-1, 1:-1, -1], # Right (Face)
-    # # "Y0": np.s_[1:-1, 0, 1:-1],  # Bottom (Face)
-    # # "Y1": np.s_[1:-1, -1, 1:-1], # Top (Face)
-    # # "Z0": np.s_[0, 1:-1, 1:-1],  # Back (Face)
-    # # "Z1": np.s_[-1, 1:-1, 1:-1], # Front (Face)
-
-    # # EDGES
-    # # on x axis
-    # "Y0Z0": np.s_[0, 0, 1:-1],  # Bottom Back (Edge)
-    # # "Y0Z1": np.s_[-1, 0, 1:-1],  # Bottom Front (Edge)
-    # "Y1Z0": np.s_[0, -1, 1:-1],  # Top Back (Edge)
-    # # "Y1Z1": np.s_[-1, -1, 1:-1],  # Top Front (Edge)
-
-    # # on y axis
-    # "X0Z0": np.s_[0, 1:-1, 0],  # Left Back (Edge)
-    # # "X0Z1": np.s_[-1, 1:-1, 0],  # Left Front (Edge)
-    # "X1Z0": np.s_[0, 1:-1, -1],  # Right Back (Edge)
-    # # "X1Z1": np.s_[-1, 1:-1, -1],  # Right Front (Edge)
-
-    # # # on z axis
-    # # "X0Y0": np.s_[1:-1, 0, 0],  # Left Bottom (Edge)
-    # # "X0Y1": np.s_[1:-1, -1, 0],  # Left Top (Edge)
-    # # "X1Y0": np.s_[1:-1, 0, -1],  # Right Bottom (Edge)
-    # # "X1Y1": np.s_[1:-1, -1, -1],  # Right Top (Edge)
-
-    # # VERTICES
-    # "X0Y0Z0": np.s_[0, 0, 0],   # Left Bottom Back (Vertex)
-    # "X0Y1Z0": np.s_[0, -1, 0],  # Left Top Back (Vertex)
-    # "X1Y0Z0": np.s_[0, 0, -1],  # Right Bottom Back (Vertex)
-    # "X1Y1Z0": np.s_[0, -1, -1], # Right Top Back (Vertex)
-
-    # # "X0Y0Z1": np.s_[-1, 0, 0],   # Left Bottom Front (Vertex)
-    # # "X0Y1Z1": np.s_[-1, -1, 0],  # Left Top Front (Vertex)
-    # # "X1Y0Z1": np.s_[-1, 0, -1],  # Right Bottom Front (Vertex)
-    # # "X1Y1Z1": np.s_[-1, -1, -1], # Right Top Front (Vertex)
 
     # 2D
     # EDGES
@@ -653,12 +577,8 @@ class OldPeriodicBoundaryCondition(DisplacementBoundaryCondition):
     def __post_init__(self):
         make_set = partial(NodeSet.from_side_name, nodes=self.nodes)
         ndim = len(self.nodes.shape)
-        # self.driven_nset = make_set("RightSurface")
         self.driven_nset = make_set("X1")
         self.node_pairs: List[List[NodeSet]] = [
-            # [make_set("LeftSurface"), self.driven_nset],
-            # [make_set("BotmSurface"), make_set("TopSurface")],
-            # [make_set("BotmRight"), make_set("TopRight")],
             [make_set("X0"), self.driven_nset],
             [make_set("Y0"), make_set("Y1")],
             [make_set("X1Y0"), make_set("X1Y1")],
@@ -747,15 +667,6 @@ class Model:
     bcs: Iterable[BoundaryConditions] = ()
     fixed_bnds: Iterable[FixedBoundaryCondition] = ()
     nsets: Iterable[NodeSet] = ()
-
-    # def __post_init__(self):
-    #     self.dim = self.nodes.dim
-    #     if self.dim == 2:
-    #         self.elements = RectangularElements
-    #     elif self.dim == 3:
-    #         self.elements = CubeElements
-    #     else:
-    #         logging.warning('specfied GridNode has illegal number of dimensions')
 
     def to_inp(self, inp_file_obj):
         self.nodes.to_inp(inp_file_obj)
