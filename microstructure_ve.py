@@ -79,7 +79,6 @@ class NodeSet:
 class GridNodes:
     shape: np.ndarray
     scale: float
-    dim: int = field(init = False)
     nsets: dict[str, NodeSet] = field(init=False)
 
     @classmethod
@@ -90,7 +89,6 @@ class GridNodes:
     def __post_init__(self):
         self.node_nums = range(1, 1 + np.prod(self.shape))  # 1-indexing for ABAQUS
         self.virtual_node = self.node_nums[-1] + 1
-        self.dim = len(self.shape)
         # create nsets
         self.nsets = {}
         # make_set = partial(NodeSet.from_side_name, nodes=self)
@@ -106,6 +104,9 @@ class GridNodes:
         else:
             raise ValueError('GridNodes has illegal number of dimensions', self.dim)
 
+    @property
+    def dim(self):
+        return len(self.shape)
 
     def to_inp(self, inp_file_obj):
         pos = self.scale * np.indices(self.shape)[::-1]
