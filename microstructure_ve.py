@@ -329,7 +329,7 @@ class NodeSet:
             dims=nodes.shape,
         )
         return cls(name, node_inds)
-    
+
     @classmethod
     def from_slice(cls, name, slice, nodes):
         sl = slice
@@ -498,7 +498,7 @@ class Material:
 
 
 @dataclass
-class ViscoelasticMaterial(Material):
+class TabularViscoelasticMaterial(Material):
     freq: np.ndarray  # excitation freq in Hz
     youngs_cplx: np.ndarray  # complex youngs modulus
     shift: float = 0.0  # frequency shift induced relative to nominal properties
@@ -539,19 +539,44 @@ class ViscoelasticMaterial(Material):
 
         return wgstar, wkstar
 
+    def normalize_constant_bulk_modulus(self):
+        # assume bulk modulus of glassy system
+        bulk_inf = self.youngs_cplx[-1].real / (3 * (1 - 2 * self.poisson))
+        shear_cplx = 3 * bulk_inf * self.youngs_cplx / (9 * bulk_inf - self.youngs_cplx)
+
+        # special normalized shear modulus used by abaqus
+        wgstar = np.empty_like(shear_cplx)
+        shear_inf = shear_cplx[0].real
+        wgstar.real = shear_cplx.imag / shear_inf
+        wgstar.imag = 1 - shear_cplx.real / shear_inf
+
+        # special normalized bulk modulus used by abaqus
+        # if bulk_cplx = bulk_inf, wgstar is all zeros
+        wkstar = np.zeros_like(shear_cplx)
+
+        return wgstar, wkstar
+
+    def normalize_constant_nu_modulus(self):
+        # special normalized bulk modulus used by abaqus
+        # if poisson's ratio is frequency-independent, then
+        # youngs=shear=bulk when normalized
+        wgstar = np.empty_like(self.youngs_cplx)
+        youngs_inf = self.youngs_cplx[0].real
+        wgstar.real = self.youngs_cplx.imag / youngs_inf
+        wgstar.imag = 1 - self.youngs_cplx.real / youngs_inf
+
+        return wgstar, wgstar
+
     def to_inp(self, inp_file_obj):
         super().to_inp(inp_file_obj)
         inp_file_obj.write("*Viscoelastic, frequency=TABULAR\n")
 
-        # special normalized bulk modulus used by abaqus
-        # if poisson's ratio is frequency-independent, it drops out
-        # and youngs=shear=bulk when normalized
-        youngs_inf = self.youngs_cplx[0].real
-        real = (self.youngs_cplx.imag / youngs_inf).tolist()
-        imag = (1 - self.youngs_cplx.real / youngs_inf).tolist()
-        freq = self.apply_shift().tolist()
+        wgstar, wkstar = self.normalize_constant_nu_modulus()
+        freq = self.apply_shift()
 
-        for wgr, wgi, wkr, wki, f in zip(real, imag, real, imag, freq):
+        for wgr, wgi, wkr, wki, f in zip(
+            wgstar.real, wgstar.imag, wkstar.real, wkstar.imag, freq
+        ):
             inp_file_obj.write(f"{wgr:.6e}, {wgi:.6e}, {wkr:.6e}, {wki:.6e}, {f:.6e}\n")
 
 @dataclass
@@ -577,7 +602,7 @@ class PeriodicBoundaryCondition:
             [Nsets["X1Y1Z0"], Nsets["X0Y1Z0"], Nsets["X1Y0Z0"], Nsets["X0Y0Z0"]], # 2-1 = 4-3
             [Nsets["X1Y1Z1"], Nsets["X0Y1Z1"], Nsets["X1Y0Z0"], Nsets["X0Y0Z0"]], # 6-5 = 4-3
             [Nsets["X1Y0Z1"], Nsets["X0Y0Z1"], Nsets["X1Y0Z0"], Nsets["X0Y0Z0"]], # 8-7 = 4-3
-            
+
             [Nsets["X0Y1Z1"], Nsets["X0Y0Z1"], Nsets["X0Y1Z0"], Nsets["X0Y0Z0"]], # 5-7 = 1-3
 
             # Edges
@@ -607,6 +632,22 @@ class PeriodicBoundaryCondition:
                 dof = i+1 #define for X, Y, (Z)
                 # Write Equations
                 eqn(node_pair, dof).to_inp(inp_file_obj)
+
+@dataclass
+class PronyViscoelasticMaterial(Material):
+    shear_modulus_ratios: np.ndarray  # ratio of plateau modulus to instantaneous modulus
+    bulk_modulus_ratios: np.ndarray
+    relaxation_times: np.ndarray
+
+    def to_inp(self, inp_file_obj):
+        super().to_inp(inp_file_obj)
+        inp_file_obj.write("*Viscoelastic, frequency=PRONY\n")
+
+        for g, k, t in zip(
+            self.shear_modulus_ratios, self.bulk_modulus_ratios, self.relaxation_times
+        ):
+            inp_file_obj.write(f"{g:.6e}, {k:.6e}, {t:.6e}\n")
+
 
 @dataclass
 class OldPeriodicBoundaryCondition(DisplacementBoundaryCondition):

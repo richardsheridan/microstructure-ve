@@ -8,7 +8,7 @@ from microstructure_ve import (
     OldPeriodicBoundaryCondition,
     RectangularElements,
     ElementSet,
-    ViscoelasticMaterial,
+    TabularViscoelasticMaterial,
     Material,
     periodic_assign_intph,
     load_viscoelasticity,
@@ -42,7 +42,7 @@ elements = RectangularElements(nodes)
 filler_elset, intph_elset, mat_elset = ElementSet.from_intph_image(intph_img)
 
 filler_material = Material(filler_elset, density=2.65e-15, youngs=5e5, poisson=0.15)
-intph_material = ViscoelasticMaterial(
+intph_material = TabularViscoelasticMaterial(
     intph_elset,
     density=1.18e-15,
     poisson=0.35,
@@ -53,7 +53,7 @@ intph_material = ViscoelasticMaterial(
     left_broadening=1.8,
     right_broadening=1.5,
 )
-mat_material = ViscoelasticMaterial(
+mat_material = TabularViscoelasticMaterial(
     mat_elset,
     density=1.18e-15,
     poisson=0.35,
