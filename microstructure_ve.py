@@ -1,4 +1,3 @@
-import logging
 import pathlib
 import shutil
 import subprocess
@@ -70,7 +69,7 @@ class GridNodes:
             for side, slice in Sides_3d.items():
                 self.Nsets[side] = make_set(side, slice)
         else:
-            logging.warning('specfied GridNodes has illegal number of dimensions')
+            raise ValueError('GridNodes has illegal number of dimensions', self.dim)
 
 
     def to_inp(self, inp_file_obj):
@@ -95,8 +94,7 @@ def Elements(nodes: GridNodes):
     elif nodes.dim == 3:
         return CubicElements(nodes)
     else:
-        logging.warning('specfied GridNodes has illegal number of dimensions')
-        return None
+        raise ValueError('GridNodes has illegal number of dimensions', nodes.dim)
 
 # # Alternatively, if you prefer Classes:
 
@@ -315,8 +313,7 @@ class NodeSet:
         elif nodes.dim == 3:
             sides = Sides_3d
         else:
-            logging.warning('specfied GridNodes has illegal number of dimensions')
-            sides = None
+            raise ValueError('GridNodes has illegal number of dimensions', nodes.ndim)
         sl = sides[name]
         inds = np.indices(nodes.shape)
         inds_list = []
@@ -624,7 +621,7 @@ class PeriodicBoundaryCondition:
             [Nsets["Z1"], Nsets["Z0"], Nsets["X0Y0Z1"], Nsets["X0Y0Z0"]], # zLeft-zRight = 7-3
             ]
         else:
-            logging.warning('specfied GridNodes has illegal number of dimensions')
+            raise ValueError('GridNodes has illegal number of dimensions', self.nodes.dim)
     def to_inp(self, inp_file_obj):
         for node_pair in self.node_pairs:
             eq_type = [SequentialDifferenceEquation, SequentialDifferenceEquation, SequentialDifferenceEquation]
