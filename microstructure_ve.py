@@ -35,6 +35,41 @@ class Heading:
         )
 
 
+@dataclass(eq=False)
+class NodeSet:
+    name: str
+    node_inds: Union[np.ndarray, List[int]]
+
+    @classmethod
+    def from_side_name(cls, name, nodes):
+        if nodes.dim == 2:
+            sides = Sides_2d
+        elif nodes.dim == 3:
+            sides = Sides_3d
+        else:
+            raise ValueError('GridNodes has illegal number of dimensions', nodes.ndim)
+        sl = sides[name]
+        inds = np.indices(nodes.shape)
+        inds_list = []
+        for ind in inds:
+            inds_list.append(ind[sl].ravel())
+
+        inds_tuple = tuple(inds_list)
+        node_inds = 1 + np.ravel_multi_index(
+            inds_tuple,
+            dims=nodes.shape,
+        )
+        return cls(name, node_inds)
+
+    def __str__(self):
+        return self.name
+
+    def to_inp(self, inp_file_obj):
+        inp_file_obj.write(f"*Nset, nset={self.name}\n")
+        for i in self.node_inds:
+            inp_file_obj.write(f"{i:d}\n")
+
+
 # NOTE: every "1 +" you see is correcting the array indexing mismatch between
 # python and abaqus (python has zero-indexed, abaqus has one-indexed arrays)
 # however "+ 1" actually indicates an extra step
@@ -45,7 +80,7 @@ class GridNodes:
     shape: np.ndarray
     scale: float
     dim: int = field(init = False)
-    Nsets: dict = field(init = False)
+    nsets: dict[str, NodeSet] = field(init=False)
 
     @classmethod
     def from_intph_img(cls, intph_img, scale):
@@ -57,17 +92,17 @@ class GridNodes:
         self.virtual_node = self.node_nums[-1] + 1
         self.dim = len(self.shape)
         # create nsets
-        self.Nsets = {}
+        self.nsets = {}
         # make_set = partial(NodeSet.from_side_name, nodes=self)
         make_set = partial(NodeSet.from_slice, nodes=self)
         if self.dim == 2:
             # Declare nsets using "Sides_2d" slicer dictionary
             for side, slice in Sides_2d.items():
-                self.Nsets[side] = make_set(side, slice)
+                self.nsets[side] = make_set(side, slice)
         elif self.dim == 3:
             # Declare nsets using "Sides_3d" slicer dictionary
             for side, slice in Sides_3d.items():
-                self.Nsets[side] = make_set(side, slice)
+                self.nsets[side] = make_set(side, slice)
         else:
             raise ValueError('GridNodes has illegal number of dimensions', self.dim)
 
@@ -86,6 +121,8 @@ class GridNodes:
         for d in p:
             inp_file_obj.write(f",\t{d:.6e}")
         inp_file_obj.write("\n")
+        for nset in self.nsets.values():
+            nset.to_inp(inp_file_obj)
 
 # Function which returns the appropriate Element Type for the given nodes
 def Elements(nodes: GridNodes):
@@ -484,44 +521,44 @@ class PeriodicBoundaryCondition:
     nodes: GridNodes
 
     def __post_init__(self):
-        Nsets = self.nodes.Nsets
+        nsets = self.nodes.nsets
         if self.nodes.dim == 2:
             # 2D boundaries
             self.node_pairs: List[List[NodeSet]] = [
             # Vertices
-            [Nsets["X1Y1"], Nsets["X0Y1"], Nsets["X1Y0"], Nsets["X0Y0"]], # 2-1 = 4-3
+            [nsets["X1Y1"], nsets["X0Y1"], nsets["X1Y0"], nsets["X0Y0"]], # 2-1 = 4-3
 
             # Edges
-            [Nsets["X1"], Nsets["X0"], Nsets["X1Y0"], Nsets["X0Y0"]], # e6-e5 = 4-3
-            [Nsets["Y1"], Nsets["Y0"], Nsets["X0Y1"], Nsets["X0Y0"]], # e10-e9 = 1-3
+            [nsets["X1"], nsets["X0"], nsets["X1Y0"], nsets["X0Y0"]], # e6-e5 = 4-3
+            [nsets["Y1"], nsets["Y0"], nsets["X0Y1"], nsets["X0Y0"]], # e10-e9 = 1-3
             ]
         elif self.nodes.dim == 3:
             # 3D boundaries
             self.node_pairs: List[List[NodeSet]] = [
             # Vertices
-            [Nsets["X1Y1Z0"], Nsets["X0Y1Z0"], Nsets["X1Y0Z0"], Nsets["X0Y0Z0"]], # 2-1 = 4-3
-            [Nsets["X1Y1Z1"], Nsets["X0Y1Z1"], Nsets["X1Y0Z0"], Nsets["X0Y0Z0"]], # 6-5 = 4-3
-            [Nsets["X1Y0Z1"], Nsets["X0Y0Z1"], Nsets["X1Y0Z0"], Nsets["X0Y0Z0"]], # 8-7 = 4-3
+            [nsets["X1Y1Z0"], nsets["X0Y1Z0"], nsets["X1Y0Z0"], nsets["X0Y0Z0"]], # 2-1 = 4-3
+            [nsets["X1Y1Z1"], nsets["X0Y1Z1"], nsets["X1Y0Z0"], nsets["X0Y0Z0"]], # 6-5 = 4-3
+            [nsets["X1Y0Z1"], nsets["X0Y0Z1"], nsets["X1Y0Z0"], nsets["X0Y0Z0"]], # 8-7 = 4-3
 
-            [Nsets["X0Y1Z1"], Nsets["X0Y0Z1"], Nsets["X0Y1Z0"], Nsets["X0Y0Z0"]], # 5-7 = 1-3
+            [nsets["X0Y1Z1"], nsets["X0Y0Z1"], nsets["X0Y1Z0"], nsets["X0Y0Z0"]], # 5-7 = 1-3
 
             # Edges
-            [Nsets["X1Y0"], Nsets["X0Y0"], Nsets["X1Y0Z0"], Nsets["X0Y0Z0"]], # e2-e1 = 4-3
-            [Nsets["X1Y1"], Nsets["X0Y1"], Nsets["X1Y0Z0"], Nsets["X0Y0Z0"]], # e3-e4 = 4-3
-            [Nsets["X1Z0"], Nsets["X0Z0"], Nsets["X1Y0Z0"], Nsets["X0Y0Z0"]], # e6-e5 = 4-3
-            [Nsets["X1Z1"], Nsets["X0Z1"], Nsets["X1Y0Z0"], Nsets["X0Y0Z0"]], # e7-e8 = 4-3
+            [nsets["X1Y0"], nsets["X0Y0"], nsets["X1Y0Z0"], nsets["X0Y0Z0"]], # e2-e1 = 4-3
+            [nsets["X1Y1"], nsets["X0Y1"], nsets["X1Y0Z0"], nsets["X0Y0Z0"]], # e3-e4 = 4-3
+            [nsets["X1Z0"], nsets["X0Z0"], nsets["X1Y0Z0"], nsets["X0Y0Z0"]], # e6-e5 = 4-3
+            [nsets["X1Z1"], nsets["X0Z1"], nsets["X1Y0Z0"], nsets["X0Y0Z0"]], # e7-e8 = 4-3
 
-            [Nsets["Y1Z0"], Nsets["Y0Z0"], Nsets["X0Y1Z0"], Nsets["X0Y0Z0"]], # e10-e9 = 1-3
-            [Nsets["Y1Z1"], Nsets["Y0Z1"], Nsets["X0Y1Z0"], Nsets["X0Y0Z0"]], # e11-e12 = 1-3
-            [Nsets["X0Y1"], Nsets["X0Y0"], Nsets["X0Y1Z0"], Nsets["X0Y0Z0"]], # e4-e1 = 1-3
+            [nsets["Y1Z0"], nsets["Y0Z0"], nsets["X0Y1Z0"], nsets["X0Y0Z0"]], # e10-e9 = 1-3
+            [nsets["Y1Z1"], nsets["Y0Z1"], nsets["X0Y1Z0"], nsets["X0Y0Z0"]], # e11-e12 = 1-3
+            [nsets["X0Y1"], nsets["X0Y0"], nsets["X0Y1Z0"], nsets["X0Y0Z0"]], # e4-e1 = 1-3
 
-            [Nsets["X0Z1"], Nsets["X0Z0"], Nsets["X0Y0Z1"], Nsets["X0Y0Z0"]], # e8-e5 = 7-3
-            [Nsets["Y0Z1"], Nsets["Y0Z0"], Nsets["X0Y0Z1"], Nsets["X0Y0Z0"]], # e12-e9 = 7-3
+            [nsets["X0Z1"], nsets["X0Z0"], nsets["X0Y0Z1"], nsets["X0Y0Z0"]], # e8-e5 = 7-3
+            [nsets["Y0Z1"], nsets["Y0Z0"], nsets["X0Y0Z1"], nsets["X0Y0Z0"]], # e12-e9 = 7-3
 
             # Faces
-            [Nsets["X1"], Nsets["X0"], Nsets["X1Y0Z0"], Nsets["X0Y0Z0"]], # xFront-xBack = 4-3
-            [Nsets["Y1"], Nsets["Y0"], Nsets["X0Y1Z0"], Nsets["X0Y0Z0"]], # yTop-yBottom = 1-3
-            [Nsets["Z1"], Nsets["Z0"], Nsets["X0Y0Z1"], Nsets["X0Y0Z0"]], # zLeft-zRight = 7-3
+            [nsets["X1"], nsets["X0"], nsets["X1Y0Z0"], nsets["X0Y0Z0"]], # xFront-xBack = 4-3
+            [nsets["Y1"], nsets["Y0"], nsets["X0Y1Z0"], nsets["X0Y0Z0"]], # yTop-yBottom = 1-3
+            [nsets["Z1"], nsets["Z0"], nsets["X0Y0Z1"], nsets["X0Y0Z0"]], # zLeft-zRight = 7-3
             ]
         else:
             raise ValueError('GridNodes has illegal number of dimensions', self.nodes.dim)
