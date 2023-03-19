@@ -4,7 +4,7 @@ import subprocess
 from functools import partial, cache
 from itertools import product
 from os import PathLike
-from typing import Optional, Sequence, List, Union, TextIO, Iterable
+from typing import Optional, Sequence, List, Union, TextIO, Iterable, Literal, Dict
 
 import numpy as np
 from dataclasses import dataclass, field
@@ -79,7 +79,7 @@ class NodeSet:
 class GridNodes:
     shape: np.ndarray
     scale: float
-    nsets: dict[str, NodeSet] = field(init=False)
+    nsets: Dict[str, NodeSet] = field(init=False)
 
     @classmethod
     def from_intph_img(cls, intph_img, scale):
@@ -125,50 +125,22 @@ class GridNodes:
         for nset in self.nsets.values():
             nset.to_inp(inp_file_obj)
 
-# Function which returns the appropriate Element Type for the given nodes
-def Elements(nodes: GridNodes):
-    if nodes.dim == 2:
-        return RectangularElements(nodes)
-    elif nodes.dim == 3:
-        return CubicElements(nodes)
-    else:
-        raise ValueError('GridNodes has illegal number of dimensions', nodes.dim)
-
 
 @dataclass
-class RectangularElements:
+class GridElements:
     nodes: GridNodes
-    type: str = "CPE4R"
+    type: Literal["CPE4R", "CPS4R", "C3D8R"] = "C3D8R"
 
     def __post_init__(self):
-        self.element_nums = range(1, 1 + np.prod(self.nodes.shape - 1))
-
-    def to_inp(self, inp_file_obj):
-        # strategy: generate one array representing all nodes, then make slices of it
-        # that represent offsets to the right, top, and topright nodes to iterate
-        all_nodes = 1 + np.ravel_multi_index(
-            np.indices(self.nodes.shape), self.nodes.shape
-        )
-        # elements are defined counterclockwise
-        right_nodes = all_nodes[:-1, 1:].ravel()
-        key_nodes = all_nodes[:-1, :-1].ravel()
-        top_nodes = all_nodes[1:, :-1].ravel()
-        topright_nodes = all_nodes[1:, 1:].ravel()
-        inp_file_obj.write(f"*Element, type={self.type}\n")
-        for elem_num, tn, kn, rn, trn in zip(
-            self.element_nums, top_nodes, key_nodes, right_nodes, topright_nodes
-        ):
-            inp_file_obj.write(
-                f"{elem_num:d},\t{tn:d},\t{kn:d},\t{rn:d},\t{trn:d},\t\n"
-            )
-
-@dataclass
-class CubicElements:
-    nodes: GridNodes
-    # type: str = "CPE4R"  # CPS4R, C3D8R
-    type: str = "C3D8R"  # CPS4R, C3D8R
-
-    def __post_init__(self):
+        dim = self.nodes.dim
+        if dim == 2:
+            if self.type not in {"CPE4R", "CPS4R"}:
+                raise ValueError("Need a 2D element type, got:", self.type)
+        elif dim == 3:
+            if self.type not in {"C3D8R"}:
+                raise ValueError("Need a 3D element type, got:", self.type)
+        else:
+            raise ValueError('GridNodes has illegal number of dimensions', dim)
         self.element_nums = range(1, 1 + np.prod(self.nodes.shape - 1))
 
     def to_inp(self, inp_file_obj):
@@ -179,7 +151,7 @@ class CubicElements:
         )
         node_slices = list(product(
             (np.s_[:-1], np.s_[1:]),
-            repeat=len(self.nodes.shape)
+            repeat=self.nodes.dim
         ))
 
         # elements are defined counterclockwise, but product produces zigzag
@@ -679,7 +651,7 @@ class Step:
 @dataclass
 class Model:
     nodes: GridNodes
-    elements: RectangularElements
+    elements: GridElements
     materials: Iterable[Material]
     bcs: Iterable[BoundaryConditions] = ()
     fixed_bnds: Iterable[FixedBoundaryCondition] = ()

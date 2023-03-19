@@ -6,7 +6,7 @@ from microstructure_ve import (
     Heading,
     GridNodes,
     OldPeriodicBoundaryCondition,
-    RectangularElements,
+    GridElements,
     ElementSet,
     TabularViscoelasticMaterial,
     Material,
@@ -38,7 +38,7 @@ youngs_plat = youngs_cplx[0].real
 heading = Heading("Example RVE simulation")
 nodes = GridNodes.from_intph_img(intph_img, scale)
 drive_nset = NodeSet("DRIVE", [nodes.virtual_node])
-elements = RectangularElements(nodes)
+elements = GridElements(nodes, type="CPE4R")
 filler_elset, intph_elset, mat_elset = ElementSet.from_intph_image(intph_img)
 
 filler_material = Material(filler_elset, density=2.65e-15, youngs=5e5, poisson=0.15)
