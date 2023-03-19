@@ -95,12 +95,12 @@ class GridNodes:
         make_set = partial(NodeSet.from_slice, nodes=self)
         if self.dim == 2:
             # Declare nsets using "Sides_2d" slicer dictionary
-            for side, slice in Sides_2d.items():
-                self.nsets[side] = make_set(side, slice)
+            for side, sl in Sides_2d.items():
+                self.nsets[side] = make_set(side, sl)
         elif self.dim == 3:
             # Declare nsets using "Sides_3d" slicer dictionary
-            for side, slice in Sides_3d.items():
-                self.nsets[side] = make_set(side, slice)
+            for side, sl in Sides_3d.items():
+                self.nsets[side] = make_set(side, sl)
         else:
             raise ValueError('GridNodes has illegal number of dimensions', self.dim)
 
@@ -165,7 +165,7 @@ class GridElements:
         inp_file_obj.write(f"*Element, type={self.type}\n")
         for elem_num, *ns in zip(
             self.element_nums,
-            *(all_nodes[slice].ravel() for slice in node_slices),
+            *(all_nodes[sl].ravel() for sl in node_slices),
         ):
             inp_file_obj.write(f"{elem_num:d}")
             for n in ns:
@@ -177,42 +177,42 @@ Sides_3d = {
     # Abaqus interprets this as [Z, Y, X]
     # Remeber that np arrays are written in [H, W, D] or [Y, X, Z]
     # FACES
-    "X0": np.s_[1:-1, 1:-1, 0],  # Left (Face)
-    "X1": np.s_[1:-1, 1:-1, -1], # Right (Face)
-    "Y0": np.s_[1:-1, 0, 1:-1],  # Bottom (Face)
-    "Y1": np.s_[1:-1, -1, 1:-1], # Top (Face)
-    "Z0": np.s_[0, 1:-1, 1:-1],  # Back (Face)
-    "Z1": np.s_[-1, 1:-1, 1:-1], # Front (Face)
+    "X0": np.s_[1:-1, 1:-1, 0],   # Left (Face)
+    "X1": np.s_[1:-1, 1:-1, -1],  # Right (Face)
+    "Y0": np.s_[1:-1, 0, 1:-1],   # Bottom (Face)
+    "Y1": np.s_[1:-1, -1, 1:-1],  # Top (Face)
+    "Z0": np.s_[0, 1:-1, 1:-1],   # Back (Face)
+    "Z1": np.s_[-1, 1:-1, 1:-1],  # Front (Face)
 
     # EDGES
     # on x axis
-    "Y0Z0": np.s_[0, 0, 1:-1],  # Bottom Back (Edge)
-    "Y0Z1": np.s_[-1, 0, 1:-1],  # Bottom Front (Edge)
-    "Y1Z0": np.s_[0, -1, 1:-1],  # Top Back (Edge)
+    "Y0Z0": np.s_[0, 0, 1:-1],    # Bottom Back (Edge)
+    "Y0Z1": np.s_[-1, 0, 1:-1],   # Bottom Front (Edge)
+    "Y1Z0": np.s_[0, -1, 1:-1],   # Top Back (Edge)
     "Y1Z1": np.s_[-1, -1, 1:-1],  # Top Front (Edge)
 
     # on y axis
-    "X0Z0": np.s_[0, 1:-1, 0],  # Left Back (Edge)
-    "X0Z1": np.s_[-1, 1:-1, 0],  # Left Front (Edge)
-    "X1Z0": np.s_[0, 1:-1, -1],  # Right Back (Edge)
+    "X0Z0": np.s_[0, 1:-1, 0],    # Left Back (Edge)
+    "X0Z1": np.s_[-1, 1:-1, 0],   # Left Front (Edge)
+    "X1Z0": np.s_[0, 1:-1, -1],   # Right Back (Edge)
     "X1Z1": np.s_[-1, 1:-1, -1],  # Right Front (Edge)
 
     # on x axis
-    "X0Y0": np.s_[1:-1, 0, 0],  # Left Bottom (Edge)
-    "X0Y1": np.s_[1:-1, -1, 0],  # Left Top (Edge)
-    "X1Y0": np.s_[1:-1, 0, -1],  # Right Bottom (Edge)
+    "X0Y0": np.s_[1:-1, 0, 0],    # Left Bottom (Edge)
+    "X0Y1": np.s_[1:-1, -1, 0],   # Left Top (Edge)
+    "X1Y0": np.s_[1:-1, 0, -1],   # Right Bottom (Edge)
     "X1Y1": np.s_[1:-1, -1, -1],  # Right Top (Edge)
 
     # VERTICES
-    "X0Y0Z0": np.s_[0, 0, 0],   # Left Bottom Back (Vertex)
-    "X0Y1Z0": np.s_[0, -1, 0],  # Left Top Back (Vertex)
-    "X1Y0Z0": np.s_[0, 0, -1],  # Right Bottom Back (Vertex)
-    "X1Y1Z0": np.s_[0, -1, -1], # Right Top Back (Vertex)
+    "X0Y0Z0": np.s_[0, 0, 0],     # Left Bottom Back (Vertex)
+    "X0Y1Z0": np.s_[0, -1, 0],    # Left Top Back (Vertex)
+    "X1Y0Z0": np.s_[0, 0, -1],    # Right Bottom Back (Vertex)
+    "X1Y1Z0": np.s_[0, -1, -1],   # Right Top Back (Vertex)
 
-    "X0Y0Z1": np.s_[-1, 0, 0],   # Left Bottom Front (Vertex)
-    "X0Y1Z1": np.s_[-1, -1, 0],  # Left Top Front (Vertex)
-    "X1Y0Z1": np.s_[-1, 0, -1],  # Right Bottom Front (Vertex)
-    "X1Y1Z1": np.s_[-1, -1, -1], # Right Top Front (Vertex)
+    "X0Y0Z1": np.s_[-1, 0, 0],    # Left Bottom Front (Vertex)
+    "X0Y1Z1": np.s_[-1, -1, 0],   # Left Top Front (Vertex)
+    "X1Y0Z1": np.s_[-1, 0, -1],   # Right Bottom Front (Vertex)
+    "X1Y1Z1": np.s_[-1, -1, -1],  # Right Top Front (Vertex)
 }
 
 Sides_2d = {
@@ -220,18 +220,18 @@ Sides_2d = {
     # 2D
     # EDGES
     # on x axis
-    "Y0": np.s_[0, 1:-1],  # Bottom (Edge)
+    "Y0": np.s_[0, 1:-1],   # Bottom (Edge)
     "Y1": np.s_[-1, 1:-1],  # Top (Edge)
 
     # on y axis
-    "X0": np.s_[1:-1, 0],  # Left (Edge)
+    "X0": np.s_[1:-1, 0],   # Left (Edge)
     "X1": np.s_[1:-1, -1],  # Right (Edge)
 
     # VERTICES
-    "X0Y0": np.s_[0, 0],   # Left Bottom (Vertex)
-    "X0Y1": np.s_[-1, 0],  # Left Top (Vertex)
-    "X1Y0": np.s_[0, -1],  # Right Bottom (Vertex)
-    "X1Y1": np.s_[-1, -1], # Right Top (Vertex)
+    "X0Y0": np.s_[0, 0],    # Left Bottom (Vertex)
+    "X0Y1": np.s_[-1, 0],   # Left Top (Vertex)
+    "X1Y0": np.s_[0, -1],   # Right Bottom (Vertex)
+    "X1Y1": np.s_[-1, -1],  # Right Top (Vertex)
 }
 
 
@@ -241,12 +241,11 @@ class NodeSet:
     node_inds: Union[np.ndarray, List[int]]
 
     @classmethod
-    def from_slice(cls, name, slice, nodes):
-        sl = slice
+    def from_slice(cls, name, slice_, nodes):
         inds = np.indices(nodes.shape)
         inds_list = []
         for ind in inds:
-            inds_list.append(ind[sl].ravel())
+            inds_list.append(ind[slice_].ravel())
 
         inds_tuple = tuple(inds_list)
         node_inds = 1 + np.ravel_multi_index(
@@ -262,6 +261,7 @@ class NodeSet:
         inp_file_obj.write(f"*Nset, nset={self.name}\n")
         for i in self.node_inds:
             inp_file_obj.write(f"{i:d}\n")
+
 
 @dataclass
 class SequentialDifferenceEquation:
@@ -280,6 +280,7 @@ class SequentialDifferenceEquation:
 {self.nsets[3]}, {self.dof}, 1.
 """
             )
+
 
 @dataclass
 class EqualityEquation:
@@ -355,6 +356,7 @@ class BoundaryConditions:
 class FixedBoundaryCondition(BoundaryConditions):
     node: Union[NodeSet, int]
     dofs: Iterable
+
     def to_inp(self, inp_file_obj):
         inp_file_obj.write(
             f"""\
@@ -363,10 +365,11 @@ class FixedBoundaryCondition(BoundaryConditions):
         )
         for dof in self.dofs:
             inp_file_obj.write(
-            f"""\
+                f"""\
 {self.node}, {dof}, {dof}
 """
             )
+
 
 @dataclass
 class DisplacementBoundaryCondition(BoundaryConditions):
@@ -545,7 +548,7 @@ class PeriodicBoundaryCondition:
 
 @dataclass
 class PronyViscoelasticMaterial(Material):
-    shear_modulus_ratios: np.ndarray  # ratio of plateau modulus to instantaneous modulus
+    shear_modulus_ratios: np.ndarray  # ratio of plateau modulus to instant modulus
     bulk_modulus_ratios: np.ndarray
     relaxation_times: np.ndarray
 
@@ -564,7 +567,9 @@ class OldPeriodicBoundaryCondition(DisplacementBoundaryCondition):
     nodes: GridNodes
 
     def __post_init__(self):
-        make_set = lambda name: NodeSet.from_slice(name, Sides_2d[name], self.nodes)
+        def make_set(name):
+            return NodeSet.from_slice(name, Sides_2d[name], self.nodes)
+
         ndim = len(self.nodes.shape)
         self.driven_nset = NodeSet.from_slice("X1ALL", np.s_[:, -1], self.nodes)
         self.node_pairs: List[List[NodeSet]] = [
