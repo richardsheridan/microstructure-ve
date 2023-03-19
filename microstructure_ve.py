@@ -489,6 +489,7 @@ class TabularViscoelasticMaterial(Material):
         ):
             inp_file_obj.write(f"{wgr:.6e}, {wgi:.6e}, {wkr:.6e}, {wki:.6e}, {f:.6e}\n")
 
+
 @dataclass
 class PeriodicBoundaryCondition:
     nodes: GridNodes
@@ -535,13 +536,12 @@ class PeriodicBoundaryCondition:
             ]
         else:
             raise ValueError('GridNodes has illegal number of dimensions', self.nodes.dim)
+
     def to_inp(self, inp_file_obj):
         for node_pair in self.node_pairs:
-            eq_type = [SequentialDifferenceEquation, SequentialDifferenceEquation, SequentialDifferenceEquation]
-            for i, eqn in enumerate(eq_type):
-                dof = i+1 #define for X, Y, (Z)
-                # Write Equations
-                eqn(node_pair, dof).to_inp(inp_file_obj)
+            for i in range(self.nodes.dim):
+                SequentialDifferenceEquation(node_pair, i + 1).to_inp(inp_file_obj)
+
 
 @dataclass
 class PronyViscoelasticMaterial(Material):
@@ -654,7 +654,6 @@ class Model:
     elements: GridElements
     materials: Iterable[Material]
     bcs: Iterable[BoundaryConditions] = ()
-    fixed_bnds: Iterable[FixedBoundaryCondition] = ()
     nsets: Iterable[NodeSet] = ()
 
     def to_inp(self, inp_file_obj):
@@ -666,8 +665,6 @@ class Model:
             m.to_inp(inp_file_obj)
         for bc in self.bcs:
             bc.to_inp(inp_file_obj)
-        for fixed_bnd in self.fixed_bnds:
-            fixed_bnd.to_inp(inp_file_obj)
 
 
 @dataclass
