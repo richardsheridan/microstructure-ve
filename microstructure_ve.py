@@ -757,11 +757,10 @@ def periodic_assign_intph(
         the particles (near particles -> far from particles)
     :type num_layers_list: List(int)
     """
-    tiled = np.tile(microstructure, (3, 3))
-    dimx, dimy = microstructure.shape
+    tiled = np.tile(microstructure, (3,) * microstructure.ndim)
     intph_tiled = assign_intph(tiled, num_layers_list)
     # trim tiling
-    intph = intph_tiled[dimx : dimx + dimx, dimy : dimy + dimy]
+    intph = intph_tiled[tuple(slice(dim, dim + dim) for dim in microstructure.shape)]
     # free intph's view on intph_tiled's memory
     intph = intph.copy()
     return intph
