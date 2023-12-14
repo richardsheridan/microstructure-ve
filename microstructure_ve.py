@@ -548,17 +548,25 @@ class PeriodicBoundaryCondition:
 
 @dataclass
 class PronyViscoelasticMaterial(Material):
-    shear_modulus_ratios: np.ndarray  # ratio of plateau modulus to instant modulus
-    bulk_modulus_ratios: np.ndarray
+    shear_modulus_coefficients: np.ndarray
+    bulk_modulus_coefficients: np.ndarray
     relaxation_times: np.ndarray
 
     def to_inp(self, inp_file_obj):
         super().to_inp(inp_file_obj)
+        # Abaqus wants these normalized by the instantaneous modulus
+        g_0 = self.youngs / 3 / (1 + self.poisson) + np.sum(
+            self.shear_modulus_coefficients
+        )
+        g_ratios = self.shear_modulus_coefficients / g_0
+        k_0 = self.youngs / 3 / (1 - 2 * self.poisson) + np.sum(
+            self.bulk_modulus_coefficients
+        )
+        k_ratios = self.bulk_modulus_coefficients / k_0
+
         inp_file_obj.write("*Viscoelastic, frequency=PRONY\n")
 
-        for g, k, t in zip(
-            self.shear_modulus_ratios, self.bulk_modulus_ratios, self.relaxation_times
-        ):
+        for g, k, t in zip(g_ratios, k_ratios, self.relaxation_times):
             inp_file_obj.write(f"{g:.6e}, {k:.6e}, {t:.6e}\n")
 
 
