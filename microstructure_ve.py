@@ -47,8 +47,8 @@ class GridNodes:
     nsets: Dict[str, NodeSet] = field(init=False)
 
     @classmethod
-    def from_matl_img(cls, intph_img, scale):
-        nodes_shape = np.array(intph_img.shape) + 1
+    def from_matl_img(cls, matl_img, scale):
+        nodes_shape = np.array(matl_img.shape) + 1
         return cls(nodes_shape, scale)
 
     def __post_init__(self):
@@ -285,17 +285,16 @@ class ElementSet:
     elements: np.ndarray
 
     @classmethod
-    def from_matl_img(cls, intph_img):
+    def from_matl_img(cls, matl_img):
         """Produce a list of ElementSets corresponding to unique pixel values.
 
-        Materials are ordered by distance from filler
-        i.e. [filler, interphase, matrix]
+        Materials are ordered by the value in each of the pixels.
         """
-        intph_img = intph_img.ravel()
-        uniq = np.unique(intph_img)  # sorted!
-        indices = np.arange(1, 1 + intph_img.size)
+        matl_img = matl_img.ravel()
+        uniq = np.unique(matl_img)  # sorted!
+        indices = np.arange(1, 1 + matl_img.size)
 
-        return [cls(matl_code, indices[intph_img == matl_code]) for matl_code in uniq]
+        return [cls(matl_code, indices[matl_img == matl_code]) for matl_code in uniq]
 
     def to_inp(self, inp_file_obj):
         inp_file_obj.write(f"*Elset, elset=SET-{self.matl_code:d}\n")
