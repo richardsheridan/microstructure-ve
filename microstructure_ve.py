@@ -35,41 +35,6 @@ class Heading:
         )
 
 
-@dataclass(eq=False)
-class NodeSet:
-    name: str
-    node_inds: Union[np.ndarray, List[int]]
-
-    @classmethod
-    def from_side_name(cls, name, nodes):
-        if nodes.dim == 2:
-            sides = Sides_2d
-        elif nodes.dim == 3:
-            sides = Sides_3d
-        else:
-            raise ValueError('GridNodes has illegal number of dimensions', nodes.ndim)
-        sl = sides[name]
-        inds = np.indices(nodes.shape)
-        inds_list = []
-        for ind in inds:
-            inds_list.append(ind[sl].ravel())
-
-        inds_tuple = tuple(inds_list)
-        node_inds = 1 + np.ravel_multi_index(
-            inds_tuple,
-            dims=nodes.shape,
-        )
-        return cls(name, node_inds)
-
-    def __str__(self):
-        return self.name
-
-    def to_inp(self, inp_file_obj):
-        inp_file_obj.write(f"*Nset, nset={self.name}\n")
-        for i in self.node_inds:
-            inp_file_obj.write(f"{i:d}\n")
-
-
 # NOTE: every "1 +" you see is correcting the array indexing mismatch between
 # python and abaqus (python has zero-indexed, abaqus has one-indexed arrays)
 # however "+ 1" actually indicates an extra step
