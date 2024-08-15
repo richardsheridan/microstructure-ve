@@ -47,7 +47,7 @@ class GridNodes:
     nsets: Dict[str, NodeSet] = field(init=False)
 
     @classmethod
-    def from_intph_img(cls, intph_img, scale):
+    def from_matl_img(cls, intph_img, scale):
         nodes_shape = np.array(intph_img.shape) + 1
         return cls(nodes_shape, scale)
 
@@ -285,7 +285,7 @@ class ElementSet:
     elements: np.ndarray
 
     @classmethod
-    def from_intph_image(cls, intph_img):
+    def from_matl_img(cls, intph_img):
         """Produce a list of ElementSets corresponding to unique pixel values.
 
         Materials are ordered by distance from filler
