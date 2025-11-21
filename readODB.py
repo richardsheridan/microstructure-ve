@@ -43,7 +43,7 @@ for i in range(1, 1 + len(U_Real)):
 header = "\t".join(header)
 
 # numpy 1.6 doesn't know how to write headers, so we do it manually
-with open(name + "-reaction-force.tsv", "r+") as f:
+with open(name + "-reaction-force.tsv", "w") as f:
     f.write(header)
     f.write("\n")
     np.savetxt(f, step_results, fmt="%.8e", delimiter="\t")
