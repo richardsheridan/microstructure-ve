@@ -76,18 +76,17 @@ class GridNodes:
         return len(self.shape)
 
     def to_inp(self, inp_file_obj):
-        pos = self.scale * np.indices(self.shape)[::-1]
+        coords = [np.ravel(c) for c in self.scale * np.indices(self.shape)[::-1]]
         inp_file_obj.write("*Node\n")
-        for node_num, *p in zip(self.node_nums, *map(np.ravel, pos)):
+        for node_num, *p in zip(self.node_nums, *coords):
             inp_file_obj.write(f"{node_num:d}")
             for d in p:
                 inp_file_obj.write(f",\t{d:.6e}")
             inp_file_obj.write("\n")
-        # quirk: we abuse the loop variables to put another "virtual" node at the corner
+        # place a "virtual" node co-located with the last (far corner) node
         inp_file_obj.write(f"{self.virtual_node:d}")
-        # noinspection PyUnboundLocalVariable
-        for d in p:
-            inp_file_obj.write(f",\t{d:.6e}")
+        for c in coords:
+            inp_file_obj.write(f",\t{c[-1]:.6e}")
         inp_file_obj.write("\n")
         for nset in self.nsets.values():
             nset.to_inp(inp_file_obj)
