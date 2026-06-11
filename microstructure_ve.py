@@ -228,6 +228,15 @@ class SequentialDifferenceEquation:
     nsets: Sequence[Union[NodeSet, int]]
     dof: int
 
+    def __post_init__(self):
+        # to_inp pairs nsets[0] and nsets[1] node-by-node, so they must match
+        n0 = len(self.nsets[0].node_inds)
+        n1 = len(self.nsets[1].node_inds)
+        if n0 != n1:
+            raise ValueError(
+                "paired node sets must have equal node counts", n0, n1
+            )
+
     def to_inp(self, inp_file_obj):
         for i, node0 in enumerate(self.nsets[0].node_inds):
             inp_file_obj.write(
