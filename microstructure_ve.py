@@ -1,17 +1,11 @@
 from __future__ import annotations
 
-import pathlib
-import shutil
-import subprocess
-from functools import partial, cache
+from functools import partial
 from itertools import product
-from os import PathLike
 from typing import Optional, Sequence, List, Union, TextIO, Iterable, Literal, Dict
 
 import numpy as np
 from dataclasses import dataclass, field
-
-BASE_PATH = pathlib.Path(__file__).parent
 
 
 ###################
@@ -751,54 +745,3 @@ def load_viscoelasticity(matrl_name):
     youngs.imag = youngs_imag
     sortind = np.argsort(freq)
     return freq[sortind], youngs[sortind]
-
-
-@cache
-def find_command(command: str) -> Optional[PathLike]:
-    x = shutil.which(command)
-    if x is None:
-        # maybe it's a shell alias?
-        if shutil.which("bash") is None:
-            return None
-        p = subprocess.run(
-            ["bash", "-i", "-c", f"alias {command}"],
-            capture_output=True,
-        )
-        if p.returncode:
-            return None
-        x = p.stdout.split(b"'")[1].decode()
-    try:
-        return pathlib.Path(x).resolve(strict=True)
-    except FileNotFoundError:
-        return None
-
-
-def run_job(job_name, cpus):
-    """feed .inp file to ABAQUS and wait for the result"""
-    subprocess.run(
-        [
-            find_command("abaqus"),
-            "job=" + job_name,
-            "cpus=" + str(cpus),
-            "interactive",
-        ],
-        check=True,
-    )
-
-
-def read_odb(job_name, drive_nset):
-    """Extract viscoelastic response from abaqus output ODB
-
-    Uses abaqus python api which is stuck in python 2.7 ancient history,
-    so we need to farm it out to a subprocess.
-    """
-    subprocess.run(
-        [
-            find_command("abaqus"),
-            "python",
-            BASE_PATH / "readODB.py",
-            job_name,
-            drive_nset.name,
-        ],
-        check=True,
-    )

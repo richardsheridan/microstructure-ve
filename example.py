@@ -95,10 +95,10 @@ with open("example.inp", mode="w", encoding="ascii") as inp_file_obj:
         steps=[step],
     ).to_inp(inp_file_obj)
 
-# from microstructure_ve import run_job, read_odb
-#
-# run_job("example", 4)
-# read_odb("example", drive_nset)
+# Run the job, then extract the reaction forces, from a shell
+# (<drive_nset.name> is the name you gave drive_nset, e.g. DRIVE):
+# /path/to/abaqus job=example cpus=4 interactive
+# /path/to/abaqus python readODB.py example <drive_nset.name>
 
 # import csv
 # tsv = csv.reader(open("example-reaction-force.tsv", "r"), dialect=csv.excel_tab)
