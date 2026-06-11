@@ -112,3 +112,17 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# ABAQUS solver scratch / outputs (keep .inp golden files, ignore run artifacts)
+*.odb
+*.com
+*.dat
+*.msg
+*.prt
+*.sim
+*.sta
+*.lck
+*.mdl
+*.stt
+*.023
+*-reaction-force.tsv
