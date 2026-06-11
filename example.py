@@ -5,17 +5,17 @@ import numpy as np
 from microstructure_ve import (
     Heading,
     GridNodes,
-    OldPeriodicBoundaryCondition,
+    PeriodicBoundaryCondition,
     GridElements,
     ElementSet,
     TabularViscoelasticMaterial,
     Material,
     periodic_assign_intph,
     load_viscoelasticity,
+    FixedBoundaryCondition,
     DisplacementBoundaryCondition,
     Dynamic,
     Step,
-    NodeSet,
     Model,
     Simulation,
 )
@@ -37,7 +37,6 @@ youngs_plat = youngs_cplx[0].real
 
 heading = Heading("Example RVE simulation")
 nodes = GridNodes.from_matl_img(intph_img, scale)
-drive_nset = NodeSet("DRIVE", [nodes.virtual_node])
 elements = GridElements(nodes, type="CPE4R")
 filler_elset, intph_elset, mat_elset = ElementSet.from_matl_img(intph_img)
 
@@ -62,20 +61,32 @@ mat_material = TabularViscoelasticMaterial(
     youngs_cplx=youngs_cplx,
     shift=-6.0,
 )
+# PeriodicBoundaryCondition ties each face to its opposite through the reference
+# corner nodes, which carry the macroscopic deformation. Driving the RVE means
+# constraining those corners:
+#   X0Y0 - pinned origin (removes rigid-body translation)
+#   X1Y0 - driven in x; its dof 2 is held to suppress macroscopic shear
+#   X0Y1 - dof 1 held to suppress shear; dof 2 is LEFT FREE so the cell can
+#          contract laterally (Poisson). Add dofs=[1, 2] here instead for a
+#          laterally-confined (plane-strain-clamped) test.
+origin = nodes.nsets["X0Y0"]
+x_macro = nodes.nsets["X1Y0"]
+y_macro = nodes.nsets["X0Y1"]
 model = Model(
     nodes=nodes,
-    nsets=[drive_nset],
     elements=elements,
     materials=[filler_material, intph_material, mat_material],
     bcs=[
-        OldPeriodicBoundaryCondition(
-            nodes=nodes, nset=drive_nset, first_dof=1, last_dof=1, displacement=0.0
-        )
+        PeriodicBoundaryCondition(nodes=nodes),
+        FixedBoundaryCondition(origin, dofs=[1, 2]),
+        FixedBoundaryCondition(x_macro, dofs=[2]),
+        FixedBoundaryCondition(y_macro, dofs=[1]),
+        DisplacementBoundaryCondition(x_macro, first_dof=1, last_dof=1, displacement=0.0),
     ],
 )
 
 disp_bc = DisplacementBoundaryCondition(
-    drive_nset,
+    x_macro,
     first_dof=1,
     last_dof=1,
     displacement=displacement,
@@ -95,10 +106,11 @@ with open("example.inp", mode="w", encoding="ascii") as inp_file_obj:
         steps=[step],
     ).to_inp(inp_file_obj)
 
-# Run the job, then extract the reaction forces, from a shell
-# (<drive_nset.name> is the name you gave drive_nset, e.g. DRIVE):
+# Run the job, then extract the reaction forces, from a shell. The reaction
+# work-conjugate to the applied displacement is carried by the X1Y0 corner node,
+# so that is the node set readODB.py reads:
 # /path/to/abaqus job=example cpus=4 interactive
-# /path/to/abaqus python readODB.py example <drive_nset.name>
+# /path/to/abaqus python readODB.py example X1Y0
 
 # import csv
 # tsv = csv.reader(open("example-reaction-force.tsv", "r"), dialect=csv.excel_tab)
