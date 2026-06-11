@@ -33,6 +33,9 @@ for step in odb.steps.values():
                 RF_Imag += v.conjugateData
         step_results.append(np.concatenate(([frequency], RF_Real, RF_Imag, U_Real)))
 
+if not step_results:
+    raise RuntimeError("no dynamic frames in any step")
+
 header = ["frequency"]
 for i in range(1, 1 + len(RF_Real)):
     header.append("RF_Real" + str(i))
