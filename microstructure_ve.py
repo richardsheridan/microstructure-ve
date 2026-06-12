@@ -223,6 +223,19 @@ class NodeSet:
             inp_file_obj.write(f"{i:d}\n")
 
 
+def _node_array(token):
+    """1-indexed ABAQUS node numbers for a NodeSet or a bare int, as a 1D int ndarray.
+
+    Returns a view of NodeSet.node_inds when present (np.asarray won't copy an
+    existing ndarray); a 1-element array for a bare int. Used to enumerate the DOFs
+    a constraint eliminates/prescribes without materializing per-node Python lists.
+    """
+    node_inds = getattr(token, "node_inds", None)
+    if node_inds is not None:
+        return np.asarray(node_inds)
+    return np.array([token], dtype=int)
+
+
 @dataclass
 class SequentialDifferenceEquation:
     nsets: Sequence[Union[NodeSet, int]]
@@ -236,6 +249,10 @@ class SequentialDifferenceEquation:
             raise ValueError(
                 "paired node sets must have equal node counts", n0, n1
             )
+
+    def dependent_dofs(self):
+        # The first-listed node of each emitted *Equation is the dependent term.
+        yield self.nsets[0].node_inds, self.dof
 
     def to_inp(self, inp_file_obj):
         for node0, node1 in zip(self.nsets[0].node_inds, self.nsets[1].node_inds):
@@ -255,6 +272,10 @@ class SequentialDifferenceEquation:
 class EqualityEquation:
     nsets: Sequence[Union[NodeSet, int]]
     dof: int
+
+    def dependent_dofs(self):
+        # nsets[0] is the first-listed (dependent) term; DriveEquation keeps it first.
+        yield _node_array(self.nsets[0]), self.dof
 
     def to_inp(self, inp_file_obj):
         inp_file_obj.write(
@@ -325,6 +346,11 @@ class FixedBoundaryCondition(BoundaryConditions):
     node: Union[NodeSet, int]
     dofs: Iterable
 
+    def prescribed_dofs(self):
+        nodes = _node_array(self.node)
+        for dof in self.dofs:
+            yield nodes, dof
+
     def to_inp(self, inp_file_obj):
         inp_file_obj.write(
             f"""\
@@ -345,6 +371,11 @@ class DisplacementBoundaryCondition(BoundaryConditions):
     first_dof: int
     last_dof: int
     displacement: float
+
+    def prescribed_dofs(self):
+        nodes = _node_array(self.nset)
+        for dof in range(self.first_dof, self.last_dof + 1):
+            yield nodes, dof
 
     def to_inp(self, inp_file_obj):
         inp_file_obj.write(
@@ -508,10 +539,22 @@ class PeriodicBoundaryCondition:
         else:
             raise ValueError('GridNodes has illegal number of dimensions', self.nodes.dim)
 
+        # Build the equations eagerly so dependents are enumerable before to_inp
+        # (and so SequentialDifferenceEquation's node-count check runs at construction).
+        # Count is len(node_pairs) * dim (6 in 2D, 48 in 3D) -- independent of grid size.
+        self.equations: List[SequentialDifferenceEquation] = [
+            SequentialDifferenceEquation(node_pair, i + 1)
+            for node_pair in self.node_pairs
+            for i in range(self.nodes.dim)
+        ]
+
+    def dependent_dofs(self):
+        for eq in self.equations:
+            yield from eq.dependent_dofs()
+
     def to_inp(self, inp_file_obj):
-        for node_pair in self.node_pairs:
-            for i in range(self.nodes.dim):
-                SequentialDifferenceEquation(node_pair, i + 1).to_inp(inp_file_obj)
+        for eq in self.equations:
+            eq.to_inp(inp_file_obj)
 
 
 @dataclass
@@ -567,6 +610,13 @@ class OldPeriodicBoundaryCondition(DisplacementBoundaryCondition):
             ]
             for p in self.node_pairs
         ]
+
+    def dependent_dofs(self):
+        # Aggregate the dependents of every equation; prescribed_dofs (the driven
+        # nset) is inherited from DisplacementBoundaryCondition.
+        for eq_pair in self.eq_pairs:
+            for eq in eq_pair:
+                yield from eq.dependent_dofs()
 
     def to_inp(self, inp_file_obj):
         for node_pair, eq_pair in zip(self.node_pairs, self.eq_pairs):
@@ -629,6 +679,67 @@ class Step:
         )
 
 
+def validate_constraints(bcs):
+    """Raise ValueError if a dependent (eliminated) DOF is over-constrained.
+
+    ABAQUS eliminates the first-listed (node, dof) of every *Equation. That dependent
+    DOF must not also be (a) the dependent term of another *Equation, nor (b) prescribed
+    by a *Boundary -- either is an over-constraint ABAQUS rejects. Double-*Boundary on a
+    DOF is tolerated (a model-level baseline plus a step displacement is normal) and is
+    not flagged. Catches the error at Model construction instead of at solve time.
+    """
+    # Each constraint yields (node_inds, scalar dof) groups it eliminates / prescribes.
+    def gather(attr):
+        groups = []
+        for bc in bcs:
+            method = getattr(bc, attr, None)
+            if method is not None:
+                for inds, dof in method():
+                    groups.append((bc, np.asarray(inds), dof))
+        return groups
+
+    dep = gather("dependent_dofs")
+    if not dep:
+        return
+    pre = gather("prescribed_dofs")
+    # Encode each (node, dof) as one int64 key; dof is small so node * mult + dof is exact.
+    mult = max(dof for _, _, dof in dep + pre) + 1
+
+    def encode(groups):
+        if not groups:
+            return np.empty(0, np.int64), [], np.empty(0, dtype=int)
+        keys = np.concatenate([inds * mult + dof for _, inds, dof in groups])
+        owners = [bc for bc, _, _ in groups]
+        owner_of_key = np.repeat(np.arange(len(groups)), [inds.size for _, inds, _ in groups])
+        return keys, owners, owner_of_key
+
+    dep_keys, dep_owners, dep_oidx = encode(dep)
+    pre_keys, pre_owners, pre_oidx = encode(pre)
+
+    # (a) the same (node, dof) eliminated by more than one *Equation
+    uniq, counts = np.unique(dep_keys, return_counts=True)
+    dup = uniq[counts > 1]
+    if dup.size:
+        key = int(dup[0])
+        rows = np.where(dep_keys == key)[0]
+        names = sorted({type(dep_owners[dep_oidx[i]]).__name__ for i in rows})
+        raise ValueError(
+            f"over-constrained: node {key // mult} dof {key % mult} is the dependent "
+            f"term of more than one *Equation ({', '.join(names)})"
+        )
+
+    # (b) the same (node, dof) eliminated by an *Equation and prescribed by a *Boundary
+    both = np.intersect1d(dep_keys, pre_keys)
+    if both.size:
+        key = int(both[0])
+        d = type(dep_owners[dep_oidx[np.where(dep_keys == key)[0][0]]]).__name__
+        p = type(pre_owners[pre_oidx[np.where(pre_keys == key)[0][0]]]).__name__
+        raise ValueError(
+            f"over-constrained: node {key // mult} dof {key % mult} is eliminated by an "
+            f"*Equation in {d} but also prescribed by a *Boundary in {p}"
+        )
+
+
 @dataclass
 class Model:
     nodes: GridNodes
@@ -636,6 +747,9 @@ class Model:
     materials: Iterable[Material]
     bcs: Iterable[BoundaryConditions] = ()
     nsets: Iterable[NodeSet] = ()
+
+    def __post_init__(self):
+        validate_constraints(self.bcs)
 
     def to_inp(self, inp_file_obj):
         self.nodes.to_inp(inp_file_obj)
