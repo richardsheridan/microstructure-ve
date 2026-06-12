@@ -49,6 +49,10 @@ broke in practice and forced a formulation change**, found by execution:
   bottleneck was the solver: **MUMPS is pathologically slow (~9 s) on this small 5202-dof complex
   system; PETSc's built-in serial LU does it in 0.37 s** (25×). Switched to native LU → the full
   30-frequency sweep dropped from **270 s to 15 s (0.5 s/frequency)**.
+- **2D and 3D** — the backend is dimension-general (hexahedra in 3D, B-bar with κ = λ + 2μ/d, the
+  periodic MPC built from a "map every max-face coordinate to 0" rule that reduces to the 2D
+  edge+corner pairing). Free-lateral generalizes to a (d−1)×(d−1) lateral solve. `GridElements`
+  gained `CPE4`/`C3D8` (full integration) for tight FE-vs-FE oracles.
 
 **Verification result** (50×50 RVE, 30-frequency complex viscoelastic sweep, vs ABAQUS, macro
 x-columns of the homogenized response; B-bar on):
@@ -59,13 +63,17 @@ x-columns of the homogenized response; B-bar on):
 | free-lateral | CPE4 (full) | **0.08% / 0.14%** | 1.0001 ± 0.0002 |
 | confined (no B-bar) | CPE4 | 2.2% | 1.0199 ± 0.0008 |
 | confined | CPE4R (reduced) | 3.7% | 1.025 ± 0.006 |
+| 3D heterogeneous (elastic) | C3D8 (full) | **6e-9** | machine precision |
 
 With B-bar, dolfinx matches ABAQUS **CPE4 to <0.1% across all 30 frequencies** for both confined and
 free-lateral loading — solver-tolerance agreement of the homogenized `E*(f)`. U1 exact (2e-8). The
 earlier ~2% (no B-bar) was confirmed to be pure volumetric locking, and the ~3–4% vs CPE4R is the
 expected reduced-vs-full integration gap. Homogeneous analytic checks are exact: confined
-σ̄_xx = (λ+2μ)·ε_xx, free-lateral σ̄_xx = 4μ(λ+μ)/(λ+2μ)·ε_xx (plane-strain uniaxial stress),
-fluctuation ~1e-18.
+σ̄_xx = (λ+2μ)·ε_xx, free-lateral σ̄_xx = 4μ(λ+μ)/(λ+2μ)·ε_xx (plane-strain uniaxial stress, 3D
+free-lateral = E·ε_xx for true uniaxial stress), fluctuation ~1e-18. The **3D** heterogeneous
+elastic case matches ABAQUS **C3D8 to 6e-9** — and being elastic (no tabular interpolation) it
+isolates the FE/homogenization as exact, locating the 2D 0.08% residual in the viscoelastic
+log-frequency table interpolation rather than the discretization.
 
 **Remaining follow-ups:**
 - **Frequency-level parallelism (recommended near-term lever).** The 30-frequency sweep is
@@ -80,8 +88,9 @@ fluctuation ~1e-18.
   rank-local node↔dof map (the global `ravel_multi_index` assumption breaks), `comm.allreduce` on the
   volume-averaged-stress and area integrals, a distributed solver (superlu_dist / parallel MUMPS), and
   testing the periodic MPC across partition boundaries.
-- 3D; non-square cells; reuse the *symbolic* factorization across frequencies (native LU re-factors in
-  0.37 s, so minor).
+- Non-square / non-cubic cells; reuse the *symbolic* factorization across frequencies (native LU
+  re-factors in 0.37 s, so minor); close the 2D viscoelastic 0.08% by matching ABAQUS's tabular
+  interpolation rule.
 
 ## 1. Motivation
 

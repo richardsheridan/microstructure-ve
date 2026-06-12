@@ -89,17 +89,17 @@ class GridNodes:
 @dataclass
 class GridElements:
     nodes: GridNodes
-    type: Literal["CPE4R", "CPS4R", "CPE4", "C3D8R"] = "C3D8R"
+    type: Literal["CPE4R", "CPS4R", "CPE4", "C3D8R", "C3D8"] = "C3D8R"
 
     def __post_init__(self):
         dim = self.nodes.dim
+        # CPE4 / C3D8 (full integration) added for tight parity with a full-integration
+        # FE backend; the *R variants are reduced-integration.
         if dim == 2:
-            # CPE4 (full integration) added for tight parity with a full-integration
-            # FE backend; CPE4R/CPS4R are reduced-integration.
             if self.type not in {"CPE4R", "CPS4R", "CPE4"}:
                 raise ValueError("Need a 2D element type, got:", self.type)
         elif dim == 3:
-            if self.type not in {"C3D8R"}:
+            if self.type not in {"C3D8R", "C3D8"}:
                 raise ValueError("Need a 3D element type, got:", self.type)
         else:
             raise ValueError('GridNodes has illegal number of dimensions', dim)
