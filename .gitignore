@@ -125,4 +125,5 @@ dmypy.json
 *.mdl
 *.stt
 *.023
+*.exception
 *-reaction-force.tsv

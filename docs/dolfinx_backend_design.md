@@ -20,6 +20,44 @@ Recreate with:
 conda create -n fenicsx -c conda-forge python=3.12 fenics-dolfinx dolfinx_mpc 'petsc=*=*complex*' scipy
 ```
 
+## 0. Implementation status (executed 2026-06-12)
+
+Backend implemented in `dolfinx_backend.py`; driver `example_dolfinx.py`. **One design claim
+broke in practice and forced a formulation change**, found by execution:
+
+- **`dolfinx_mpc` silently ignores Dirichlet BCs on MPC *master* dofs.** The corner-driven
+  reuse (§4.4) drives the macro strain by Dirichlet-ing reference corners that are exactly
+  those masters — so the solve ran, KSP converged, but the corners were never pinned (garbage
+  field). The smoke test missed it because it only checked the MPC *relation*, not the
+  prescribed corner values.
+- **Pivot (standard periodic homogenization):** split `u = E_macro·x + u_per`; a *pure-periodic*
+  2-term MPC on the fluctuation `u_per` (slave=image, built from our disjoint `nsets` — exact,
+  validated), the macro strain as a RHS source `-∫σ(E_macro):ε(v)`, and one interior node
+  pinned for rigid translation. This imposes **confined** loading (E fully prescribed). It is a
+  different *route* to the same physical BVP as the confined corner-driven ABAQUS case.
+- **Also required:** dolfinx 0.10 `petsc_options` only take effect under a `petsc_options_prefix`;
+  without it the solver silently falls back and BCs aren't enforced. Use direct complex LU (MUMPS).
+
+**Verification result** (50×50 RVE, 30-frequency complex viscoelastic sweep, vs ABAQUS, macro
+x-columns of the homogenized response):
+
+| oracle | storage/loss max rel diff | dolfinx/ABAQUS ratio | U1 |
+| --- | --- | --- | --- |
+| CPE4 (full integration) | 2.2% | 1.0199 ± 0.0008 | exact (2e-8) |
+| CPE4R (reduced) | 4.5–6.0% | 1.0454 ± 0.0067 | exact |
+
+The frequency **shape matches to <0.1%** (constant ratio) — the viscoelastic master-curve,
+shift/broadening, complex-modulus reconstruction, periodicity, and homogenization are all correct.
+The residual ~2% is a **constant magnitude offset**, the signature of full-integration Q1
+volumetric locking (ν=0.35) vs ABAQUS's selective/B-bar integration: dolfinx is stiffer, and
+closer to CPE4 (full) than CPE4R (reduced), as expected. Homogeneous analytic check is exact
+(σ̄_xx = (λ+2μ)·ε_xx, fluctuation ~1e-18).
+
+**Open follow-ups:** (a) B-bar / selective-reduced or mixed u–p form to close the 2% locking gap;
+(b) free-lateral loading (needs E_yy as a floating global unknown with σ̄_yy=0); (c) performance —
+reuse the matrix symbolic factorization across frequencies instead of rebuilding LinearProblem
+(currently ~12 s/frequency).
+
 ## 1. Motivation
 
 - **License-free solves.** ABAQUS runs consume DSLS tokens (~25/solve) and serialize behind the
