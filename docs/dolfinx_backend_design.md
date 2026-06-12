@@ -36,27 +36,39 @@ broke in practice and forced a formulation change**, found by execution:
   pinned for rigid translation. This imposes **confined** loading (E fully prescribed). It is a
   different *route* to the same physical BVP as the confined corner-driven ABAQUS case.
 - **Also required:** dolfinx 0.10 `petsc_options` only take effect under a `petsc_options_prefix`;
-  without it the solver silently falls back and BCs aren't enforced. Use direct complex LU (MUMPS).
+  without it the solver silently falls back and BCs aren't enforced.
+
+**Implemented features** (`dolfinx_backend.run(sim, freqs, lateral=, bbar=)`):
+- **B-bar** — selective reduced integration on the volumetric term (deviatoric full quad +
+  `κ·tr(ε_u)·tr(ε_v)` at 1-point quad, `κ = λ + 2μ/d`). Matches ABAQUS CPE4's B-bar formulation;
+  removes Q1 volumetric locking.
+- **Free-lateral** (`lateral="free"`) — E_yy floats so σ̄_yy = 0, done by **superposition** of the
+  E_xx-only and E_yy-only unit solves. The stiffness is identical for both, so the second solve is
+  a free back-substitution. Confined (`lateral="confined"`) prescribes E_yy = 0.
+- **Performance** — one factorization reused across all frequencies and both RHS. The real
+  bottleneck was the solver: **MUMPS is pathologically slow (~9 s) on this small 5202-dof complex
+  system; PETSc's built-in serial LU does it in 0.37 s** (25×). Switched to native LU → the full
+  30-frequency sweep dropped from **270 s to 15 s (0.5 s/frequency)**.
 
 **Verification result** (50×50 RVE, 30-frequency complex viscoelastic sweep, vs ABAQUS, macro
-x-columns of the homogenized response):
+x-columns of the homogenized response; B-bar on):
 
-| oracle | storage/loss max rel diff | dolfinx/ABAQUS ratio | U1 |
+| loading | oracle | storage/loss max rel diff | dolfinx/ABAQUS ratio |
 | --- | --- | --- | --- |
-| CPE4 (full integration) | 2.2% | 1.0199 ± 0.0008 | exact (2e-8) |
-| CPE4R (reduced) | 4.5–6.0% | 1.0454 ± 0.0067 | exact |
+| confined | CPE4 (full) | **0.08% / 0.14%** | 1.0001 ± 0.0002 |
+| free-lateral | CPE4 (full) | **0.08% / 0.14%** | 1.0001 ± 0.0002 |
+| confined (no B-bar) | CPE4 | 2.2% | 1.0199 ± 0.0008 |
+| confined | CPE4R (reduced) | 3.7% | 1.025 ± 0.006 |
 
-The frequency **shape matches to <0.1%** (constant ratio) — the viscoelastic master-curve,
-shift/broadening, complex-modulus reconstruction, periodicity, and homogenization are all correct.
-The residual ~2% is a **constant magnitude offset**, the signature of full-integration Q1
-volumetric locking (ν=0.35) vs ABAQUS's selective/B-bar integration: dolfinx is stiffer, and
-closer to CPE4 (full) than CPE4R (reduced), as expected. Homogeneous analytic check is exact
-(σ̄_xx = (λ+2μ)·ε_xx, fluctuation ~1e-18).
+With B-bar, dolfinx matches ABAQUS **CPE4 to <0.1% across all 30 frequencies** for both confined and
+free-lateral loading — solver-tolerance agreement of the homogenized `E*(f)`. U1 exact (2e-8). The
+earlier ~2% (no B-bar) was confirmed to be pure volumetric locking, and the ~3–4% vs CPE4R is the
+expected reduced-vs-full integration gap. Homogeneous analytic checks are exact: confined
+σ̄_xx = (λ+2μ)·ε_xx, free-lateral σ̄_xx = 4μ(λ+μ)/(λ+2μ)·ε_xx (plane-strain uniaxial stress),
+fluctuation ~1e-18.
 
-**Open follow-ups:** (a) B-bar / selective-reduced or mixed u–p form to close the 2% locking gap;
-(b) free-lateral loading (needs E_yy as a floating global unknown with σ̄_yy=0); (c) performance —
-reuse the matrix symbolic factorization across frequencies instead of rebuilding LinearProblem
-(currently ~12 s/frequency).
+**Remaining follow-ups:** 3D; non-square cells; reuse the *symbolic* factorization across frequencies
+(native LU already re-factors in 0.37 s, so low priority); MPI/parallel (serial-only mappings today).
 
 ## 1. Motivation
 

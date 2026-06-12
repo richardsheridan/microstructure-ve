@@ -6,20 +6,20 @@ per-frequency complex linear-elasticity solve and writes a tsv of the homogenize
 response mirroring `readODB.py`'s columns, so `verify_pbc.compare` can diff it against
 an ABAQUS run.
 
-Scope (serial, 2D). **Confined** macro loading (the imposed macro strain is fully
-prescribed: uniaxial in x, zero lateral). This differs from the corner-driven ABAQUS
-scheme in *how* the macro strain is applied, but yields the same physical observable
-E*(f), which is the oracle (see docs/dolfinx_backend_design.md).
+Scope: serial, 2D, periodic homogenization via the split ``u = E_macro . x + u_per``:
+a pure-periodic 2-term MPC on the fluctuation u_per (built from our disjoint nsets), the
+macro strain imposed as a RHS source ``-∫ σ(E_macro):ε(v) dx``, one interior node pinned
+for rigid translation. (The corner-driven ABAQUS scheme can't be reused directly because
+dolfinx_mpc silently drops Dirichlet BCs on MPC master dofs.)
 
-Why not the corner-driven reuse the design doc sketched: dolfinx_mpc silently drops
-Dirichlet BCs placed on MPC *master* dofs, and the corner-driven scheme drives the
-macro strain by Dirichlet-ing reference corners that are exactly those masters. The
-standard fix used here is the classic periodic-homogenization split
-``u = E_macro . x + u_periodic``: a pure-periodic MPC on the fluctuation u_periodic
-(2-term, slave=image; our nsets give disjoint slaves, validated), the macro strain as a
-RHS source term ``-∫ σ(E_macro):ε(v) dx``, and one interior node pinned to remove the
-rigid translation. Free-lateral loading (E_yy floating so σ̄_yy=0) needs an extra global
-unknown and is a documented follow-up.
+Features:
+- ``lateral="confined"`` (default): E_yy = 0 prescribed.
+  ``lateral="free"``: E_yy floats so σ̄_yy = 0, by superposition of the E_xx-only and
+  E_yy-only unit solves (same stiffness -> the second solve is a cheap back-substitution).
+- B-bar (selective reduced integration on the volumetric term) to avoid Q1 volumetric
+  locking, matching ABAQUS's CPE4 B-bar formulation.
+- One MUMPS factorization reused across all frequencies and both RHS (symbolic reuse;
+  only the numeric values change per frequency).
 
 `dolfinx` is imported lazily so importing this module under the msve env (numpy only)
 does not fail until `run()` is called.
@@ -39,17 +39,12 @@ def _find(items, cls):
 
 
 def default_frequencies(sim):
-    """Log-spaced excitation frequencies from the Dynamic subsection of the first step.
-
-    For a tight oracle comparison, evaluate at the ABAQUS run's actual frequency column
-    instead (pass it as `freqs`); the two need not coincide.
-    """
+    """Log-spaced excitation frequencies from the Dynamic subsection of the first step."""
     dyn = _find(sim.steps[0].subsections, Dynamic)
     return np.logspace(np.log10(dyn.f_initial), np.log10(dyn.f_final), dyn.f_count)
 
 
 def _drive_displacement(sim):
-    """The harmonic drive amplitude (delta) prescribed in the step's Displacement BC."""
     for step in sim.steps:
         sub = _find(step.subsections, DisplacementBoundaryCondition)
         if sub is not None:
@@ -58,11 +53,6 @@ def _drive_displacement(sim):
 
 
 def _material_cell_maps(model):
-    """Per-(original)-cell material index, plus each material's poisson and modulus fn.
-
-    Cell order is the raveled pixel order (== our 1-indexed element order); the caller
-    scatters through mesh.topology.original_cell_index before assigning to a DG0 fn.
-    """
     ncells = int(np.prod(model.nodes.shape - 1))
     mat_of_cell = np.empty(ncells, dtype=int)
     poissons, modulus_fns = [], []
@@ -73,9 +63,12 @@ def _material_cell_maps(model):
     return mat_of_cell, np.array(poissons), modulus_fns
 
 
-def run(sim, freqs=None, output_path=None):
-    """Solve `sim` (confined uniaxial-x macro strain) over `freqs` and return an
-    (len(freqs), 7) array with readODB-style columns. Writes a tsv if output_path given.
+def run(sim, freqs=None, output_path=None, lateral="confined", bbar=True):
+    """Solve `sim` over `freqs` and return an (len(freqs), 7) readODB-style array.
+
+    lateral: "confined" (E_yy=0) or "free" (E_yy floats so σ̄_yy=0).
+    bbar:    selective reduced integration on the volumetric term (recommended).
+    Writes a tsv if output_path is given.
     """
     from itertools import product
 
@@ -85,8 +78,11 @@ def run(sim, freqs=None, output_path=None):
     from petsc4py import PETSc
     import dolfinx
     from dolfinx import fem
+    import dolfinx.fem.petsc as fempetsc
     import dolfinx_mpc
 
+    if lateral not in ("confined", "free"):
+        raise ValueError("lateral must be 'confined' or 'free'")
     if freqs is None:
         freqs = default_frequencies(sim)
     freqs = np.asarray(freqs, dtype=float)
@@ -100,12 +96,9 @@ def run(sim, freqs=None, output_path=None):
     shape = nodes.shape  # (ny+1, nx+1)
     Lx = (shape[1] - 1) * scale
     Ly = (shape[0] - 1) * scale
+    exx = _drive_displacement(sim) / Lx  # macro xx strain; delta == exx * Lx
 
-    # macro strain: confined uniaxial in x; delta at the driven corner == exx * Lx
-    exx = _drive_displacement(sim) / Lx
-    U1 = exx * Lx  # reported applied displacement (== delta)
-
-    # ---- mesh from our grid connectivity (tensor-product / zigzag order, no ccw swap) ----
+    # ---- mesh (tensor-product / zigzag quad order, no ccw swap) ----
     coords = np.column_stack([(scale * c).ravel() for c in np.indices(shape)[::-1]])
     all_nodes = 1 + np.ravel_multi_index(np.indices(shape), shape)
     slices = list(product((np.s_[:-1], np.s_[1:]), repeat=2))
@@ -113,7 +106,7 @@ def run(sim, freqs=None, output_path=None):
     c_el = ufl.Mesh(basix.ufl.element("Lagrange", "quadrilateral", 1, shape=(2,)))
     mesh = dolfinx.mesh.create_mesh(MPI.COMM_WORLD, cells, c_el, coords)  # 0.10: (…, e, x)
 
-    # ---- node <-> dof block map by rounded grid coordinates (exact on structured grid) ----
+    # ---- node <-> dof block map ----
     V = fem.functionspace(mesh, ("Lagrange", 1, (2,)))
     dof_xy = V.tabulate_dof_coordinates()[:, :2]
     grid_ij = np.rint(dof_xy / scale).astype(int)
@@ -129,8 +122,7 @@ def run(sim, freqs=None, output_path=None):
     mat_of_cell, poissons, modulus_fns = _material_cell_maps(model)
     nu_cell = poissons[mat_of_cell]
     DG0 = fem.functionspace(mesh, ("DG", 0))
-    mu_fn = fem.Function(DG0)
-    lam_fn = fem.Function(DG0)
+    mu_fn, lam_fn = fem.Function(DG0), fem.Function(DG0)
 
     def set_moduli(f):
         E_cell = np.empty(len(mat_of_cell), dtype=complex)
@@ -141,19 +133,36 @@ def run(sim, freqs=None, output_path=None):
         mu_fn.x.array[:] = mu[oci]
         lam_fn.x.array[:] = lam[oci]
 
-    # ---- forms: a(u_per, v) = -∫ σ(E_macro):ε(v); total stress uses E_macro + ε(u_per) ----
+    # ---- forms ----
+    eye = ufl.Identity(2)
+
     def eps(w):
         return ufl.sym(ufl.grad(w))
 
-    def sig(e):
-        return 2 * mu_fn * e + lam_fn * ufl.tr(e) * ufl.Identity(2)
+    def dev(e):
+        return e - ufl.tr(e) / 2 * eye
 
-    Emac = ufl.as_matrix([[PETSc.ScalarType(exx), 0], [0, 0]])  # confined
+    def sig(e):  # full pointwise stress (for RHS and stress recovery; B-bar-consistent there)
+        return 2 * mu_fn * e + lam_fn * ufl.tr(e) * eye
+
     u, v = ufl.TrialFunction(V), ufl.TestFunction(V)
-    a = ufl.inner(sig(eps(u)), eps(v)) * ufl.dx  # complex inner conjugates v itself
-    L = -ufl.inner(sig(Emac), eps(v)) * ufl.dx
+    if bbar:
+        # deviatoric (full quad) + volumetric kappa*tr*tr (reduced 1-pt quad). kappa = lam + 2mu/d.
+        dxf = ufl.dx(metadata={"quadrature_degree": 2})
+        dxr = ufl.dx(metadata={"quadrature_degree": 1})
+        kappa = lam_fn + mu_fn  # plane strain, d=2 -> lam + 2mu/2
+        a = (2 * mu_fn * ufl.inner(dev(eps(u)), dev(eps(v)))) * dxf \
+            + kappa * ufl.inner(ufl.tr(eps(u)), ufl.tr(eps(v))) * dxr
+    else:
+        a = ufl.inner(sig(eps(u)), eps(v)) * ufl.dx
+    a_form = fem.form(a)
 
-    # ---- pure-periodic MPC on the fluctuation: u_per(slave) = u_per(image), disjoint ----
+    Ex = ufl.as_matrix([[PETSc.ScalarType(1.0), 0], [0, 0]])  # unit xx macro strain
+    Ey = ufl.as_matrix([[0, 0], [0, PETSc.ScalarType(1.0)]])  # unit yy macro strain
+    Lx_form = fem.form(-ufl.inner(sig(Ex), eps(v)) * ufl.dx)
+    Ly_form = fem.form(-ufl.inner(sig(Ey), eps(v)) * ufl.dx)
+
+    # ---- pure-periodic MPC (disjoint slaves: edges interior + 3 corners -> origin) ----
     o = ns["X0Y0"].node_inds[0]
     pairs = list(zip(ns["X1"].node_inds, ns["X0"].node_inds))
     pairs += list(zip(ns["Y1"].node_inds, ns["Y0"].node_inds))
@@ -164,45 +173,73 @@ def run(sim, freqs=None, output_path=None):
         mpc.create_general_constraint(sm, comp, comp)
     mpc.finalize()
 
-    # ---- pin one interior node (not in the MPC) to remove rigid translation ----
+    # ---- pin one interior node to remove rigid translation ----
     cx, cy = (shape[1] - 1) // 2, (shape[0] - 1) // 2
     pin = np.array([cx * scale, cy * scale])
-
-    def at_pin(x):
-        return np.isclose(x[0], pin[0]) & np.isclose(x[1], pin[1])
-
     bcs = []
     for comp in range(nodes.dim):
         Vc, _ = V.sub(comp).collapse()
-        dofs = dolfinx.fem.locate_dofs_geometrical((V.sub(comp), Vc), at_pin)
+        dofs = dolfinx.fem.locate_dofs_geometrical(
+            (V.sub(comp), Vc), lambda x: np.isclose(x[0], pin[0]) & np.isclose(x[1], pin[1]))
         fbc = fem.Function(Vc)
         fbc.x.array[:] = 0.0
         bcs.append(fem.dirichletbc(fbc, dofs, V.sub(comp)))
 
-    # ---- frequency sweep ----
-    uh = fem.Function(V)
-    etot = Emac + eps(uh)
-    sxx_form = fem.form(sig(etot)[0, 0] * ufl.dx)
-    sxy_form = fem.form(sig(etot)[0, 1] * ufl.dx)
+    # ---- one factorized matrix, reused across frequencies and both RHS ----
+    ux, uy = fem.Function(V), fem.Function(V)
+    set_moduli(freqs[0])
+    A = dolfinx_mpc.assemble_matrix(a_form, mpc, bcs=bcs)
+    A.assemble()
+    b = dolfinx_mpc.assemble_vector(Lx_form, mpc)
+    x = A.createVecRight()
+    ksp = PETSc.KSP().create(mesh.comm)
+    ksp.setOperators(A)
+    ksp.setType("preonly")
+    pc = ksp.getPC()
+    pc.setType("lu")
+    # PETSc's built-in serial LU; ~25x faster than MUMPS on this small complex system.
+
+    def solve_rhs(L_form, uout):
+        with b.localForm() as bl:
+            bl.set(0.0)
+        dolfinx_mpc.assemble_vector(L_form, mpc, b)
+        dolfinx_mpc.apply_lifting(b, [a_form], [bcs], mpc)
+        b.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
+        fempetsc.set_bc(b, bcs)
+        b.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
+        ksp.solve(b, x)
+        x.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
+        fempetsc.assign(x, uout)
+        mpc.homogenize(uout)
+        mpc.backsubstitution(uout)
+
+    # stress-recovery forms (full integration; consistent with B-bar since tr(eps) is linear)
+    comps = [(0, 0), (1, 1), (0, 1)]
+    sx_forms = {ij: fem.form(sig(Ex + eps(ux))[ij[0], ij[1]] * ufl.dx) for ij in comps}
+    sy_forms = {ij: fem.form(sig(Ey + eps(uy))[ij[0], ij[1]] * ufl.dx) for ij in comps}
     area = fem.assemble_scalar(fem.form(fem.Constant(mesh, PETSc.ScalarType(1.0)) * ufl.dx)).real
 
     rows = []
     for f in freqs:
         set_moduli(f)
-        # dolfinx 0.10: petsc_options only apply under a prefix; direct complex LU (MUMPS)
-        problem = dolfinx_mpc.LinearProblem(
-            a, L, mpc, bcs=bcs,
-            petsc_options_prefix=f"msve_dolfinx_{id(mesh)}_",
-            petsc_options={"ksp_type": "preonly", "pc_type": "lu",
-                           "pc_factor_mat_solver_type": "mumps"},
-        )
-        sol = problem.solve()
-        uh.x.array[:] = sol.x.array
-        # homogenized stresses; corner x-reaction == σ̄_xx * Ly (matches readODB at X1Y0)
-        sxx = fem.assemble_scalar(sxx_form) / area
-        sxy = fem.assemble_scalar(sxy_form) / area
-        rf1, rf2 = sxx * Ly, sxy * Ly
-        rows.append([f, rf1.real, rf2.real, rf1.imag, rf2.imag, U1, 0.0])
+        A.zeroEntries()
+        dolfinx_mpc.assemble_matrix(a_form, mpc, bcs=bcs, A=A)
+        A.assemble()
+        ksp.setOperators(A)  # same nonzero pattern -> MUMPS reuses the symbolic factorization
+
+        solve_rhs(Lx_form, ux)
+        sbx = {ij: fem.assemble_scalar(sx_forms[ij]) / area for ij in comps}
+        if lateral == "free":
+            solve_rhs(Ly_form, uy)  # cheap: reuses the factorization
+            sby = {ij: fem.assemble_scalar(sy_forms[ij]) / area for ij in comps}
+            eyy = -exx * sbx[(1, 1)] / sby[(1, 1)]
+            sxx = exx * sbx[(0, 0)] + eyy * sby[(0, 0)]
+            sxy = exx * sbx[(0, 1)] + eyy * sby[(0, 1)]
+        else:
+            sxx = exx * sbx[(0, 0)]
+            sxy = exx * sbx[(0, 1)]
+        rf1, rf2 = sxx * Ly, sxy * Ly  # corner x-reaction == σ̄_xx * Ly (matches readODB at X1Y0)
+        rows.append([f, rf1.real, rf2.real, rf1.imag, rf2.imag, exx * Lx, 0.0])
 
     out = np.array(rows)
     if output_path is not None:
