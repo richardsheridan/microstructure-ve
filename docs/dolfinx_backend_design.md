@@ -67,8 +67,21 @@ expected reduced-vs-full integration gap. Homogeneous analytic checks are exact:
 σ̄_xx = (λ+2μ)·ε_xx, free-lateral σ̄_xx = 4μ(λ+μ)/(λ+2μ)·ε_xx (plane-strain uniaxial stress),
 fluctuation ~1e-18.
 
-**Remaining follow-ups:** 3D; non-square cells; reuse the *symbolic* factorization across frequencies
-(native LU already re-factors in 0.37 s, so low priority); MPI/parallel (serial-only mappings today).
+**Remaining follow-ups:**
+- **Frequency-level parallelism (recommended near-term lever).** The 30-frequency sweep is
+  embarrassingly parallel — independent serial solves sharing one mesh. Splitting frequencies across
+  cores (`multiprocessing`, or MPI ranks each owning a subset on their *own serial mesh*) gives
+  near-linear speedup (~15 s → ~4 s on 4 cores) with **zero distributed-mesh rework**. Note: ABAQUS
+  does *not* do this — `cpus=N` parallelizes each frequency's assembly+direct-solve and steps through
+  frequencies sequentially (the domain/solver axis, not the frequency axis), so this is an axis ABAQUS
+  leaves on the table.
+- **MPI domain decomposition — low priority until large 3D meshes.** Only pays off for ≫10⁵–10⁶ dofs;
+  on the current ~5k-dof system it would add communication overhead for no gain. Requires rework:
+  rank-local node↔dof map (the global `ravel_multi_index` assumption breaks), `comm.allreduce` on the
+  volume-averaged-stress and area integrals, a distributed solver (superlu_dist / parallel MUMPS), and
+  testing the periodic MPC across partition boundaries.
+- 3D; non-square cells; reuse the *symbolic* factorization across frequencies (native LU re-factors in
+  0.37 s, so minor).
 
 ## 1. Motivation
 
