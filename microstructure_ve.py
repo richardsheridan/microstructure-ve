@@ -238,13 +238,13 @@ class SequentialDifferenceEquation:
             )
 
     def to_inp(self, inp_file_obj):
-        for i, node0 in enumerate(self.nsets[0].node_inds):
+        for node0, node1 in zip(self.nsets[0].node_inds, self.nsets[1].node_inds):
             inp_file_obj.write(
                             f"""\
 *Equation
 4
-{self.nsets[0].node_inds[i]}, {self.dof}, 1.
-{self.nsets[1].node_inds[i]}, {self.dof}, -1.
+{node0}, {self.dof}, 1.
+{node1}, {self.dof}, -1.
 {self.nsets[2]}, {self.dof}, -1.
 {self.nsets[3]}, {self.dof}, 1.
 """
