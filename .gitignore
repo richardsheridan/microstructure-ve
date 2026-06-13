@@ -127,3 +127,6 @@ dmypy.json
 *.023
 *.exception
 *-reaction-force.tsv
+
+# benchmark output
+bench_dolfinx_results.json
