@@ -84,12 +84,17 @@ def _periodic_pairs(shape):
     return list(zip(all_nodes[is_slave], master_nodes[is_slave]))
 
 
-def run(sim, freqs=None, output_path=None, lateral="confined", bbar=True):
-    """Solve `sim` over `freqs` and return a readODB-style array (len(freqs), 1+3*dim).
+_THREAD_VARS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS")
+_WORKER = {}  # per-process solver cache, populated by _init_worker in parallel mode
 
-    lateral: "confined" (lateral normal strains = 0) or "free" (lateral σ̄ normals = 0).
-    bbar:    selective reduced integration on the volumetric term (recommended).
-    Writes a tsv if output_path is given. Macro loading is uniaxial along x (axis 0).
+
+def _build_solver(sim, lateral, bbar):
+    """Build the dolfinx solver for `sim` once; return (solve_one, dim).
+
+    `solve_one(f)` returns the readODB-style row for one frequency. All dolfinx/PETSc
+    state is captured in the closure (it never crosses a process boundary); the setup
+    (mesh, dof map, materials, forms, MPC, factorizable matrix) is paid once. This is the
+    unit of work each serial sweep and each parallel worker builds exactly once.
     """
     from itertools import product
 
@@ -104,9 +109,6 @@ def run(sim, freqs=None, output_path=None, lateral="confined", bbar=True):
 
     if lateral not in ("confined", "free"):
         raise ValueError("lateral must be 'confined' or 'free'")
-    if freqs is None:
-        freqs = default_frequencies(sim)
-    freqs = np.asarray(freqs, dtype=float)
 
     model = sim.model
     nodes = model.nodes
@@ -215,7 +217,7 @@ def run(sim, freqs=None, output_path=None, lateral="confined", bbar=True):
 
     # ---- one factorized matrix, reused across frequencies and all unit-strain RHS ----
     uh = [fem.Function(V) for _ in range(dim)]  # uh[j] = fluctuation for unit strain Ej
-    set_moduli(freqs[0])
+    set_moduli(1.0)  # placeholder values to allocate A; overwritten per frequency
     A = dolfinx_mpc.assemble_matrix(a_form, mpc, bcs=bcs)
     A.assemble()
     b = dolfinx_mpc.assemble_vector(L_forms[0], mpc)
@@ -245,8 +247,7 @@ def run(sim, freqs=None, output_path=None, lateral="confined", bbar=True):
                   for j in range(dim)]
     area = fem.assemble_scalar(fem.form(fem.Constant(mesh, PETSc.ScalarType(1.0)) * ufl.dx)).real
 
-    rows = []
-    for f in freqs:
+    def solve_one(f):
         set_moduli(f)
         A.zeroEntries()
         dolfinx_mpc.assemble_matrix(a_form, mpc, bcs=bcs, A=A)
@@ -271,9 +272,69 @@ def run(sim, freqs=None, output_path=None, lateral="confined", bbar=True):
         RF = sig0 * cross_area  # x-face reaction vector (== readODB RF at the x drive node)
         U = np.zeros(dim)
         U[0] = exx * Lx
-        rows.append([f] + list(RF.real) + list(RF.imag) + list(U))
+        return [float(f)] + list(RF.real) + list(RF.imag) + list(U)
 
-    out = np.array(rows)
+    return solve_one, dim
+
+
+def _init_worker(sim, lateral, bbar):
+    """ProcessPool worker initializer: build the solver once and cache it."""
+    import os
+    for v in _THREAD_VARS:
+        os.environ.setdefault(v, "1")
+    _WORKER["solve_one"], _WORKER["dim"] = _build_solver(sim, lateral, bbar)
+
+
+def _worker_solve(f):
+    return _WORKER["solve_one"](float(f))
+
+
+def run(sim, freqs=None, output_path=None, lateral="confined", bbar=True, workers=1):
+    """Solve `sim` over `freqs`; return a readODB-style array (len(freqs), 1+3*dim).
+
+    lateral: "confined" (lateral normal strains = 0) or "free" (lateral σ̄ normals = 0).
+    bbar:    selective reduced integration on the volumetric term (recommended).
+    workers: 1 = serial (default, unchanged numerics). >1 spawns a ProcessPoolExecutor
+             and splits the independent per-frequency solves across processes -- each worker
+             builds the solver once, then solves its share, pinned to one BLAS thread.
+
+    NOTE: workers>1 uses the "spawn" start method, so a driver script that calls this with
+    workers>1 MUST guard the call under ``if __name__ == "__main__":`` (standard
+    multiprocessing requirement) or the workers will re-import and re-run it.
+
+    Writes a tsv if output_path is given. Macro loading is uniaxial along x (axis 0).
+    """
+    if freqs is None:
+        freqs = default_frequencies(sim)
+    freqs = np.asarray(freqs, dtype=float)
+    dim = sim.model.nodes.dim
+
+    if workers and workers > 1 and len(freqs) > 1:
+        import os
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor
+
+        # Spawn children inherit os.environ at interpreter start (before they import numpy),
+        # so set the BLAS thread caps here to keep workers single-threaded; restore after.
+        saved = {v: os.environ.get(v) for v in _THREAD_VARS}
+        for v in _THREAD_VARS:
+            os.environ[v] = "1"
+        try:
+            ctx = multiprocessing.get_context("spawn")
+            with ProcessPoolExecutor(max_workers=min(int(workers), len(freqs)), mp_context=ctx,
+                                     initializer=_init_worker, initargs=(sim, lateral, bbar)) as ex:
+                rows = list(ex.map(_worker_solve, freqs))  # map preserves input order
+        finally:
+            for v, old in saved.items():
+                if old is None:
+                    os.environ.pop(v, None)
+                else:
+                    os.environ[v] = old
+        out = np.array(rows)
+    else:
+        solve_one, _ = _build_solver(sim, lateral, bbar)
+        out = np.array([solve_one(f) for f in freqs])
+
     if output_path is not None:
         header = (["frequency"]
                   + [f"RF_Real{i+1}" for i in range(dim)]
