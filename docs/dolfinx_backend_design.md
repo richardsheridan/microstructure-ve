@@ -296,3 +296,60 @@ solvers; `E*(f)` is the oracle):
 5. `example_dolfinx.py` mirroring `example.py`; run protocol §6; commit oracle + results.
 
 Each step has an isolated check; nothing merges until §6 passes end-to-end.
+
+## 9. Parallel frequency sweep — benchmark results
+
+The frequency sweep is embarrassingly parallel; `dolfinx_backend.run(workers=N)` fans the
+independent per-frequency solves across a spawn `ProcessPoolExecutor` (each worker builds the solver
+once, pinned to `*_NUM_THREADS=1`). `bench_dolfinx.py` benchmarks the parallel strategies — each
+config in its own subprocess (clean env, crash isolation, 10-min cap) — on the shared host
+(2× Xeon Gold 6148, pinned to 16 cores, `nice -19`, off-peak load ≈1.5). The ProcessPool cost is
+decomposed with `time.perf_counter` into **spawn / init / first / steady** and the fixed startup is
+amortized over the sweep length (N=30) for a fair comparison against the (instant-startup) thread path.
+
+| size | dof | spawn | init | first | **steady** | thread/f | P@4 amort/f | speedup@4 | N\* vs thread |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2D 64² | 8.4k | 0.15 | 2.5 | 0.31 | **0.285** | 1.72 | 0.169 | 1.7× | 1.8 |
+| 2D 128² | 33k | 0.15 | 5.6 | 2.50 | **2.245** | 9.13 | 0.837 | 2.7× | 1.0 |
+| 2D 256² | 132k | 0.15 | 31.6 | 19.98 | **19.10** | — | 6.50 | 2.9× | — |
+| 3D 16³ | 14.7k | 0.15 | 22.0 | 42.56 | **41.66** | 76.6 | 12.57 | 3.3× | 1.0 |
+| 3D 24³, 32³ | 47k–108k | direct LU **> 30 min/solve** → timed out | | | | | | | |
+
+(times in seconds per solve; thread/f = ThreadPool wall ÷ freqs at 4 threads; P@4 amort/f =
+`(spawn+init+first)/30 + steady/4`; speedup@4 = steady ÷ P@4 amort/f; N\* = sweep length at which
+ProcessPool overtakes ThreadPool.)
+
+**Findings:**
+1. **ProcessPool is the lever.** At W=4 the amortized speedup is 1.7–3.3×, approaching the ideal 4×
+   as the mesh grows (startup amortizes — steady dominates for big solves; per-freq → `steady/W` as
+   N→∞). Default to processes-over-frequencies.
+2. **ThreadPool is a dead end** (confirmed): per-frequency **1.8–6× *slower* than even serial steady**
+   — the GIL plus PETSc's thread-unsafety plus 4 contending factorizations. ProcessPool overtakes it
+   after just **N\*≈1–2 frequencies**.
+3. **Startup decomposition:** spawn ≈ **0.15 s, stable across workers** (as assumed); init = dolfinx
+   import (~2.5 s) + setup/factorization (grows with size, 2.5→32 s); **first ≈ steady** (negligible
+   warmup). The fixed per-worker spawn+init+first is a one-time cost amortized over the sweep.
+4. **`*_NUM_THREADS` (intra-solve BLAS)** was not separately swept: native PETSc LU is effectively
+   single-threaded, so intra-solve threading buys little — the frequency axis (ProcessPool) is the
+   real parallelism, and ABAQUS's `cpus=N` (which parallelizes *within* a solve, sequentially over
+   frequencies) is the complementary axis it can't exploit.
+5. **Direct LU is impractical at large 3D:** 24³/32³ exceed ~30 min/solve (3D LU fill-in scales
+   ~quadratically in dof), motivating an iterative solver — see §10.
+
+## 10. Iterative solver investigation (not adopted)
+
+To make large 3D tractable an iterative solver was investigated. A deep-research pass
+(dolfinx_mpc demos + tests, PETSc docs, FEniCS discourse) gave the canonical recipe: attach the
+rigid-body **near**-nullspace (`dolfinx_mpc.utils.rigid_motions_nullspace`) and solve with **GMRES +
+GAMG** — *not* CG (the complex-symmetric frequency-domain stiffness is indefinite *and* non-Hermitian,
+so CG is invalid), monitoring the **true** residual (PETSc's default preconditioned-residual test
+falsely "converges" in one iteration on the constrained operator).
+
+Implemented, it reached ~1e-4…1e-7 vs LU for the realistic **viscoelastic** case but was **not
+robust** — it false-converges on the purely-elastic case. Root cause (verified): the rigid-body modes
+on `V` are **not** the nullspace of the dolfinx_mpc *reduced* matrix, whose slave rows are identity
+rows (`‖A·(uniform translation)‖ ≈ 8 ≠ 0`). A robust solver needs an **MPC-homogenized** nullspace
+(the shipped helper does not build one) plus convergence tuning — beyond scope here.
+
+**Decision: direct LU remains the default** (exact, validated). The researched recipe is recorded in
+the session memory as the starting point if/when a large-3D iterative path is pursued.

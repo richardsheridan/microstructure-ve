@@ -77,11 +77,18 @@ def _ndof(n, dim):
 # --------------------------------------------------------------------------- measurements
 # (each runs in its own subprocess; prints a single JSON line on stdout)
 
+def _n_steady(dim, n):
+    """Fewer steady reps as the solve gets expensive (3D direct LU is minutes/solve)."""
+    nd = _ndof(n, dim)
+    return 5 if nd < 40000 else (3 if nd < 80000 else 1)
+
+
 def measure_phases(dim, n, lateral="free"):
     """init / first / steady, measured in-process with perf_counter."""
     import dolfinx_backend as db
     sim = mk(n, dim)
-    fs = np.logspace(-2, 2, N_STEADY + 1)
+    nst = _n_steady(dim, n)
+    fs = np.logspace(-2, 2, nst + 1)
     t0 = time.perf_counter()
     solve_one, _ = db._build_solver(sim, lateral, True)
     t_init = time.perf_counter() - t0
@@ -93,7 +100,7 @@ def measure_phases(dim, n, lateral="free"):
         t0 = time.perf_counter()
         solve_one(f)
         steady.append(time.perf_counter() - t0)
-    return {"phase": "phases", "dim": dim, "n": n, "ndof": _ndof(n, dim),
+    return {"phase": "phases", "dim": dim, "n": n, "ndof": _ndof(n, dim), "n_steady": nst,
             "init": t_init, "first": t_first,
             "steady": float(np.mean(steady)), "steady_std": float(np.std(steady))}
 
@@ -159,7 +166,7 @@ def _run_isolated(args_list, env_extra=None):
         env.update(env_extra)
     cmd = [PY, os.path.join(HERE, "bench_dolfinx.py"), "--measure"] + [str(a) for a in args_list]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=1800)
+        out = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=600)  # 10 min
     except subprocess.TimeoutExpired:
         return {"error": "timeout", "args": args_list}
     for line in reversed(out.stdout.splitlines()):
@@ -184,6 +191,24 @@ def crossover_N(phase, spawn, W, steady_thread):
     return startup / gain
 
 
+def _skip_thread(dim, n):
+    """Skip the (slow, dead-end) ThreadPool measurement for the heavy cases."""
+    return (dim == 3 and n > 16) or (dim == 2 and n >= 256)
+
+
+def _progress(done, total, t0, label):
+    width = 26
+    fill = int(width * done / max(total, 1))
+    bar = "#" * fill + "-" * (width - fill)
+    el = (time.perf_counter() - t0) / 60
+    msg = f"[{bar}] {done:2d}/{total} {100*done//max(total,1):3d}% | {el:5.1f}m | {label:<26}"
+    if sys.stdout.isatty():
+        sys.stdout.write("\r" + msg)
+    else:
+        sys.stdout.write(msg + "\n")
+    sys.stdout.flush()
+
+
 def full_sweep(quick=False):
     # be a good neighbour on the shared host
     try:
@@ -199,38 +224,57 @@ def full_sweep(quick=False):
 
     plan = [(2, SIZES_2D[0])] if quick else [(2, n) for n in SIZES_2D] + [(3, n) for n in SIZES_3D]
     worker_sweep = [1, 2, 4] if quick else [1, 2, 4, 8, 16]
+
+    # measurement task list (drives the progress bar): heavy ThreadPool + largest-3D
+    # ProcessPool-validation runs are skipped; the amortized model covers them.
+    tasks = []
+    for dim, n in plan:
+        tasks += [(dim, n, "phases"), (dim, n, "spawn")]
+        if not _skip_thread(dim, n):
+            tasks.append((dim, n, "thread"))
+        if not quick and _ndof(n, dim) <= 80000:
+            tasks.append((dim, n, "process"))
+    total = len(tasks)
+
     load0 = os.getloadavg()
-    print(f"# host: {len(cores)} cores affinity, pinned to {len(pin)} | load {load0} | nice 19")
-    print(f"# {'dim/n':>8} {'ndof':>8} {'spawn':>7} {'init':>7} {'first':>7} {'steady':>8} "
-          f"{'thr/f':>8} {'P@4/f':>8} {'P@8/f':>8} {'N*vs4':>7}")
+    print(f"# host {len(cores)} cores, pinned {len(pin)} | load {load0} | nice 19 | {total} measurements",
+          flush=True)
+    t0 = time.perf_counter()
+    per = {}
+    arg = {"phases": [], "spawn": [], "thread": [4, 8], "process": [4, 8]}
+    slot = {"phases": "ph", "spawn": "sp", "thread": "th", "process": "pr"}
+    for done, (dim, n, kind) in enumerate(tasks):
+        _progress(done, total, t0, f"{dim}D/{n} {kind}")
+        per.setdefault((dim, n), {})[slot[kind]] = _run_isolated([kind, dim, n] + arg[kind])
+    _progress(total, total, t0, "done")
+    if sys.stdout.isatty():
+        print()
 
     results = []
-    for dim, n in plan:
-        ph = _run_isolated(["phases", dim, n])
-        sp = _run_isolated(["spawn", dim, n])
-        th = _run_isolated(["thread", dim, n, 4, 8])
+    print(f"\n# {'dim/n':>8} {'ndof':>8} {'spawn':>6} {'init':>6} {'first':>7} {'steady':>8} "
+          f"{'thr/f':>8} {'P@4amort':>9} {'P@4meas':>8} {'N*vs4':>6}", flush=True)
+    for (dim, n), d in per.items():
+        ph, sp = d.get("ph", {}), d.get("sp", {})
         if "error" in ph or "error" in sp:
             print(f"  {dim}D/{n}: ERROR {ph.get('error') or sp.get('error')}")
             continue
-        steady_thread = th.get("per_freq", float("nan"))
-        row = {**ph, "spawn": sp["spawn"], "thread_per_freq": steady_thread,
-               "amort": {W: amortized(ph, sp["spawn"], W, N_SWEEP) for W in worker_sweep},
-               "Nstar_vs4": crossover_N(ph, sp["spawn"], 4, steady_thread)}
-        # optional: actually run a real ProcessPool sweep to validate the model
-        if not quick:
-            row["process_measured"] = {W: _run_isolated(["process", dim, n, W, 8]).get("per_freq")
-                                       for W in (2, 4)}
-        results.append(row)
-        print(f"  {dim}D/{n:<5d} {ph['ndof']:>8d} {sp['spawn']:>7.2f} {ph['init']:>7.2f} "
-              f"{ph['first']:>7.3f} {ph['steady']:>8.3f} {steady_thread:>8.3f} "
-              f"{row['amort'].get(4, float('nan')):>8.3f} {row['amort'].get(8, float('nan')):>8.3f} "
-              f"{row['Nstar_vs4']:>7.1f}")
+        thr = d.get("th", {}).get("per_freq")
+        amort = {W: amortized(ph, sp["spawn"], W, N_SWEEP) for W in worker_sweep}
+        nstar = crossover_N(ph, sp["spawn"], 4, thr) if thr else None
+        meas4 = d.get("pr", {}).get("per_freq")
+        results.append({**ph, "spawn": sp["spawn"], "thread_per_freq": thr, "amort": amort,
+                        "process_measured_W4": meas4, "Nstar_vs4": nstar,
+                        "thread_skipped": "th" not in d, "process_skipped": "pr" not in d})
+        nan = float("nan")
+        print(f"  {dim}D/{n:<5d} {ph['ndof']:>8d} {sp['spawn']:>6.2f} {ph['init']:>6.2f} "
+              f"{ph['first']:>7.3f} {ph['steady']:>8.3f} {(thr or nan):>8.3f} {amort[4]:>9.3f} "
+              f"{(meas4 or nan):>8.3f} {(nstar or nan):>6.1f}", flush=True)
 
     out = {"host_cores": len(cores), "pinned": len(pin), "load_before": load0,
            "load_after": os.getloadavg(), "n_sweep": N_SWEEP, "results": results}
     with open(os.path.join(HERE, "bench_dolfinx_results.json"), "w") as f:
         json.dump(out, f, indent=2)
-    print(f"# wrote bench_dolfinx_results.json | load after {out['load_after']}")
+    print(f"# wrote bench_dolfinx_results.json | load after {out['load_after']}", flush=True)
 
 
 def main():
