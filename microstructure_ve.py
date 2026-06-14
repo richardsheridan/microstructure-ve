@@ -44,6 +44,17 @@ class GridNodes:
 
     @classmethod
     def from_matl_img(cls, matl_img, scale):
+        """Build the node grid for a material/pixel image: one more node than pixels
+        per axis, scaled by ``scale``.
+
+        >>> import numpy as np
+        >>> from microstructure_ve import GridNodes
+        >>> nodes = GridNodes.from_matl_img(np.zeros((2, 3)), scale=0.5)
+        >>> nodes.shape
+        array([3, 4])
+        >>> nodes.virtual_node  # one past the 3*4 = 12 real nodes
+        13
+        """
         nodes_shape = np.array(matl_img.shape) + 1
         return cls(nodes_shape, scale)
 
@@ -204,6 +215,14 @@ class NodeSet:
 
     @classmethod
     def from_slice(cls, name, slice_, nodes):
+        """A named node set selecting the (1-indexed) nodes under a numpy slice.
+
+        >>> import numpy as np
+        >>> from microstructure_ve import GridNodes, NodeSet, Sides_2d
+        >>> nodes = GridNodes(np.array([2, 2]), 1.0)
+        >>> NodeSet.from_slice("X0Y0", Sides_2d["X0Y0"], nodes).node_inds
+        array([1])
+        """
         inds = np.indices(nodes.shape)
         inds_list = []
         for ind in inds:
@@ -231,6 +250,10 @@ def _node_array(token):
     Returns a view of NodeSet.node_inds when present (np.asarray won't copy an
     existing ndarray); a 1-element array for a bare int. Used to enumerate the DOFs
     a constraint eliminates/prescribes without materializing per-node Python lists.
+
+    >>> from microstructure_ve import _node_array
+    >>> _node_array(5)
+    array([5])
     """
     node_inds = getattr(token, "node_inds", None)
     if node_inds is not None:
@@ -315,7 +338,16 @@ class ElementSet:
     def from_matl_img(cls, matl_img):
         """Produce a list of ElementSets corresponding to unique pixel values.
 
-        Materials are ordered by the value in each of the pixels.
+        Materials are ordered by the value in each of the pixels. Element numbers are
+        1-indexed in raveled pixel order.
+
+        >>> import numpy as np
+        >>> from microstructure_ve import ElementSet
+        >>> sets = ElementSet.from_matl_img(np.array([[0, 1], [1, 0]]))
+        >>> [int(s.matl_code) for s in sets]
+        [0, 1]
+        >>> sets[0].elements  # the two pixels valued 0
+        array([1, 4])
         """
         matl_img = matl_img.ravel()
         uniq = np.unique(matl_img)  # sorted!
@@ -825,7 +857,18 @@ class Simulation:
 
 
 def in_sorted(arr, val):
-    """Determine if val is contained in arr, assuming arr is sorted"""
+    """Determine if val is contained in arr, assuming arr is sorted.
+
+    >>> import numpy as np
+    >>> from microstructure_ve import in_sorted
+    >>> arr = np.array([1, 3, 5, 7])
+    >>> bool(in_sorted(arr, 5))
+    True
+    >>> bool(in_sorted(arr, 4))
+    False
+    >>> bool(in_sorted(arr, 9))  # past the end
+    False
+    """
     index = np.searchsorted(arr, val)
     if index < len(arr):
         return val == arr[index]
