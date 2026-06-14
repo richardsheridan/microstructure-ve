@@ -116,3 +116,27 @@ def synthetic_simulation():
     return Simulation(
         heading=Heading("Synthetic test RVE"), model=model, steps=[step]
     )
+
+
+def homogeneous_simulation(n=4, dim=2, E=3000.0, nu=0.3, scale=SCALE,
+                           displacement=DISPLACEMENT, etype=None):
+    """A single-material (homogeneous) RVE for analytic FE checks.
+
+    One elastic material fills an ``n**dim`` grid; periodic BCs + an x drive. Lets the
+    FE backend's homogenized stress be compared to closed-form uniaxial results.
+    """
+    img = np.zeros((n,) * dim, dtype=int)  # one material everywhere
+    nodes = GridNodes.from_matl_img(img, scale)
+    if etype is None:
+        etype = "CPE4" if dim == 2 else "C3D8"
+    elements = GridElements(nodes, type=etype)
+    (elset,) = ElementSet.from_matl_img(img)
+    materials = [Material(elset, density=1.0, poisson=nu, youngs=E)]
+
+    model = Model(nodes=nodes, elements=elements, materials=materials,
+                  bcs=[PeriodicBoundaryCondition(nodes=nodes)])
+    drive = nodes.nsets["X1Y0"]  # only its displacement value is read by the FE backend
+    disp_bc = DisplacementBoundaryCondition(drive, 1, 1, displacement)
+    dyn = Dynamic(f_initial=1.0, f_final=1.0, f_count=1, bias=1)
+    step = Step(subsections=[dyn, disp_bc], perturbation=True)
+    return Simulation(heading=Heading("Homogeneous RVE"), model=model, steps=[step])
