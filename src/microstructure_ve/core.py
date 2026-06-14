@@ -2,7 +2,7 @@
 
 These are pure solver-neutral data: they carry the structured-grid geometry and the
 boundary node sets. Serialization to an ABAQUS ``.inp`` lives in the ABAQUS backend
-(``microstructure_ve.backends._abaqus``), not on these classes.
+(``microstructure_ve.backends.abaqus``), not on these classes.
 """
 from __future__ import annotations
 

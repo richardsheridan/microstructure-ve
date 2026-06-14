@@ -1,15 +1,17 @@
 # Design: a DOLFINx/FEniCSx backend for microstructure-ve
 
 > **Status (implemented).** This is the original design + validation record. The backend now
-> lives in the package at `src/microstructure_ve/backends/_dolfinx/`, split by concern into
-> `spec` (msve-dataclass parsing, pure numpy), `assembly` (mesh / dof map / DG0 fields / B-bar
-> forms), `constraints` (periodic MPC + interior pin), `solver` (native-LU, factorization reuse),
-> `homogenize` (σ̄ + free-lateral superposition), and `run` (orchestration + frequency-parallel
-> sweep). The public entry point is `microstructure_ve.backends.run(sim, freqs=…, lateral=…,
-> bbar=…, workers=…)`. It is exercised by `tests/test_dolfinx_spec.py` (msve tier) and
-> `tests/test_backend_dolfinx.py` (dolfinx-gated: mesh/dof/MPC + the homogeneous analytic
-> stresses + frequency-parallel equivalence). The sections below are retained as the design
-> rationale and the measured benchmark/validation results.
+> lives in the package at `src/microstructure_ve/backends/dolfinx/`, split by concern into
+> private submodules: `_spec` (msve-dataclass parsing, pure numpy), `_assembly` (mesh / dof map /
+> DG0 fields / B-bar forms), `_constraints` (periodic MPC + interior pin), `_solver` (native-LU,
+> factorization reuse), `_homogenize` (σ̄ + free-lateral superposition), and `_run` (orchestration
+> + frequency-parallel sweep). The public entry point is
+> `from microstructure_ve.backends.dolfinx import run` →
+> `run(sim, freqs=…, lateral=…, bbar=…, workers=…)`. It is exercised by `tests/test_dolfinx_spec.py`
+> (msve tier) and `tests/test_backend_dolfinx.py` (dolfinx-gated: mesh/dof/MPC + the homogeneous
+> analytic stresses + frequency-parallel equivalence), with ABAQUS parity in
+> `tests/test_backend_dolfinx_parity.py`. The sections below are retained as the design rationale
+> and the measured benchmark/validation results.
 
 Every load-bearing API claim below was smoke-tested on this host against the pinned stack in
 the `fenicsx` conda env (created 2026-06-12):

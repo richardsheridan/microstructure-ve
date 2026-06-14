@@ -2,8 +2,9 @@
 
 ``build_solver`` assembles the spec/assembly/constraints/solver/homogenize pieces into a
 ``solve_one(f)`` closure (all dolfinx/PETSc state captured in it). ``run`` sweeps the
-frequencies and optionally writes a readODB-style tsv. The macro loading is uniaxial
-along x (coordinate axis 0). Frequency-parallel execution is added in a later step.
+frequencies and optionally writes a readODB-style tsv, optionally fanning the independent
+per-frequency solves across a spawn ProcessPool (``workers``). The macro loading is
+uniaxial along x (coordinate axis 0).
 """
 from __future__ import annotations
 

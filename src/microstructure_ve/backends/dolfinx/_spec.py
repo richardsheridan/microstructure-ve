@@ -2,7 +2,7 @@
 
 This module is **pure numpy** (no dolfinx), so it is importable and unit-testable under
 the numpy-only msve env. It is the seam between ``microstructure_ve``'s dataclasses and
-the dolfinx boilerplate in ``assembly``/``constraints``/``solver``/``homogenize``.
+the dolfinx boilerplate in ``_assembly``/``_constraints``/``_solver``/``_homogenize``.
 """
 from __future__ import annotations
 
