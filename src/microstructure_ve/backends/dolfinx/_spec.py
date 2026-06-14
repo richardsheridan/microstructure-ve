@@ -6,7 +6,7 @@ the dolfinx boilerplate in ``assembly``/``constraints``/``solver``/``homogenize`
 """
 from __future__ import annotations
 
-from collections import namedtuple
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -80,25 +80,32 @@ def periodic_pairs(shape):
     return list(zip(all_nodes[is_slave].tolist(), master_nodes[is_slave].tolist()))
 
 
-Geometry = namedtuple("Geometry", "dim scale shape L Lx cross_area exx")
-
-
-def geometry(model, sim):
+@dataclass(eq=False)  # eq=False: holds an ndarray (shape), and instances are never compared
+class Geometry:
     """Macro geometry for x-uniaxial loading: axis lengths, cross-section, drive strain.
 
     ``shape`` is the node grid ``(.., ny+1, nx+1)`` so coordinate axis ``i`` maps to grid
     axis ``dim - 1 - i``. ``L = [Lx, Ly, (Lz)]``; ``cross_area`` is perpendicular to the
     x drive; ``exx = drive_displacement / Lx`` (delta == exx * Lx).
     """
-    nodes = model.nodes
-    dim = nodes.dim
-    scale = nodes.scale
-    shape = nodes.shape
-    L = [(shape[dim - 1 - i] - 1) * scale for i in range(dim)]
-    Lx = L[0]
-    cross_area = float(np.prod(L[1:]))
-    exx = drive_displacement(sim) / Lx
-    return Geometry(dim, scale, shape, L, Lx, cross_area, exx)
+
+    dim: int
+    scale: float
+    shape: np.ndarray
+    L: list
+    Lx: float
+    cross_area: float
+    exx: float
+
+    @classmethod
+    def from_model(cls, model, sim):
+        nodes = model.nodes
+        dim = nodes.dim
+        scale = nodes.scale
+        shape = nodes.shape
+        L = [(shape[dim - 1 - i] - 1) * scale for i in range(dim)]
+        cross_area = float(np.prod(L[1:]))
+        return cls(dim, scale, shape, L, L[0], cross_area, drive_displacement(sim) / L[0])
 
 
 def require_periodic(model):

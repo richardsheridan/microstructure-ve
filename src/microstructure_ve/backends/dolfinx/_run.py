@@ -22,11 +22,11 @@ def build_solver(sim, lateral="confined", bbar=True):
     """
     model = sim.model
     spec.require_periodic(model)
-    geom = spec.geometry(model, sim)
+    geom = spec.Geometry.from_model(model, sim)
 
-    space = assembly.build_space(geom)
-    matfields = assembly.material_fields(space, model)
-    forms = assembly.elasticity_forms(space, matfields, bbar)
+    space = assembly.Space.build(geom)
+    matfields = assembly.MaterialFields.from_model(space, model)
+    forms = assembly.Forms.build(space, matfields, bbar)
     mpc = constraints.periodic_mpc(space)
     bcs = constraints.center_pin(space)
     solver = Solver(space, forms, matfields, mpc, bcs)

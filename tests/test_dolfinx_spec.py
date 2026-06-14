@@ -3,6 +3,7 @@
 These exercise ``microstructure_ve.backends._dolfinx.spec``, which has no dolfinx
 dependency, so they run everywhere the numpy-only suite runs.
 """
+import dataclasses
 import unittest
 
 import numpy as np
@@ -50,8 +51,14 @@ class SpecParsingTests(unittest.TestCase):
     def test_drive_displacement(self):
         self.assertAlmostEqual(spec.drive_displacement(self.sim), 0.005)
 
+    def test_geometry_is_dataclass_with_classmethod_constructor(self):
+        self.assertTrue(dataclasses.is_dataclass(spec.Geometry))
+        g = spec.Geometry.from_model(self.model, self.sim)
+        self.assertEqual(g.dim, 2)
+        self.assertAlmostEqual(g.exx, 0.005 / (6 * 0.0025))
+
     def test_geometry(self):
-        g = spec.geometry(self.model, self.sim)
+        g = spec.Geometry.from_model(self.model, self.sim)
         self.assertEqual(g.dim, 2)
         np.testing.assert_array_equal(g.shape, [7, 7])
         self.assertAlmostEqual(g.Lx, 6 * 0.0025)

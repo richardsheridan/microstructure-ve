@@ -32,8 +32,8 @@ class AssemblyTests(unittest.TestCase):
 
         for dim, n in [(2, 4), (3, 3)]:
             sim = homogeneous_simulation(n=n, dim=dim)
-            geom = spec.geometry(sim.model, sim)
-            space = assembly.build_space(geom)
+            geom = spec.Geometry.from_model(sim.model, sim)
+            space = assembly.Space.build(geom)
             self.assertAlmostEqual(space.area, (n * SCALE) ** dim, places=12)
 
     def test_dg0_assignment_round_trips_microstructure(self):
@@ -55,8 +55,8 @@ class AssemblyTests(unittest.TestCase):
         # build a minimal space + fields (no full solver needed)
         from microstructure_ve.backends.dolfinx._spec import Geometry
         geom = Geometry(2, SCALE, nodes.shape, [2 * SCALE, 2 * SCALE], 2 * SCALE, 2 * SCALE, 1.0)
-        space = assembly.build_space(geom)
-        mats = assembly.material_fields(space, model)
+        space = assembly.Space.build(geom)
+        mats = assembly.MaterialFields.from_model(space, model)
         mats.set_moduli(1.0)
         mu = mats.mu_fn.x.array.real
         expected = {E0 / (2 * (1 + nu)), E1 / (2 * (1 + nu))}
@@ -67,14 +67,33 @@ class AssemblyTests(unittest.TestCase):
 
 
 @needs_dolfinx
+class AssemblyBundlesAreDataclassesTests(unittest.TestCase):
+    def test_space_materialfields_forms_are_dataclasses(self):
+        import dataclasses
+
+        from microstructure_ve.backends.dolfinx import _assembly as assembly, _spec as spec
+
+        sim = homogeneous_simulation(n=3, dim=2)
+        geom = spec.Geometry.from_model(sim.model, sim)
+        space = assembly.Space.build(geom)
+        mats = assembly.MaterialFields.from_model(space, sim.model)
+        forms = assembly.Forms.build(space, mats, bbar=True)
+        for obj in (space, mats, forms):
+            self.assertTrue(dataclasses.is_dataclass(obj))
+        # closures became methods
+        self.assertTrue(callable(space.coord))
+        self.assertTrue(callable(mats.set_moduli))
+
+
+@needs_dolfinx
 class NodeDofMapTests(unittest.TestCase):
     def test_node_dof_round_trip(self):
         from microstructure_ve.backends.dolfinx import _assembly as assembly, _spec as spec
 
         sim = homogeneous_simulation(n=3, dim=2)
         nodes = sim.model.nodes
-        geom = spec.geometry(sim.model, sim)
-        space = assembly.build_space(geom)
+        geom = spec.Geometry.from_model(sim.model, sim)
+        space = assembly.Space.build(geom)
         # every boundary node set's coords recover its grid position
         for name, nset in nodes.nsets.items():
             for node in nset.node_inds:
@@ -93,8 +112,8 @@ class PeriodicMpcTests(unittest.TestCase):
             _assembly as assembly, _constraints as constraints, _spec as spec)
 
         sim = homogeneous_simulation(n=3, dim=2)
-        geom = spec.geometry(sim.model, sim)
-        space = assembly.build_space(geom)
+        geom = spec.Geometry.from_model(sim.model, sim)
+        space = assembly.Space.build(geom)
         mpc = constraints.periodic_mpc(space)
         n_pairs = len(spec.periodic_pairs(space.shape))
         # one scalar constraint per component per slave node
@@ -106,7 +125,7 @@ class AnalyticHomogeneousTests(unittest.TestCase):
     def _sigma(self, sim, lateral):
         from microstructure_ve.backends.dolfinx import _run as run, _spec as spec
 
-        geom = spec.geometry(sim.model, sim)
+        geom = spec.Geometry.from_model(sim.model, sim)
         row = run.run(sim, freqs=[1.0], lateral=lateral)[0]
         dim = sim.model.nodes.dim
         rf_real = np.array(row[1:1 + dim])
