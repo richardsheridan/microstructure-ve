@@ -53,7 +53,11 @@ class DolfinxBackendApiTests(unittest.TestCase):
         with self.assertRaises(ImportError) as cm:
             d.run  # lazy import of the FE stack fails (basix/dolfinx absent)
         msg = str(cm.exception).lower()
-        self.assertIn("fenicsx", msg)  # tell the user which env to use
+        self.assertIn("dolfinx", msg)  # names the backend
+        self.assertIn("basix", msg)    # names the actual missing dependency
+        # box-agnostic: must NOT hardcode a specific env name or path
+        self.assertNotIn("conda activate", msg)
+        self.assertNotIn("docs/", msg)
 
 
 if __name__ == "__main__":

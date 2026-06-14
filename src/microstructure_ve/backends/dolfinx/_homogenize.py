@@ -15,10 +15,10 @@ from dolfinx import fem
 from ._assembly import eps
 
 
-def build_solve_one(space, forms, solver, geom, lateral):
+def build_solve_one(space, forms, solver, geom, lateral_bc):
     """Return ``solve_one(f) -> [freq, RF_Real..., RF_Imag..., U...]`` for one frequency."""
-    if lateral not in ("confined", "free"):
-        raise ValueError("lateral must be 'confined' or 'free'")
+    if lateral_bc not in ("confined", "free"):
+        raise ValueError("lateral_bc must be 'confined' or 'free'")
     dim = space.dim
     sig, unit_E, uh = forms.sig, forms.unit_E, solver.uh
     exx, Lx, cross_area, area = geom.exx, geom.Lx, geom.cross_area, space.area
@@ -32,7 +32,7 @@ def build_solve_one(space, forms, solver, geom, lateral):
 
     def solve_one(f):
         solver.reassemble(f)
-        nsolve = dim if lateral == "free" else 1
+        nsolve = dim if lateral_bc == "free" else 1
         sbar = []  # sbar[j][(m,n)] = unit-strain-j homogenized stress component
         for j in range(nsolve):
             solver.solve(j)
@@ -40,7 +40,7 @@ def build_solve_one(space, forms, solver, geom, lateral):
 
         e = np.zeros(dim, dtype=complex)
         e[0] = exx
-        if lateral == "free" and dim > 1:
+        if lateral_bc == "free" and dim > 1:
             # choose lateral normal strains so sigma-bar_ii = 0 for i = 1..dim-1
             M = np.array([[sbar[k][(i, i)] for k in range(1, dim)] for i in range(1, dim)])
             r = np.array([-exx * sbar[0][(i, i)] for i in range(1, dim)])

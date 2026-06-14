@@ -25,10 +25,11 @@ def __getattr__(name):
         except ModuleNotFoundError as e:
             if (e.name or "").split(".")[0] in _FE_DEPS:
                 raise ImportError(
-                    "The DOLFINx backend needs the FEniCSx stack "
-                    "(dolfinx, dolfinx_mpc, basix, petsc4py), which is not importable "
-                    f"here (missing {e.name!r}). Run in the fenicsx conda env -- e.g. "
-                    "`conda activate fenicsx` -- see docs/dolfinx_backend_design.md."
+                    "The DOLFINx backend requires the FEniCSx stack (dolfinx, "
+                    "dolfinx_mpc, basix, and a complex-scalar petsc4py build), which is "
+                    f"not importable in this Python environment (missing {e.name!r}). "
+                    "These are typically installed via conda-forge rather than pip; run "
+                    "from an environment that provides them."
                 ) from e
             raise  # an unrelated missing module: surface the real error
         return getattr(_run, name)

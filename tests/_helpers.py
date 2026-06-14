@@ -120,7 +120,7 @@ def synthetic_simulation():
     )
 
 
-def _macro_corner_bcs(nodes, lateral):
+def _macro_corner_bcs(nodes, lateral_bc):
     """Corner-driven macro BCs for x-uniaxial loading (the ABAQUS reference scheme).
 
     Pins the origin, drives the x reference corner, and holds the lateral reference
@@ -131,10 +131,10 @@ def _macro_corner_bcs(nodes, lateral):
     if dim == 2:
         origin, xm, ym = (nodes.nsets[k] for k in ("X0Y0", "X1Y0", "X0Y1"))
         bcs = [FixedBoundaryCondition(origin, [1, 2]), FixedBoundaryCondition(xm, [2])]
-        bcs.append(FixedBoundaryCondition(ym, [1, 2] if lateral == "confined" else [1]))
+        bcs.append(FixedBoundaryCondition(ym, [1, 2] if lateral_bc == "confined" else [1]))
         return bcs, xm
     if dim == 3:
-        if lateral != "confined":
+        if lateral_bc != "confined":
             raise ValueError("3D oracle supports confined loading only")
         origin, xm, ym, zm = (
             nodes.nsets[k] for k in ("X0Y0Z0", "X1Y0Z0", "X0Y1Z0", "X0Y0Z1")
@@ -149,11 +149,11 @@ def _macro_corner_bcs(nodes, lateral):
     raise ValueError("unsupported dim")
 
 
-def oracle_simulation_2d(lateral="confined"):
+def oracle_simulation_2d(lateral_bc="confined"):
     """Small 2D CPE4 viscoelastic RVE, corner-driven -- the ABAQUS parity oracle.
 
     The same Simulation is solved by ABAQUS (corner-driven) and by the FE backend
-    (which ignores the corner BCs and applies ``lateral`` via its own pure-periodic
+    (which ignores the corner BCs and applies ``lateral_bc`` via its own pure-periodic
     constraints), so their homogenized x-response must agree.
     """
     img = synthetic_microstructure()
@@ -161,7 +161,7 @@ def oracle_simulation_2d(lateral="confined"):
     elements = GridElements(nodes, type="CPE4")  # full integration to match FE Q1
     # full-resolution master curve so FE's log-f interp matches ABAQUS's linear-f interp
     materials = synthetic_materials(img, stride=1)
-    bcs, drive = _macro_corner_bcs(nodes, lateral)
+    bcs, drive = _macro_corner_bcs(nodes, lateral_bc)
     bcs = (
         [PeriodicBoundaryCondition(nodes=nodes)]
         + bcs
@@ -171,7 +171,7 @@ def oracle_simulation_2d(lateral="confined"):
     disp = DisplacementBoundaryCondition(drive, 1, 1, DISPLACEMENT)
     dyn = Dynamic(f_initial=1e-7, f_final=1e5, f_count=30, bias=1)
     step = Step(subsections=[dyn, disp], perturbation=True)
-    return Simulation(heading=Heading("oracle 2d " + lateral), model=model, steps=[step])
+    return Simulation(heading=Heading("oracle 2d " + lateral_bc), model=model, steps=[step])
 
 
 def oracle_simulation_3d():

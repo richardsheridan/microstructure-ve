@@ -122,11 +122,11 @@ class PeriodicMpcTests(unittest.TestCase):
 
 @needs_dolfinx
 class AnalyticHomogeneousTests(unittest.TestCase):
-    def _sigma(self, sim, lateral):
+    def _sigma(self, sim, lateral_bc):
         from microstructure_ve.backends.dolfinx import _run as run, _spec as spec
 
         geom = spec.Geometry.from_model(sim.model, sim)
-        row = run.run(sim, freqs=[1.0], lateral=lateral)[0]
+        row = run.run(sim, freqs=[1.0], lateral_bc=lateral_bc)[0]
         dim = sim.model.nodes.dim
         rf_real = np.array(row[1:1 + dim])
         return rf_real / geom.cross_area, geom.exx  # sigma-bar normal row 0..dim-1
@@ -164,9 +164,21 @@ class FrequencyParallelTests(unittest.TestCase):
 
         sim = synthetic_simulation()
         freqs = [1e-3, 1e0, 1e3, 1e5]
-        serial = run.run(sim, freqs=freqs, lateral="confined", workers=1)
-        parallel = run.run(sim, freqs=freqs, lateral="confined", workers=2)
+        serial = run.run(sim, freqs=freqs, lateral_bc="confined", workers=1)
+        parallel = run.run(sim, freqs=freqs, lateral_bc="confined", workers=2)
         np.testing.assert_allclose(parallel, serial, rtol=1e-9, atol=0)
+
+    def test_workers_inside_worker_process_raises(self):
+        # simulate being a spawned worker that re-ran the driver: parent_process() != None
+        from unittest import mock
+
+        from microstructure_ve.backends.dolfinx import _run as run
+
+        sim = homogeneous_simulation(n=3, dim=2)
+        with mock.patch("multiprocessing.parent_process", return_value=object()):
+            with self.assertRaises(RuntimeError) as cm:
+                run.run(sim, freqs=[1.0, 2.0], workers=2)
+        self.assertIn("worker process", str(cm.exception).lower())
 
 
 if __name__ == "__main__":

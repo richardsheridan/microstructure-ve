@@ -14,7 +14,7 @@ from . import _assembly as assembly, _constraints as constraints, _homogenize as
 from ._solver import Solver
 
 
-def build_solver(sim, lateral="confined", bbar=True):
+def build_solver(sim, lateral_bc="confined", bbar=True):
     """Build the FE solver for ``sim`` once; return ``(solve_one, dim)``.
 
     ``solve_one(f)`` returns the readODB-style row for one frequency. The setup (mesh,
@@ -31,7 +31,7 @@ def build_solver(sim, lateral="confined", bbar=True):
     mpc = constraints.periodic_mpc(space)
     bcs = constraints.center_pin(space)
     solver = Solver(space, forms, matfields, mpc, bcs)
-    solve_one = homogenize.build_solve_one(space, forms, solver, geom, lateral)
+    solve_one = homogenize.build_solve_one(space, forms, solver, geom, lateral_bc)
     return solve_one, space.dim
 
 
@@ -41,12 +41,12 @@ _THREAD_VARS = (
 _WORKER = {}  # per-process solver cache, populated by _init_worker in parallel mode
 
 
-def _init_worker(sim, lateral, bbar):
+def _init_worker(sim, lateral_bc, bbar):
     """ProcessPool worker initializer: build the solver once and cache it."""
     import os
     for v in _THREAD_VARS:
         os.environ.setdefault(v, "1")
-    _WORKER["solve_one"], _WORKER["dim"] = build_solver(sim, lateral, bbar)
+    _WORKER["solve_one"], _WORKER["dim"] = build_solver(sim, lateral_bc, bbar)
 
 
 def _worker_solve(f):
@@ -62,7 +62,7 @@ def _row_header(dim):
     )
 
 
-def run(sim, freqs=None, output_path=None, lateral="confined", bbar=True, workers=1):
+def run(sim, freqs=None, output_path=None, lateral_bc="confined", bbar=True, workers=1):
     """Solve ``sim`` over ``freqs``; return one row per frequency, ``(len(freqs), 1+3*dim)``.
 
     The drive is read from the step: put a ``DisplacementBoundaryCondition`` in the
@@ -79,8 +79,8 @@ def run(sim, freqs=None, output_path=None, lateral="confined", bbar=True, worker
     with ``cross_area = Ly`` (2D) or ``Ly*Lz`` (3D) and ``exx = U_1 / Lx`` -- i.e. divide
     the x reaction by the cross-section and the applied macro strain (see ``Geometry``).
 
-    lateral: "confined" -> lateral macro normal strains are held at 0 (plane-strain-style
-             constraint); "free" -> lateral macro normal *stresses* vanish, the cell
+    lateral_bc: "confined" -> lateral macro normal strains are held at 0 (plane-strain-
+             style constraint); "free" -> lateral macro normal *stresses* vanish, the cell
              contracts by Poisson (the right choice for an apparent uniaxial modulus).
     bbar:    selective reduced integration on the volumetric term (recommended; matches
              ABAQUS CPE4/C3D8 B-bar and avoids Q1 volumetric locking).
@@ -96,9 +96,21 @@ def run(sim, freqs=None, output_path=None, lateral="confined", bbar=True, worker
     dim = sim.model.nodes.dim
 
     if workers and workers > 1 and len(freqs) > 1:
-        out = _run_parallel(sim, freqs, lateral, bbar, workers)
+        import multiprocessing
+
+        # If we are already inside a spawned worker, the pool's children re-imported and
+        # re-ran the calling module -- detect that directly (a real parent process exists)
+        # rather than trying to infer whether the caller had an __main__ guard.
+        if multiprocessing.parent_process() is not None:
+            raise RuntimeError(
+                "run(workers>1) was reached inside a multiprocessing worker process: the "
+                "spawned workers re-imported and re-ran the calling module. Invoke "
+                "run(workers>1) from a guarded entry point (under "
+                '`if __name__ == "__main__":`) or set workers=1.'
+            )
+        out = _run_parallel(sim, freqs, lateral_bc, bbar, workers)
     else:
-        solve_one, _ = build_solver(sim, lateral, bbar)
+        solve_one, _ = build_solver(sim, lateral_bc, bbar)
         out = np.array([solve_one(f) for f in freqs])
 
     if output_path is not None:
@@ -109,7 +121,7 @@ def run(sim, freqs=None, output_path=None, lateral="confined", bbar=True, worker
     return out
 
 
-def _run_parallel(sim, freqs, lateral, bbar, workers):
+def _run_parallel(sim, freqs, lateral_bc, bbar, workers):
     """Fan the per-frequency solves across a spawn ProcessPoolExecutor (order preserved)."""
     import os
     import multiprocessing
@@ -124,7 +136,7 @@ def _run_parallel(sim, freqs, lateral, bbar, workers):
         ctx = multiprocessing.get_context("spawn")
         with ProcessPoolExecutor(
             max_workers=min(int(workers), len(freqs)), mp_context=ctx,
-            initializer=_init_worker, initargs=(sim, lateral, bbar),
+            initializer=_init_worker, initargs=(sim, lateral_bc, bbar),
         ) as ex:
             rows = list(ex.map(_worker_solve, freqs))  # map preserves input order
     finally:

@@ -25,13 +25,13 @@ DATA = pathlib.Path(__file__).resolve().parent / "data"
 
 @needs_dolfinx
 class AbaqusParityTests(unittest.TestCase):
-    def _check(self, sim, lateral, oracle_name, dim, rtol):
+    def _check(self, sim, lateral_bc, oracle_name, dim, rtol):
         oracle = np.loadtxt(DATA / oracle_name, skiprows=1)
         oracle = np.atleast_2d(oracle)
         oracle = oracle[np.argsort(oracle[:, 0])]
         from microstructure_ve.backends.dolfinx import _run as run
 
-        fe = run.run(sim, freqs=oracle[:, 0], lateral=lateral)
+        fe = run.run(sim, freqs=oracle[:, 0], lateral_bc=lateral_bc)
         fe = fe[np.argsort(fe[:, 0])]
         scale = np.max(np.abs(oracle[:, 1]))  # storage magnitude sets the absolute floor
         # storage RF_Real1 (col 1), loss RF_Imag1 (col 1+dim), drive U1 (col 1+2*dim)
@@ -58,8 +58,8 @@ class AbaqusParityTests(unittest.TestCase):
 
         sim_c = oracle_simulation_2d("confined")
         sim_f = oracle_simulation_2d("free")
-        rf_c = run.run(sim_c, freqs=[1e-7], lateral="confined")[0, 1]
-        rf_f = run.run(sim_f, freqs=[1e-7], lateral="free")[0, 1]
+        rf_c = run.run(sim_c, freqs=[1e-7], lateral_bc="confined")[0, 1]
+        rf_f = run.run(sim_f, freqs=[1e-7], lateral_bc="free")[0, 1]
         self.assertLess(rf_f, rf_c)  # free modulus < confined modulus
 
 
