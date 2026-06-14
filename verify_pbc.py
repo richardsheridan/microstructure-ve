@@ -17,41 +17,37 @@ Usage:
     python verify_pbc.py gen_free   # write example_free.inp
     python verify_pbc.py compare    # after ABAQUS+readODB: assert RF/U allclose
 """
+import pathlib
 import sys
 
 import numpy as np
 
-from microstructure_ve import (
-    Heading,
-    GridNodes,
-    GridElements,
-    ElementSet,
-    TabularViscoelasticMaterial,
-    Material,
-    periodic_assign_intph,
-    load_viscoelasticity,
-    FixedBoundaryCondition,
+from microstructure_ve.backends import write_inp as _write_inp
+from microstructure_ve.boundary import (
     DisplacementBoundaryCondition,
+    FixedBoundaryCondition,
     OldPeriodicBoundaryCondition,
     PeriodicBoundaryCondition,
-    Dynamic,
-    Step,
-    NodeSet,
-    Model,
-    Simulation,
 )
+from microstructure_ve.core import ElementSet, GridElements, GridNodes, NodeSet
+from microstructure_ve.materials import Material, TabularViscoelasticMaterial
+from microstructure_ve.steps import Dynamic, Heading, Model, Simulation, Step
+from microstructure_ve.utils import load_viscoelasticity, periodic_assign_intph
 
 scale = 0.0025
 displacement = 0.005
 layers = 5
 
+# Resolve input data relative to this script so it can be run from any working dir.
+base_path = pathlib.Path(__file__).parent
+
 
 def build_common():
     """Mesh + materials + dynamic step shared by every BC mode."""
-    ms_img = np.load("ms.npy")
+    ms_img = np.load(base_path / "ms.npy")
     intph_img = periodic_assign_intph(ms_img, [layers])
 
-    freq, youngs_cplx = load_viscoelasticity("PMMA_shifted_R10_data.txt")
+    freq, youngs_cplx = load_viscoelasticity(base_path / "PMMA_shifted_R10_data.txt")
     youngs_plat = youngs_cplx[0].real
 
     nodes = GridNodes.from_matl_img(intph_img, scale)
@@ -228,8 +224,7 @@ def compare(old_tsv, new_tsv, rtol=1e-4, atol=1e-12):
 def write_inp(mode, path):
     """Build `mode` and write its .inp; sanity-check the pure-periodic new modes."""
     sim, nodes = build_sim(mode)
-    with open(path, "w", encoding="ascii") as f:
-        sim.to_inp(f)
+    _write_inp(sim, path)
     print(f"wrote {path} ({mode})")
     if mode.startswith("new"):  # old's DriveEquation isn't pure-periodic, so skip it
         sanity_check(path, nodes)

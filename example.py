@@ -2,23 +2,16 @@ import pathlib
 
 import numpy as np
 
-from microstructure_ve import (
-    Heading,
-    GridNodes,
-    PeriodicBoundaryCondition,
-    GridElements,
-    ElementSet,
-    TabularViscoelasticMaterial,
-    Material,
-    periodic_assign_intph,
-    load_viscoelasticity,
-    FixedBoundaryCondition,
+from microstructure_ve.backends import write_inp
+from microstructure_ve.boundary import (
     DisplacementBoundaryCondition,
-    Dynamic,
-    Step,
-    Model,
-    Simulation,
+    FixedBoundaryCondition,
+    PeriodicBoundaryCondition,
 )
+from microstructure_ve.core import ElementSet, GridElements, GridNodes
+from microstructure_ve.materials import Material, TabularViscoelasticMaterial
+from microstructure_ve.steps import Dynamic, Heading, Model, Simulation, Step
+from microstructure_ve.utils import load_viscoelasticity, periodic_assign_intph
 
 scale = 0.0025
 displacement = 0.005
@@ -105,19 +98,17 @@ dyn = Dynamic(
 step = Step(subsections=[dyn, disp_bc], perturbation=True)
 
 inp_path = work_dir / "example.inp"
-with open(inp_path, mode="w", encoding="ascii") as inp_file_obj:
-    Simulation(
-        heading=heading,
-        model=model,
-        steps=[step],
-    ).to_inp(inp_file_obj)
+write_inp(Simulation(heading=heading, model=model, steps=[step]), inp_path)
 
-# Run the job from inside the per-simulation working directory, then extract the
-# reaction forces. The reaction work-conjugate to the applied displacement is carried
-# by the X1Y0 corner node, so that is the node set readODB.py reads:
+# Emit the standalone odb reader next to the job, then run the job from inside the
+# per-simulation working directory and extract the reaction forces. The reaction
+# work-conjugate to the applied displacement is carried by the X1Y0 corner node, so
+# that is the node set the reader reads:
+# from microstructure_ve.backends import write_odb_reader
+# write_odb_reader(work_dir / "read_abaqus_odb.py")
 # cd abaqus-work/example
 # /path/to/abaqus job=example cpus=4 interactive
-# /path/to/abaqus python /path/to/readODB.py example X1Y0
+# /path/to/abaqus python read_abaqus_odb.py example X1Y0
 
 # import csv
 # tsv = csv.reader(open("abaqus-work/example/example-reaction-force.tsv", "r"), dialect=csv.excel_tab)

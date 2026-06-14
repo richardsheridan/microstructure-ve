@@ -5,7 +5,7 @@ import unittest
 
 import numpy as np
 
-from microstructure_ve import (
+from microstructure_ve.utils import (
     assign_intph,
     in_sorted,
     load_matlab_microstructure,

@@ -10,10 +10,15 @@ Modules that are import-gated on optional/abaqus-only dependencies are excluded
 import doctest
 import importlib
 
-# Pure, numpy-only modules whose docstrings carry doctests. After the package split
-# this becomes the list of microstructure_ve submodules; today it is the monolith.
+# Pure, numpy-only submodules whose docstrings carry doctests. The abaqus odb reader
+# is excluded (it is import-gated on odbAccess).
 DOCTEST_MODULES = [
-    "microstructure_ve",
+    "microstructure_ve.core",
+    "microstructure_ve.equations",
+    "microstructure_ve.materials",
+    "microstructure_ve.boundary",
+    "microstructure_ve.steps",
+    "microstructure_ve.utils",
 ]
 
 

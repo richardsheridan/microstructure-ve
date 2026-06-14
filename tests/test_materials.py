@@ -10,11 +10,9 @@ import unittest
 
 import numpy as np
 
-from microstructure_ve import (
-    ElementSet,
-    TabularViscoelasticMaterial,
-    load_viscoelasticity,
-)
+from microstructure_ve.core import ElementSet
+from microstructure_ve.materials import TabularViscoelasticMaterial
+from microstructure_ve.utils import load_viscoelasticity
 
 PMMA_DATA = pathlib.Path(__file__).resolve().parent.parent / "PMMA_shifted_R10_data.txt"
 

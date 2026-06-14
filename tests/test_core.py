@@ -4,7 +4,8 @@ import unittest
 
 import numpy as np
 
-from microstructure_ve import (
+from microstructure_ve.backends._abaqus.inp import emit
+from microstructure_ve.core import (
     ElementSet,
     GridElements,
     GridNodes,
@@ -67,7 +68,7 @@ class GridElementsTests(unittest.TestCase):
         nodes = GridNodes(np.array([3, 3]), 1.0)
         elements = GridElements(nodes, type="CPE4R")
         buf = io.StringIO()
-        elements.to_inp(buf)
+        emit(elements, buf)
         lines = [l for l in buf.getvalue().splitlines() if not l.startswith("*")]
         first = [int(x) for x in lines[0].split(",")]
         self.assertEqual(first, [1, 1, 2, 5, 4])  # elem_num, then CCW corners

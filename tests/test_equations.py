@@ -8,17 +8,18 @@ import unittest
 
 import numpy as np
 
-from microstructure_ve import (
+from microstructure_ve.backends._abaqus.inp import emit
+from microstructure_ve.core import NodeSet
+from microstructure_ve.equations import (
     DriveEquation,
     EqualityEquation,
-    NodeSet,
     SequentialDifferenceEquation,
 )
 
 
 def _emit(obj):
     buf = io.StringIO()
-    obj.to_inp(buf)
+    emit(obj, buf)
     return buf.getvalue()
 
 

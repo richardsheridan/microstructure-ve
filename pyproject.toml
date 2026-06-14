@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "microstructure-ve"
+version = "0.1.0"
+description = "FEA code for viscoelastic analysis of polymer nanoparticle composites (Brinson Group, Duke)"
+readme = "README.md"
+requires-python = ">=3.10"
+maintainers = [{ name = "Richard Sheridan", email = "richard.sheridan@duke.edu" }]
+dependencies = ["numpy", "scipy"]
+
+# NOTE: the DOLFINx backend (microstructure_ve.backends._dolfinx) is NOT a pip extra.
+# fenics-dolfinx / dolfinx_mpc / a complex-PETSc build are conda-forge only and not
+# pip-installable in a working complex configuration. Use a separate conda env
+# (see docs/dolfinx_backend_design.md). The package imports dolfinx lazily, so it stays
+# importable (numpy-only) without that env.
+
+[tool.setuptools.packages.find]
+where = ["src"]

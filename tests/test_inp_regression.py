@@ -11,6 +11,8 @@ import io
 import pathlib
 import unittest
 
+from microstructure_ve.backends import write_inp
+
 from tests._helpers import synthetic_simulation
 
 GOLDEN = pathlib.Path(__file__).resolve().parent / "data" / "synthetic.inp"
@@ -19,7 +21,7 @@ GOLDEN = pathlib.Path(__file__).resolve().parent / "data" / "synthetic.inp"
 class SyntheticInpRegression(unittest.TestCase):
     def test_emission_matches_golden(self):
         buf = io.StringIO()
-        synthetic_simulation().to_inp(buf)
+        write_inp(synthetic_simulation(), buf)
         emitted = buf.getvalue()
         golden = GOLDEN.read_text(encoding="ascii")
         if emitted != golden:

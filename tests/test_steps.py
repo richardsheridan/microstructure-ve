@@ -4,15 +4,14 @@ import unittest
 
 import numpy as np
 
-from microstructure_ve import (
+from microstructure_ve.backends._abaqus.inp import emit
+from microstructure_ve.boundary import PeriodicBoundaryCondition
+from microstructure_ve.core import ElementSet, GridElements, GridNodes
+from microstructure_ve.materials import Material
+from microstructure_ve.steps import (
     Dynamic,
-    ElementSet,
-    GridElements,
-    GridNodes,
     Heading,
-    Material,
     Model,
-    PeriodicBoundaryCondition,
     Simulation,
     Static,
     Step,
@@ -21,7 +20,7 @@ from microstructure_ve import (
 
 def _emit(obj):
     buf = io.StringIO()
-    obj.to_inp(buf)
+    emit(obj, buf)
     return buf.getvalue()
 
 

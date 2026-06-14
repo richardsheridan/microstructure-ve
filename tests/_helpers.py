@@ -9,23 +9,15 @@ import pathlib
 
 import numpy as np
 
-from microstructure_ve import (
-    Dynamic,
+from microstructure_ve.boundary import (
     DisplacementBoundaryCondition,
-    ElementSet,
     FixedBoundaryCondition,
-    GridElements,
-    GridNodes,
-    Heading,
-    Material,
-    Model,
     PeriodicBoundaryCondition,
-    Simulation,
-    Step,
-    TabularViscoelasticMaterial,
-    load_viscoelasticity,
-    periodic_assign_intph,
 )
+from microstructure_ve.core import ElementSet, GridElements, GridNodes
+from microstructure_ve.materials import Material, TabularViscoelasticMaterial
+from microstructure_ve.steps import Dynamic, Heading, Model, Simulation, Step
+from microstructure_ve.utils import load_viscoelasticity, periodic_assign_intph
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PMMA_DATA = REPO_ROOT / "PMMA_shifted_R10_data.txt"
