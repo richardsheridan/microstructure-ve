@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from functools import partial
 from itertools import product
-from typing import Dict, List, Literal, Union
+from typing import Dict, List, Literal, Tuple, Union
 
 import numpy as np
 from dataclasses import dataclass, field
@@ -130,7 +130,7 @@ def _node_array(token):
 
 @dataclass
 class GridNodes:
-    shape: np.ndarray
+    shape: Tuple[int, ...]
     scale: float
     nsets: Dict[str, NodeSet] = field(init=False)
 
@@ -143,14 +143,16 @@ class GridNodes:
         >>> from microstructure_ve.core import GridNodes
         >>> nodes = GridNodes.from_matl_img(np.zeros((2, 3)), scale=0.5)
         >>> nodes.shape
-        array([3, 4])
+        (3, 4)
         >>> nodes.virtual_node  # one past the 3*4 = 12 real nodes
         13
         """
-        nodes_shape = np.array(matl_img.shape) + 1
-        return cls(nodes_shape, scale)
+        return cls(tuple(d + 1 for d in matl_img.shape), scale)
 
     def __post_init__(self):
+        # canonicalize shape to a plain int tuple (it may arrive as an ndarray/list):
+        # hashable/comparable, and no downstream code needs ndarray arithmetic on it
+        self.shape = tuple(int(d) for d in self.shape)
         self.node_nums = range(1, 1 + np.prod(self.shape))  # 1-indexing for ABAQUS
         self.virtual_node = self.node_nums[-1] + 1
         # create nsets
@@ -189,7 +191,7 @@ class GridElements:
                 raise ValueError("Need a 3D element type, got:", self.type)
         else:
             raise ValueError('GridNodes has illegal number of dimensions', dim)
-        self.element_nums = range(1, 1 + np.prod(self.nodes.shape - 1))
+        self.element_nums = range(1, 1 + np.prod([d - 1 for d in self.nodes.shape]))
 
 
 @dataclass

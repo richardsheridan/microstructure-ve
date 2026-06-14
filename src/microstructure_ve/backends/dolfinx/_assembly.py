@@ -37,7 +37,7 @@ class Space:
     V: Any
     dim: int
     scale: float
-    shape: np.ndarray
+    shape: tuple
     dof_x: np.ndarray
     block_of_node: np.ndarray
     oci: np.ndarray

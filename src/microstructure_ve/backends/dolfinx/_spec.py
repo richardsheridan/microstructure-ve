@@ -49,7 +49,7 @@ def material_cell_maps(model):
     cell order before dolfinx's reordering). ``modulus_fns[m]`` is material ``m``'s
     ``complex_modulus`` callable.
     """
-    ncells = int(np.prod(model.nodes.shape - 1))
+    ncells = int(np.prod([d - 1 for d in model.nodes.shape]))
     mat_of_cell = np.empty(ncells, dtype=int)
     poissons, modulus_fns = [], []
     for mi, mat in enumerate(model.materials):
@@ -80,7 +80,7 @@ def periodic_pairs(shape):
     return list(zip(all_nodes[is_slave].tolist(), master_nodes[is_slave].tolist()))
 
 
-@dataclass(eq=False)  # eq=False: holds an ndarray (shape), and instances are never compared
+@dataclass
 class Geometry:
     """Macro geometry for x-uniaxial loading: axis lengths, cross-section, drive strain.
 
@@ -91,7 +91,7 @@ class Geometry:
 
     dim: int
     scale: float
-    shape: np.ndarray
+    shape: tuple
     L: list
     Lx: float
     cross_area: float

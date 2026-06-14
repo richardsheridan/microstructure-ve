@@ -17,9 +17,18 @@ from microstructure_ve.core import (
 
 
 class GridNodesTests(unittest.TestCase):
+    def test_shape_is_a_plain_int_tuple(self):
+        # shape is normalized to a tuple of python ints regardless of input type,
+        # so it is hashable/comparable and needs no ndarray arithmetic downstream
+        from_img = GridNodes.from_matl_img(np.zeros((4, 5)), scale=0.25)
+        from_ctor = GridNodes(np.array([3, 3]), 1.0)
+        for nodes in (from_img, from_ctor):
+            self.assertIsInstance(nodes.shape, tuple)
+            self.assertTrue(all(isinstance(d, int) for d in nodes.shape))
+
     def test_from_matl_img_shape_and_counts(self):
         nodes = GridNodes.from_matl_img(np.zeros((4, 5)), scale=0.25)
-        np.testing.assert_array_equal(nodes.shape, [5, 6])
+        self.assertEqual(nodes.shape, (5, 6))
         self.assertEqual(nodes.dim, 2)
         self.assertEqual(list(nodes.node_nums), list(range(1, 31)))
         self.assertEqual(nodes.virtual_node, 31)
