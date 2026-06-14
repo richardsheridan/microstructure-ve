@@ -89,15 +89,17 @@ class GridNodes:
 @dataclass
 class GridElements:
     nodes: GridNodes
-    type: Literal["CPE4R", "CPS4R", "C3D8R"] = "C3D8R"
+    type: Literal["CPE4R", "CPS4R", "CPE4", "C3D8R", "C3D8"] = "C3D8R"
 
     def __post_init__(self):
         dim = self.nodes.dim
+        # CPE4 / C3D8 (full integration) added for tight parity with a full-integration
+        # FE backend; the *R variants are reduced-integration.
         if dim == 2:
-            if self.type not in {"CPE4R", "CPS4R"}:
+            if self.type not in {"CPE4R", "CPS4R", "CPE4"}:
                 raise ValueError("Need a 2D element type, got:", self.type)
         elif dim == 3:
-            if self.type not in {"C3D8R"}:
+            if self.type not in {"C3D8R", "C3D8"}:
                 raise ValueError("Need a 3D element type, got:", self.type)
         else:
             raise ValueError('GridNodes has illegal number of dimensions', dim)
@@ -393,6 +395,22 @@ class Material:
     poisson: float
     youngs: float  # MPa, long term, low freq modulus
 
+    def complex_modulus(self, freqs):
+        """Complex Young's modulus E*(f) at each frequency in ``freqs``.
+
+        Backend-neutral material query (used by the DOLFINx backend; the ABAQUS
+        path emits the table instead). Plain elastic materials are frequency-flat,
+        so every entry is just ``youngs`` as a complex number, shaped like ``freqs``:
+
+        >>> import numpy as np
+        >>> from microstructure_ve import ElementSet, Material
+        >>> mat = Material(ElementSet(1, np.array([1])), density=1.0,
+        ...                poisson=0.3, youngs=5.0)
+        >>> mat.complex_modulus(np.array([1e0, 1e3, 1e6]))
+        array([5.+0.j, 5.+0.j, 5.+0.j])
+        """
+        return np.full(np.shape(freqs), self.youngs, dtype=complex)
+
     def to_inp(self, inp_file_obj):
         self.elset.to_inp(inp_file_obj)
         mc = self.elset.matl_code
@@ -478,6 +496,27 @@ class TabularViscoelasticMaterial(Material):
         wgstar.imag = 1 - self.youngs_cplx.real / youngs_inf
 
         return wgstar, wgstar
+
+    def complex_modulus(self, freqs):
+        """E*(f) reconstructed exactly as ABAQUS rebuilds it from the
+        ``*VISCOELASTIC, FREQUENCY=TABULAR`` table this material emits.
+
+        The normalized loss/storage (omega-g-star) table is written at the
+        shifted/broadened frequencies ``apply_shift()``; ABAQUS reads it relative to
+        the ``*Elastic`` modulus (``self.youngs``) and interpolates between table rows.
+        We mirror that: interpolate omega-g-star onto ``freqs`` and rescale by
+        ``self.youngs``. Interpolation is in log10(frequency) since the table spans
+        many decades. Inverts ``normalize_constant_nu_modulus``.
+        """
+        wgstar, _ = self.normalize_constant_nu_modulus()
+        table_freq = self.apply_shift()
+        order = np.argsort(table_freq)
+        log_f = np.log10(freqs)
+        log_table = np.log10(table_freq[order])
+        wgr = np.interp(log_f, log_table, wgstar.real[order])
+        wgi = np.interp(log_f, log_table, wgstar.imag[order])
+        # invert normalize_constant_nu_modulus: E_storage = (1 - wgi)*E0, E_loss = wgr*E0
+        return self.youngs * ((1.0 - wgi) + 1j * wgr)
 
     def to_inp(self, inp_file_obj):
         super().to_inp(inp_file_obj)
