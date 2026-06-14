@@ -24,10 +24,15 @@ scale = 0.0025
 displacement = 0.005
 layers = 5
 
-ms_img = np.load("ms.npy")
+# Resolve inputs relative to this script (not the CWD) so the job can be written
+# and run from a dedicated per-simulation working directory.
+base_path = pathlib.Path(__file__).parent
+work_dir = base_path / "abaqus-work" / "example"
+work_dir.mkdir(parents=True, exist_ok=True)
+
+ms_img = np.load(base_path / "ms.npy")
 intph_img = periodic_assign_intph(ms_img, [layers])
 
-base_path = pathlib.Path(__file__).parent
 youngs_path = base_path / "PMMA_shifted_R10_data.txt"
 freq, youngs_cplx = load_viscoelasticity(youngs_path)
 # This is one way to assign a long term modulus, but it is not universal!
@@ -99,18 +104,20 @@ dyn = Dynamic(
 )
 step = Step(subsections=[dyn, disp_bc], perturbation=True)
 
-with open("example.inp", mode="w", encoding="ascii") as inp_file_obj:
+inp_path = work_dir / "example.inp"
+with open(inp_path, mode="w", encoding="ascii") as inp_file_obj:
     Simulation(
         heading=heading,
         model=model,
         steps=[step],
     ).to_inp(inp_file_obj)
 
-# Run the job, then extract the reaction forces, from a shell. The reaction
-# work-conjugate to the applied displacement is carried by the X1Y0 corner node,
-# so that is the node set readODB.py reads:
+# Run the job from inside the per-simulation working directory, then extract the
+# reaction forces. The reaction work-conjugate to the applied displacement is carried
+# by the X1Y0 corner node, so that is the node set readODB.py reads:
+# cd abaqus-work/example
 # /path/to/abaqus job=example cpus=4 interactive
-# /path/to/abaqus python readODB.py example X1Y0
+# /path/to/abaqus python /path/to/readODB.py example X1Y0
 
 # import csv
-# tsv = csv.reader(open("example-reaction-force.tsv", "r"), dialect=csv.excel_tab)
+# tsv = csv.reader(open("abaqus-work/example/example-reaction-force.tsv", "r"), dialect=csv.excel_tab)

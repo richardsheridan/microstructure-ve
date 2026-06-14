@@ -113,16 +113,11 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# ABAQUS solver scratch / outputs (keep .inp golden files, ignore run artifacts)
-*.odb
-*.com
-*.dat
-*.msg
-*.prt
-*.sim
-*.sta
-*.lck
-*.mdl
-*.stt
-*.023
-*-reaction-force.tsv
+# ABAQUS solver scratch / outputs: every job runs inside a per-simulation abaqus-work/
+# dir, so ignoring that one directory contains all run artifacts (.odb/.sim/.tsv/...).
+# Keeping the file-type globs out lets intentionally-committed tsv oracles (tests/data/)
+# commit naturally. Rule: never run abaqus outside abaqus-work/.
+**/abaqus-work/
+
+# DOLFINx frequency-parallel benchmark output
+bench_dolfinx_results.json
