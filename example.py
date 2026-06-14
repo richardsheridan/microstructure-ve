@@ -2,7 +2,7 @@ import pathlib
 
 import numpy as np
 
-from microstructure_ve.backends import write_inp
+from microstructure_ve.backends.abaqus import write_inp
 from microstructure_ve.boundary import (
     DisplacementBoundaryCondition,
     FixedBoundaryCondition,
@@ -104,7 +104,7 @@ write_inp(Simulation(heading=heading, model=model, steps=[step]), inp_path)
 # per-simulation working directory and extract the reaction forces. The reaction
 # work-conjugate to the applied displacement is carried by the X1Y0 corner node, so
 # that is the node set the reader reads:
-# from microstructure_ve.backends import write_odb_reader
+# from microstructure_ve.backends.abaqus import write_odb_reader
 # write_odb_reader(work_dir / "read_abaqus_odb.py")
 # cd abaqus-work/example
 # /path/to/abaqus job=example cpus=4 interactive

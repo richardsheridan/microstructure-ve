@@ -29,7 +29,7 @@ class AbaqusParityTests(unittest.TestCase):
         oracle = np.loadtxt(DATA / oracle_name, skiprows=1)
         oracle = np.atleast_2d(oracle)
         oracle = oracle[np.argsort(oracle[:, 0])]
-        from microstructure_ve.backends._dolfinx import run
+        from microstructure_ve.backends.dolfinx import _run as run
 
         fe = run.run(sim, freqs=oracle[:, 0], lateral=lateral)
         fe = fe[np.argsort(fe[:, 0])]
@@ -54,7 +54,7 @@ class AbaqusParityTests(unittest.TestCase):
 
     def test_confined_stiffer_than_free(self):
         # cross-check inside the FE backend alone: free-lateral is softer (Poisson relief)
-        from microstructure_ve.backends._dolfinx import run
+        from microstructure_ve.backends.dolfinx import _run as run
 
         sim_c = oracle_simulation_2d("confined")
         sim_f = oracle_simulation_2d("free")

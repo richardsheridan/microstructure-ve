@@ -17,7 +17,7 @@ from petsc4py import PETSc
 import dolfinx
 from dolfinx import fem
 
-from . import spec
+from . import _spec as spec
 
 _ELEMENT = {2: "quadrilateral", 3: "hexahedron"}
 

@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from . import assembly, constraints, homogenize, spec
-from .solver import Solver
+from . import _assembly as assembly, _constraints as constraints, _homogenize as homogenize, _spec as spec
+from ._solver import Solver
 
 
 def build_solver(sim, lateral="confined", bbar=True):

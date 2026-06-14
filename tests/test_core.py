@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from microstructure_ve.backends._abaqus.inp import emit
+from microstructure_ve.backends.abaqus._inp import emit
 from microstructure_ve.core import (
     ElementSet,
     GridElements,

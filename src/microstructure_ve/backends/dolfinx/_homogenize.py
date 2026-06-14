@@ -12,7 +12,7 @@ import numpy as np
 import ufl
 from dolfinx import fem
 
-from .assembly import eps
+from ._assembly import eps
 
 
 def build_solve_one(space, forms, solver, geom, lateral):

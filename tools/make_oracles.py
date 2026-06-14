@@ -24,7 +24,7 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from tests._helpers import oracle_simulation_2d, oracle_simulation_3d  # noqa: E402
-from microstructure_ve.backends import write_inp, write_odb_reader  # noqa: E402
+from microstructure_ve.backends.abaqus import write_inp, write_odb_reader  # noqa: E402
 
 ABAQUS = "/var/DassaultSystemes/SIMULIA/Commands/abaqus"
 

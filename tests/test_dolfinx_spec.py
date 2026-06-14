@@ -7,7 +7,7 @@ import unittest
 
 import numpy as np
 
-from microstructure_ve.backends._dolfinx import spec
+from microstructure_ve.backends.dolfinx import _spec as spec
 
 from tests._helpers import synthetic_simulation
 

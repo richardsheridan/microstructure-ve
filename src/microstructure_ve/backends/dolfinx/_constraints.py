@@ -12,7 +12,7 @@ import dolfinx
 from dolfinx import fem
 import dolfinx_mpc
 
-from . import spec
+from . import _spec as spec
 
 
 def periodic_mpc(space):

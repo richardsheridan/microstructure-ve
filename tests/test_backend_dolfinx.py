@@ -28,7 +28,7 @@ def _lame(E, nu):
 @needs_dolfinx
 class AssemblyTests(unittest.TestCase):
     def test_mesh_total_measure_exact(self):
-        from microstructure_ve.backends._dolfinx import assembly, spec
+        from microstructure_ve.backends.dolfinx import _assembly as assembly, _spec as spec
 
         for dim, n in [(2, 4), (3, 3)]:
             sim = homogeneous_simulation(n=n, dim=dim)
@@ -39,7 +39,7 @@ class AssemblyTests(unittest.TestCase):
     def test_dg0_assignment_round_trips_microstructure(self):
         # a 2-material checkerboard: mu field must reflect each cell's modulus after the
         # original_cell_index remap (naive order would scramble the microstructure)
-        from microstructure_ve.backends._dolfinx import assembly, spec
+        from microstructure_ve.backends.dolfinx import _assembly as assembly, _spec as spec
         from microstructure_ve.core import ElementSet, GridElements, GridNodes
         from microstructure_ve.materials import Material
         from microstructure_ve.steps import Model
@@ -53,7 +53,7 @@ class AssemblyTests(unittest.TestCase):
         model = Model(nodes=nodes, elements=elements,
                       materials=[Material(e0, 1.0, nu, E0), Material(e1, 1.0, nu, E1)])
         # build a minimal space + fields (no full solver needed)
-        from microstructure_ve.backends._dolfinx.spec import Geometry
+        from microstructure_ve.backends.dolfinx._spec import Geometry
         geom = Geometry(2, SCALE, nodes.shape, [2 * SCALE, 2 * SCALE], 2 * SCALE, 2 * SCALE, 1.0)
         space = assembly.build_space(geom)
         mats = assembly.material_fields(space, model)
@@ -69,7 +69,7 @@ class AssemblyTests(unittest.TestCase):
 @needs_dolfinx
 class NodeDofMapTests(unittest.TestCase):
     def test_node_dof_round_trip(self):
-        from microstructure_ve.backends._dolfinx import assembly, spec
+        from microstructure_ve.backends.dolfinx import _assembly as assembly, _spec as spec
 
         sim = homogeneous_simulation(n=3, dim=2)
         nodes = sim.model.nodes
@@ -89,7 +89,8 @@ class PeriodicMpcTests(unittest.TestCase):
         # a homogeneous confined solve has ~zero fluctuation; a correct MPC keeps the
         # solve consistent and yields the exact analytic stress (checked below). Here we
         # just assert the MPC finalizes with the expected number of slaves.
-        from microstructure_ve.backends._dolfinx import assembly, constraints, spec
+        from microstructure_ve.backends.dolfinx import (
+            _assembly as assembly, _constraints as constraints, _spec as spec)
 
         sim = homogeneous_simulation(n=3, dim=2)
         geom = spec.geometry(sim.model, sim)
@@ -103,7 +104,7 @@ class PeriodicMpcTests(unittest.TestCase):
 @needs_dolfinx
 class AnalyticHomogeneousTests(unittest.TestCase):
     def _sigma(self, sim, lateral):
-        from microstructure_ve.backends._dolfinx import run, spec
+        from microstructure_ve.backends.dolfinx import _run as run, _spec as spec
 
         geom = spec.geometry(sim.model, sim)
         row = run.run(sim, freqs=[1.0], lateral=lateral)[0]
@@ -140,7 +141,7 @@ class AnalyticHomogeneousTests(unittest.TestCase):
 class FrequencyParallelTests(unittest.TestCase):
     def test_workers_match_serial(self):
         # frequency-varying (viscoelastic) sim so the parallel split is non-trivial
-        from microstructure_ve.backends._dolfinx import run
+        from microstructure_ve.backends.dolfinx import _run as run
 
         sim = synthetic_simulation()
         freqs = [1e-3, 1e0, 1e3, 1e5]

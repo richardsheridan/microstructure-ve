@@ -71,7 +71,7 @@ class AbaqusOdbReaderTests(unittest.TestCase):
             sys.modules, {"odbAccess": odbaccess, "abaqusConstants": abqconst}
         )
         self._patch.start()
-        mod_name = "microstructure_ve.backends._abaqus._read_abaqus_odb"
+        mod_name = "microstructure_ve.backends.abaqus._read_abaqus_odb"
         sys.modules.pop(mod_name, None)  # force a fresh import under the stubs
         self.reader = importlib.import_module(mod_name)
 
@@ -105,8 +105,8 @@ class AbaqusOdbReaderTests(unittest.TestCase):
 
 class WriteOdbReaderTests(unittest.TestCase):
     def test_generated_script_carries_reader_source_verbatim(self):
-        from microstructure_ve.backends import write_odb_reader
-        from microstructure_ve.backends._abaqus import odb
+        from microstructure_ve.backends.abaqus import write_odb_reader
+        from microstructure_ve.backends.abaqus import _odb as odb
 
         with tempfile.TemporaryDirectory() as d:
             dest = pathlib.Path(d) / "read_abaqus_odb.py"

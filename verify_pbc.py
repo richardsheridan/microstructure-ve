@@ -22,7 +22,7 @@ import sys
 
 import numpy as np
 
-from microstructure_ve.backends import write_inp as _write_inp
+from microstructure_ve.backends.abaqus import write_inp as _write_inp
 from microstructure_ve.boundary import (
     DisplacementBoundaryCondition,
     FixedBoundaryCondition,

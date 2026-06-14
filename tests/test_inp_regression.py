@@ -11,7 +11,7 @@ import io
 import pathlib
 import unittest
 
-from microstructure_ve.backends import write_inp
+from microstructure_ve.backends.abaqus import write_inp
 
 from tests._helpers import synthetic_simulation
 
