@@ -14,11 +14,23 @@ from __future__ import annotations
 
 _LAZY = ("run", "build_solver")
 
+# The FE stack these modules import at the top; a missing one means "wrong env".
+_FE_DEPS = {"dolfinx", "dolfinx_mpc", "basix", "ufl", "petsc4py", "mpi4py"}
+
 
 def __getattr__(name):
     if name in _LAZY:
-        from . import _run
-
+        try:
+            from . import _run
+        except ModuleNotFoundError as e:
+            if (e.name or "").split(".")[0] in _FE_DEPS:
+                raise ImportError(
+                    "The DOLFINx backend needs the FEniCSx stack "
+                    "(dolfinx, dolfinx_mpc, basix, petsc4py), which is not importable "
+                    f"here (missing {e.name!r}). Run in the fenicsx conda env -- e.g. "
+                    "`conda activate fenicsx` -- see docs/dolfinx_backend_design.md."
+                ) from e
+            raise  # an unrelated missing module: surface the real error
         return getattr(_run, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

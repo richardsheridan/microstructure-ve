@@ -16,6 +16,13 @@ from .core import ElementSet
 
 @dataclass
 class Material:
+    """A linear-elastic (frequency-flat) material on a set of elements.
+
+    Fields: ``elset`` (the ElementSet it applies to), ``density`` (kg/micron^3),
+    ``poisson`` (Poisson's ratio), ``youngs`` (Young's modulus in MPa). Subclasses add
+    frequency dependence; see ``TabularViscoelasticMaterial`` / ``PronyViscoelasticMaterial``.
+    """
+
     elset: ElementSet
     density: float  # kg/micron^3
     poisson: float

@@ -46,6 +46,15 @@ class DolfinxBackendApiTests(unittest.TestCase):
 
         self.assertTrue(callable(run))
 
+    @unittest.skipIf(HAS_DOLFINX, "only exercises the missing-dolfinx error path")
+    def test_missing_dolfinx_gives_actionable_error(self):
+        import microstructure_ve.backends.dolfinx as d
+
+        with self.assertRaises(ImportError) as cm:
+            d.run  # lazy import of the FE stack fails (basix/dolfinx absent)
+        msg = str(cm.exception).lower()
+        self.assertIn("fenicsx", msg)  # tell the user which env to use
+
 
 if __name__ == "__main__":
     unittest.main()

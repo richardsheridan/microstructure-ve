@@ -21,6 +21,12 @@ class BoundaryConditions:
 
 @dataclass
 class FixedBoundaryCondition(BoundaryConditions):
+    """Pin (zero) the given DOFs of a node or node set.
+
+    ``node`` is a NodeSet or a 1-indexed node number; ``dofs`` is an iterable of
+    1-indexed DOFs (1=x, 2=y, 3=z). E.g. pin the origin in-plane: ``dofs=[1, 2]``.
+    """
+
     node: Union[NodeSet, int]
     dofs: Iterable
 
@@ -32,6 +38,13 @@ class FixedBoundaryCondition(BoundaryConditions):
 
 @dataclass
 class DisplacementBoundaryCondition(BoundaryConditions):
+    """Prescribe a displacement on DOFs ``first_dof..last_dof`` (1-indexed) of ``nset``.
+
+    Used both as the macro drive (the applied amplitude) and, with ``displacement=0``,
+    as a baseline. The DOLFINx backend reads the drive amplitude from the one placed in
+    a step's ``subsections``.
+    """
+
     nset: Union[NodeSet, int]
     first_dof: int
     last_dof: int
@@ -45,6 +58,14 @@ class DisplacementBoundaryCondition(BoundaryConditions):
 
 @dataclass
 class PeriodicBoundaryCondition:
+    """Periodic boundary conditions tying each face to its opposite.
+
+    On construction it eagerly builds the constraint ``equations`` (``u_dep - u_img =
+    u_refHi - u_refLo``) that couple opposite boundaries through the reference corner
+    nodes (X0Y0, X1Y0, X0Y1, ...); driving those corners imposes the macro deformation.
+    The equation count is grid-size-independent (6 in 2D, 48 in 3D).
+    """
+
     nodes: GridNodes
 
     def __post_init__(self):

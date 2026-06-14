@@ -39,7 +39,11 @@ def drive_displacement(sim):
         sub = find(step.subsections, DisplacementBoundaryCondition)
         if sub is not None:
             return float(np.real(sub.displacement))
-    raise ValueError("no drive DisplacementBoundaryCondition found in any step")
+    raise ValueError(
+        "no drive found: put a DisplacementBoundaryCondition giving the applied x "
+        "displacement in a step's `subsections` (model-level bcs are not read for the "
+        "drive amplitude)"
+    )
 
 
 def material_cell_maps(model):

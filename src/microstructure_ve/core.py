@@ -176,6 +176,14 @@ class GridNodes:
 
 @dataclass
 class GridElements:
+    """One structured-grid element per pixel, of a given ABAQUS element ``type``.
+
+    2D types: ``CPE4R`` (plane strain, reduced integration), ``CPS4R`` (plane stress,
+    reduced), ``CPE4`` (plane strain, full integration). 3D: ``C3D8R`` (reduced),
+    ``C3D8`` (full). The ``*R`` variants are reduced-integration; the full-integration
+    types exist for tight parity with a full-integration FE backend.
+    """
+
     nodes: GridNodes
     type: Literal["CPE4R", "CPS4R", "CPE4", "C3D8R", "C3D8"] = "C3D8R"
 
@@ -201,10 +209,13 @@ class ElementSet:
 
     @classmethod
     def from_matl_img(cls, matl_img):
-        """Produce a list of ElementSets corresponding to unique pixel values.
+        """Produce a list of ElementSets, one per unique pixel value, **sorted ascending
+        by pixel value**.
 
-        Materials are ordered by the value in each of the pixels. Element numbers are
-        1-indexed in raveled pixel order.
+        So unpacking follows the sorted values -- for an image valued {0, 1, 2},
+        ``a, b, c = ElementSet.from_matl_img(img)`` gives ``a`` = value 0, etc. Mind this
+        order when pairing elsets with materials: a mismatch is silent, not an error.
+        Element numbers are 1-indexed in raveled pixel order.
 
         >>> import numpy as np
         >>> from microstructure_ve.core import ElementSet

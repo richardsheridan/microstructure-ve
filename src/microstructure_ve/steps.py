@@ -37,6 +37,14 @@ class Dynamic:
 
 @dataclass
 class Step:
+    """An ABAQUS ``*STEP`` block.
+
+    ``subsections`` is an ordered iterable of the step's contents -- an analysis type
+    (``Static`` / ``Dynamic``) together with the step-level boundary conditions
+    (e.g. the drive ``DisplacementBoundaryCondition``). ``perturbation`` adds the
+    ``,PERTURBATION`` flag (used for the harmonic steady-state sweep).
+    """
+
     subsections: Iterable
     perturbation: bool = False
 

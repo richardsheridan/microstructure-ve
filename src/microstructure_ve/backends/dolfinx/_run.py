@@ -63,10 +63,27 @@ def _row_header(dim):
 
 
 def run(sim, freqs=None, output_path=None, lateral="confined", bbar=True, workers=1):
-    """Solve ``sim`` over ``freqs``; return a readODB-style array ``(len(freqs), 1+3*dim)``.
+    """Solve ``sim`` over ``freqs``; return one row per frequency, ``(len(freqs), 1+3*dim)``.
 
-    lateral: "confined" (lateral normal strains = 0) or "free" (lateral sigma-bar normals = 0).
-    bbar:    selective reduced integration on the volumetric term (recommended).
+    The drive is read from the step: put a ``DisplacementBoundaryCondition`` in the
+    step's ``subsections`` giving the applied x displacement (and, as the ABAQUS path
+    needs, a zero-amplitude baseline ``DisplacementBoundaryCondition`` in ``model.bcs``;
+    see ``example.py``). ``freqs`` defaults to the step's ``Dynamic`` sweep.
+
+    Each row is ``[frequency, RF_Real_1..d, RF_Imag_1..d, U_1..d]`` (same columns as the
+    ABAQUS readODB tsv), where ``RF`` is the complex reaction on the +x face and ``U`` the
+    applied corner displacement. The homogenized complex modulus along x is::
+
+        E*_x(f) = (RF_Real_1 + 1j*RF_Imag_1) / (cross_area * exx)
+
+    with ``cross_area = Ly`` (2D) or ``Ly*Lz`` (3D) and ``exx = U_1 / Lx`` -- i.e. divide
+    the x reaction by the cross-section and the applied macro strain (see ``Geometry``).
+
+    lateral: "confined" -> lateral macro normal strains are held at 0 (plane-strain-style
+             constraint); "free" -> lateral macro normal *stresses* vanish, the cell
+             contracts by Poisson (the right choice for an apparent uniaxial modulus).
+    bbar:    selective reduced integration on the volumetric term (recommended; matches
+             ABAQUS CPE4/C3D8 B-bar and avoids Q1 volumetric locking).
     workers: 1 = serial. >1 spawns a ProcessPoolExecutor and splits the independent
              per-frequency solves across processes -- each worker builds the solver once,
              then solves its share, pinned to one BLAS thread. A driver that calls this
