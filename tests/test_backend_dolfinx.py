@@ -8,7 +8,7 @@ import unittest
 
 import numpy as np
 
-from tests._helpers import SCALE, homogeneous_simulation
+from tests._helpers import SCALE, homogeneous_simulation, synthetic_simulation
 
 try:
     import dolfinx  # noqa: F401
@@ -134,6 +134,19 @@ class AnalyticHomogeneousTests(unittest.TestCase):
         self.assertAlmostEqual(sigma[0], E * exx, delta=abs(E * exx) * 1e-6)
         self.assertAlmostEqual(sigma[1], 0.0, delta=abs(E * exx) * 1e-6)
         self.assertAlmostEqual(sigma[2], 0.0, delta=abs(E * exx) * 1e-6)
+
+
+@needs_dolfinx
+class FrequencyParallelTests(unittest.TestCase):
+    def test_workers_match_serial(self):
+        # frequency-varying (viscoelastic) sim so the parallel split is non-trivial
+        from microstructure_ve.backends._dolfinx import run
+
+        sim = synthetic_simulation()
+        freqs = [1e-3, 1e0, 1e3, 1e5]
+        serial = run.run(sim, freqs=freqs, lateral="confined", workers=1)
+        parallel = run.run(sim, freqs=freqs, lateral="confined", workers=2)
+        np.testing.assert_allclose(parallel, serial, rtol=1e-9, atol=0)
 
 
 if __name__ == "__main__":
