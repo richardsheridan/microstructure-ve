@@ -233,6 +233,27 @@ def _face_closure(nodes, face):
     return NodeSet.from_slice(face + "ALL", tuple(idx), nodes)
 
 
+def _rbm_pins(nodes, a):
+    """Minimal statically-determinate pins removing the rigid-body modes a free-traction
+    standard cell leaves once the loaded min-face normal is fixed.
+
+    Fixing the whole loaded min-face in its normal dof already kills translation along ``a``
+    and the rotations that move that face along ``a``. What remains is the transverse
+    translation(s) and (3D) the rotation about ``a``. Pin the transverse translations at the
+    origin corner, and (3D) the residual rotation at a second corner offset along the first
+    transverse axis. These pins are statically determinate (they carry ~zero reaction), so
+    they fix the RBM offset without perturbing the stress field -- only making ``U`` unique.
+    """
+    transverse = [b for b in _AXES[:nodes.dim] if b != a]
+    pins = [FixedBoundaryCondition(nodes.nsets[_origin_key(nodes.dim)],
+                                   [_normal_dof(b) for b in transverse])]
+    if nodes.dim == 3:
+        b, c = transverse
+        pins.append(FixedBoundaryCondition(nodes.nsets[_ref_corner_key(nodes.dim, b)],
+                                           [_normal_dof(c)]))
+    return pins
+
+
 def _standard_face_bcs(nodes, mode, traction):
     """Direct face-Dirichlet BCs (no PBC). Returns ``(bcs, drive_specs, face_nsets)``."""
     dim = nodes.dim
@@ -266,6 +287,10 @@ def _standard_face_bcs(nodes, mode, traction):
         for b in axes:
             if b == a or traction == "confined_slip":
                 bcs.append(FixedBoundaryCondition(face(b, "0"), [_normal_dof(b)]))
+        if traction == "free":
+            # the lateral faces are traction-free, leaving rigid-body modes; pin them
+            # minimally so the BVP is well-posed (see _rbm_pins)
+            bcs.extend(_rbm_pins(nodes, a))
         drive_specs.append((face(a, "1"), ddof))
     return bcs, drive_specs, list(face_nsets.values())
 
