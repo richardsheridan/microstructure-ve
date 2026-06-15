@@ -18,7 +18,7 @@ from . import (
     _spec as spec,
     _standard as standard,
 )
-from ._solver import Cancelled, LuSolver, predict_lu_seconds, select_solver_kind
+from ._solver import Cancelled, IterativeSolver, LuSolver, select_solver_kind
 
 from microstructure_ve.boundary import PeriodicBoundaryCondition
 
@@ -36,6 +36,7 @@ class _FEProblem:
     def __init__(self, space, matfields, forms):
         self.space, self.matfields, self.forms = space, matfields, forms
         self.mpc = self.center_bcs = self.lu = None          # periodic, lazy
+        self.lu_kind = None                                  # "lu" | "iterative" of self.lu
         self.vc_spaces = self.inv_maps = None                # standard dof maps, lazy
         self.std_mats = None                                 # standard matrices/vecs/ksp, lazy
 
@@ -63,17 +64,6 @@ def _fe_problem(geom, model, bbar):
     key = (tuple(geom.shape), float(geom.scale), int(geom.dim), bool(bbar))
     prob = _FE_CACHE.get(key)
     if prob is None:
-        ndof = int(np.prod(geom.shape)) * geom.dim
-        if select_solver_kind(ndof, geom.dim) == "iterative":
-            import warnings
-
-            warnings.warn(
-                f"predicted LU solve ~{predict_lu_seconds(ndof, geom.dim):.0f}s for "
-                f"ndof={ndof} ({geom.dim}D) exceeds the ~10s budget; the iterative solver "
-                "is not implemented yet, falling back to LU -- a single solve cannot be "
-                "cancelled mid-factorization, so cancellation latency will exceed 10s.",
-                stacklevel=3,
-            )
         space = assembly.Space.build(geom)
         matfields = assembly.MaterialFields.from_model(space, model)
         forms = assembly.Forms.build(space, matfields, bbar)
@@ -84,7 +74,7 @@ def _fe_problem(geom, model, bbar):
     return prob
 
 
-def build_solver(sim, bbar=True):
+def build_solver(sim, bbar=True, cancel=None, petsc_options=None, solver="auto"):
     """Build the FE solver for ``sim``; return ``(solve_one, dim)``.
 
     ``solve_one(f)`` returns the readODB-style row for one frequency. The mesh-only setup
@@ -93,9 +83,16 @@ def build_solver(sim, bbar=True):
     per-frequency matrix values are refilled.
 
     Dispatches on the model's boundary conditions: *Periodic* (carries a
-    ``PeriodicBoundaryCondition``) -> corner-driven homogenization via MPC + LU; *Standard*
-    -> direct-Dirichlet solve via ``_standard.build_solver``.
+    ``PeriodicBoundaryCondition``) -> corner-driven homogenization via MPC; *Standard* ->
+    direct-Dirichlet solve via ``_standard.build_solver`` (LU only for now).
+
+    ``solver``: ``"auto"`` picks LU below the time budget and the GMRES+ILU
+    ``IterativeSolver`` above it (``select_solver_kind``); ``"lu"``/``"iterative"`` force it.
+    ``petsc_options`` overrides the iterative KSP/PC. ``cancel`` is polled per KSP iteration
+    by the iterative solver (LU is cancelled only between frequencies, by ``run``).
     """
+    if solver not in ("auto", "lu", "iterative"):
+        raise ValueError(f"solver must be 'auto', 'lu' or 'iterative', got {solver!r}")
     model = sim.model
     has_pbc = any(isinstance(bc, PeriodicBoundaryCondition) for bc in model.bcs)
     geom = spec.Geometry.from_model(model, sim)
@@ -105,10 +102,20 @@ def build_solver(sim, bbar=True):
         return standard.build_solver(sim, prob)
 
     loading = loadingmod.macro_loading(sim)  # raises NotImplementedError if unsupported
-    if prob.lu is None:
+    if prob.mpc is None:
         prob.mpc = constraints.periodic_mpc(prob.space)
         prob.center_bcs = constraints.center_pin(prob.space)
-        prob.lu = LuSolver(prob.space, prob.forms, prob.matfields, prob.mpc, prob.center_bcs)
+    ndof = int(np.prod(geom.shape)) * geom.dim
+    kind = solver if solver != "auto" else select_solver_kind(ndof, geom.dim)
+    if prob.lu is None or prob.lu_kind != kind:
+        if kind == "iterative":
+            prob.lu = IterativeSolver(prob.space, prob.forms, prob.matfields, prob.mpc,
+                                      prob.center_bcs, cancel=cancel, petsc_options=petsc_options)
+        else:
+            prob.lu = LuSolver(prob.space, prob.forms, prob.matfields, prob.mpc, prob.center_bcs)
+        prob.lu_kind = kind
+    if kind == "iterative":
+        prob.lu._cancel = cancel  # refresh per-run cancel on a (possibly cached) iterative solver
     solve_one = homogenize.build_solve_one(prob.space, prob.forms, prob.lu, loading)
     return solve_one, prob.space.dim
 
@@ -119,12 +126,14 @@ _THREAD_VARS = (
 _WORKER = {}  # per-process solver cache, populated by _init_worker in parallel mode
 
 
-def _init_worker(sim, bbar):
+def _init_worker(sim, bbar, solver, petsc_options):
     """ProcessPool worker initializer: build the solver once and cache it."""
     import os
     for v in _THREAD_VARS:
         os.environ.setdefault(v, "1")
-    _WORKER["solve_one"], _WORKER["dim"] = build_solver(sim, bbar)
+    # cancel is None in workers: the parent polls cancel and SIGTERMs live workers
+    _WORKER["solve_one"], _WORKER["dim"] = build_solver(
+        sim, bbar, petsc_options=petsc_options, solver=solver)
 
 
 def _worker_solve(f):
@@ -140,7 +149,8 @@ def _row_header(dim):
     )
 
 
-def run(sim, output_path=None, bbar=True, workers=1, cancel=None):
+def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
+        petsc_options=None):
     """Solve ``sim`` over its frequency sweep; one row per frequency, ``(n_freq, 1+3*dim)``.
 
     Everything about the *problem* is read from ``sim`` -- there are no physics kwargs.
@@ -175,12 +185,20 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None):
              see ``build_solver``). In parallel mode it is polled in this parent process as
              workers finish, and either trigger SIGTERMs the live workers (killing an
              in-flight solve too) before propagating; the predicate runs here, never in a
-             worker.
+             worker. With ``solver="iterative"`` ``cancel`` is also polled *inside* each
+             solve (per KSP iteration), so latency is sub-second on large meshes.
+    solver:  ``"auto"`` (default) uses native LU below the time budget and the GMRES+ILU
+             ``IterativeSolver`` above it (``select_solver_kind``); ``"lu"``/``"iterative"``
+             force one. The complex-symmetric system has no AMG (GAMG/hypre are real-only),
+             so the iterative path is GMRES+ILU and may stagnate on the hardest large 3D
+             meshes (it raises on non-convergence). Periodic path only; standard BC uses LU.
+    petsc_options: dict of PETSc options overriding the iterative KSP/PC (e.g.
+             ``{"pc_type": "bjacobi"}``); ignored for LU.
     """
     dim = sim.model.nodes.dim
 
     if len(list(sim.steps)) > 1:
-        out = _run_multistep(sim, bbar, cancel)
+        out = _run_multistep(sim, bbar, cancel, solver, petsc_options)
         if output_path is not None:
             np.savetxt(output_path, out, fmt="%.8e", delimiter="\t",
                        header="\t".join(_row_header(dim)), comments="")
@@ -201,9 +219,10 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None):
                 "run(workers>1) from a guarded entry point (under "
                 '`if __name__ == "__main__":`) or set workers=1.'
             )
-        out = _run_parallel(sim, freqs, bbar, workers, cancel)
+        out = _run_parallel(sim, freqs, bbar, workers, cancel, solver, petsc_options)
     else:
-        solve_one, _ = build_solver(sim, bbar)
+        solve_one, _ = build_solver(sim, bbar, cancel=cancel,
+                                    petsc_options=petsc_options, solver=solver)
         rows = []
         for f in freqs:
             if cancel is not None and cancel():
@@ -219,7 +238,7 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None):
     return out
 
 
-def _run_multistep(sim, bbar, cancel=None):
+def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None):
     """Sweep a multi-step sim step-by-step, emitting rows in the ABAQUS reader's order (per
     step, then per frame): a ``Static`` step contributes one elastic row (zero loss) at frame
     value 1.0 (real ``*Elastic`` moduli), a ``Dynamic`` step one row per swept frequency
@@ -227,7 +246,8 @@ def _run_multistep(sim, bbar, cancel=None):
     multi-step cells drive the same macro loading each step, so one solver serves all."""
     from microstructure_ve.steps import Dynamic, Static
 
-    solve_one, _ = build_solver(sim, bbar)
+    solve_one, _ = build_solver(sim, bbar, cancel=cancel,
+                                petsc_options=petsc_options, solver=solver)
     rows = []
     for step in sim.steps:
         if cancel is not None and cancel():
@@ -255,7 +275,7 @@ def _kill_workers(ex):
             pass
 
 
-def _run_parallel(sim, freqs, bbar, workers, cancel=None):
+def _run_parallel(sim, freqs, bbar, workers, cancel=None, solver="auto", petsc_options=None):
     """Fan the per-frequency solves across a spawn ProcessPoolExecutor (order preserved).
 
     ``cancel`` (parent-process predicate) is polled as futures complete; on True the live
@@ -275,7 +295,7 @@ def _run_parallel(sim, freqs, bbar, workers, cancel=None):
         ctx = multiprocessing.get_context("spawn")
         with ProcessPoolExecutor(
             max_workers=min(int(workers), len(freqs)), mp_context=ctx,
-            initializer=_init_worker, initargs=(sim, bbar),
+            initializer=_init_worker, initargs=(sim, bbar, solver, petsc_options),
         ) as ex:
             if cancel is None:
                 rows = list(ex.map(_worker_solve, freqs))  # map preserves input order

@@ -113,22 +113,46 @@ class LuSolver:
 
 
 class IterativeSolver(LuSolver):
-    """Future iterative solver for meshes whose LU factorization exceeds ``LU_TIME_S``.
+    """GMRES + ILU iterative solver for meshes above the LU time budget, and the cancellable
+    path (the KSP monitor polls ``cancel`` every iteration -- unlike LU's single
+    uninterruptible C call, which is cancellable only between frequencies).
 
-    Not implemented yet: ``select_solver_kind`` flags such meshes but ``_run.build_solver``
-    currently falls back to ``LuSolver`` with a warning. What this class fixes in place is
-    the *cancellation contract*: unlike LU, an iterative KSP loops in C and calls its
-    monitor every iteration, so ``cancel`` can be polled mid-solve (sub-second latency)
-    rather than only between frequencies.
+    Inherits LuSolver's MPC assemble/solve plumbing unchanged (``reassemble`` already calls
+    ``setOperators``, so the ILU is rebuilt per frequency); only the KSP/PC is swapped.
 
-    To finish: in ``__init__`` choose an iterative ``ksp.setType`` (e.g. "gmres"/"bcgs")
-    and a preconditioner for the complex-valued elasticity system, drop the ``preonly``/
-    ``lu`` setup inherited from ``LuSolver``, then validate against ABAQUS. The monitor
-    wiring below is already correct and should be kept.
+    The system is **complex-symmetric** (complex moduli), so PETSc's algebraic multigrid
+    (GAMG/hypre) is unavailable -- those are real-only -- and CG is invalid. This uses GMRES
+    with an ILU preconditioner, which works in complex but does not coarsen like AMG, so it
+    can stagnate on the hardest large-3D cases. ``solve`` raises on non-convergence (it never
+    returns silently-wrong numbers); ``petsc_options`` lets a caller swap the preconditioner
+    (e.g. ``pc_type='bjacobi'``/``'asm'``, more ILU fill) or one can fall back to ``solver='lu'``.
     """
 
-    def __init__(self, space, forms, matfields, mpc, bcs, cancel=None):
-        super().__init__(space, forms, matfields, mpc, bcs)
+    _DEFAULT_OPTS = {
+        "ksp_type": "gmres",
+        "ksp_rtol": 1e-8,
+        "ksp_max_it": 1000,
+        "ksp_gmres_restart": 100,
+        "pc_type": "ilu",
+    }
+
+    def __init__(self, space, forms, matfields, mpc, bcs, cancel=None, petsc_options=None):
+        super().__init__(space, forms, matfields, mpc, bcs)  # builds A, b, x, ksp (preonly/lu)
+        opts = dict(self._DEFAULT_OPTS)
+        if petsc_options:
+            opts.update(petsc_options)
+        # Configure the inherited KSP via a unique options prefix (the dolfinx_mpc
+        # LinearProblem pattern), then scrub the keys so they don't accumulate in the global
+        # PETSc options database across solver instances.
+        prefix = f"msve_iter_{id(self)}_"
+        self.ksp.setOptionsPrefix(prefix)
+        db = PETSc.Options()
+        for k, v in opts.items():
+            db[prefix + k] = v
+        self.ksp.setFromOptions()
+        for k in opts:
+            db.delValue(prefix + k)
+
         self._cancel = cancel
         # petsc4py marshals exceptions raised in a callback back out of ksp.solve(), so a
         # Cancelled raised here surfaces from the solve and unwinds cleanly.
@@ -139,8 +163,14 @@ class IterativeSolver(LuSolver):
             raise Cancelled("cancelled by callback")
 
     def solve(self, j):
-        raise NotImplementedError(
-            "IterativeSolver is not implemented yet; this mesh exceeds the LU time budget. "
-            "Reduce the mesh, or run LU anyway (the current fallback) and accept that a "
-            "single solve cannot be cancelled mid-factorization."
-        )
+        uout = super().solve(j)  # same MPC assemble/solve/back-substitute; iterative KSP
+        reason = self.ksp.getConvergedReason()
+        if reason < 0:
+            raise RuntimeError(
+                f"IterativeSolver did not converge (KSP reason {reason}). The complex-"
+                "symmetric system has no AMG preconditioner (GAMG/hypre are real-only), so "
+                "this uses GMRES+ILU, which can stagnate on hard/large 3D meshes. Try a "
+                "different `petsc_options` (e.g. pc_type='bjacobi' or 'asm', more ILU fill), "
+                "a smaller mesh, or solver='lu'."
+            )
+        return uout
