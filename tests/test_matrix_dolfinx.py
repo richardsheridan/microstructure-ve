@@ -12,7 +12,7 @@ import unittest
 
 import numpy as np
 
-from tests._matrix import is_fe_green, matrix_cells, matrix_simulation
+from tests._matrix import is_fe_green, matrix_cases, matrix_simulation
 
 try:
     import dolfinx  # noqa: F401
@@ -73,16 +73,15 @@ def _make_test(cell, test_type):
     return test
 
 
-for _cell in matrix_cells():
-    for _tt in ("elastic", "viscoelastic"):
-        _name = (
-            f"test_{_cell['dim']}d_{_cell['mode']}_{_cell['traction']}"
-            f"_{_cell['bc']}_{_tt}"
-        )
-        _method = _make_test(_cell, _tt)
-        if not is_fe_green(_cell, _tt):
-            _method = unittest.expectedFailure(_method)
-        setattr(MatrixDolfinxTests, _name, _method)
+for _cell, _tt in matrix_cases():
+    _name = (
+        f"test_{_cell['dim']}d_{_cell['mode']}_{_cell['traction']}"
+        f"_{_cell['bc']}_{_tt}"
+    )
+    _method = _make_test(_cell, _tt)
+    if not is_fe_green(_cell, _tt):
+        _method = unittest.expectedFailure(_method)
+    setattr(MatrixDolfinxTests, _name, _method)
 
 del _cell, _tt, _name, _method
 

@@ -47,7 +47,23 @@ TEST_TYPES = ("elastic", "viscoelastic", "hyperelastic_plastic", "viscoelastic_t
 STUB_TEST_TYPES = ("hyperelastic_plastic", "viscoelastic_transient")
 DIMS = (2, 3)
 
+# Multi-step viscoelastic test types: each maps to an ordered step pattern ("S" = a *STATIC
+# step, "D" = a *STEADY STATE DYNAMICS, PERTURBATION step). They exercise multi-step .inp
+# emission and the ODB reader's multi-step iteration. Appended (via matrix_cases) only to
+# the single cell below, not crossed over the whole matrix.
+MULTISTEP_PATTERNS = {
+    "viscoelastic_sd": ("S", "D"),
+    "viscoelastic_ds": ("D", "S"),
+    "viscoelastic_sdsd": ("S", "D", "S", "D"),
+}
+MULTISTEP_CELL = {"mode": "uniaxial_x", "traction": "free", "bc": "periodic", "dim": 2}
+
 _AXES = ("x", "y", "z")
+
+
+def _is_viscoelastic(test_type):
+    """True for any non-elastic, non-stub test type (uses the tabular material + Dynamic)."""
+    return test_type != "elastic" and test_type not in STUB_TEST_TYPES
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +93,20 @@ def matrix_cells():
         for mode, traction in _kept_mode_tractions(dim):
             for bc in BCS:
                 yield {"mode": mode, "traction": traction, "bc": bc, "dim": dim}
+
+
+def matrix_cases():
+    """Yield ``(cell, test_type)`` for the whole suite: every cell x {elastic, viscoelastic}
+    plus the appended multi-step viscoelastic cases on ``MULTISTEP_CELL``.
+
+    The single enumerator every consumer (abaqus structural / dolfinx red / parity / oracle
+    generation) iterates, so the multi-step cases are added in exactly one place.
+    """
+    for cell in matrix_cells():
+        for test_type in ("elastic", "viscoelastic"):
+            yield cell, test_type
+    for test_type in MULTISTEP_PATTERNS:
+        yield dict(MULTISTEP_CELL), test_type
 
 
 def _validate_cell(mode, traction, bc, dim):
@@ -302,14 +332,14 @@ def _build_geometry(dim, n, scale, homogeneous, E, nu, test_type):
     sets = ElementSet.from_matl_img(img)
 
     def second_phase(elset):
-        if test_type == "viscoelastic":
+        if _is_viscoelastic(test_type):
             return tabular_material(elset, nu)
         return Material(elset, density=DENSITY, poisson=nu, youngs=5.0 * E)
 
     if homogeneous:
         materials = [
             tabular_material(sets[0], nu)
-            if test_type == "viscoelastic"
+            if _is_viscoelastic(test_type)
             else Material(sets[0], density=DENSITY, poisson=nu, youngs=E)
         ]
     else:
@@ -341,7 +371,7 @@ def matrix_simulation(mode, traction, bc, dim, test_type="elastic", n=None, scal
                 else "a time-domain (transient) viscoelastic step"
             )
         )
-    if test_type not in ("elastic", "viscoelastic"):
+    if test_type not in ("elastic", "viscoelastic") and test_type not in MULTISTEP_PATTERNS:
         raise ValueError(f"unknown test_type {test_type!r}")
     if n is None:
         n = 6 if dim == 2 else 4
@@ -363,16 +393,27 @@ def matrix_simulation(mode, traction, bc, dim, test_type="elastic", n=None, scal
                   bcs=base_bcs + baselines, nsets=extra_nsets)
 
     drives = [DisplacementBoundaryCondition(ns, d, d, value) for ns, d in drive_specs]
-    if test_type == "elastic":
-        step = Step(subsections=[Static()] + drives, perturbation=False)
-    else:
+
+    def static_step():
+        return Step(subsections=[Static()] + drives, perturbation=False)
+
+    def dynamic_step():
         # sweep exactly on the tabular table nodes (see MATRIX_FREQS) -> interpolation-free
         dyn = Dynamic(f_initial=float(MATRIX_FREQS[0]), f_final=float(MATRIX_FREQS[-1]),
                       f_count=len(MATRIX_FREQS), bias=1)
-        step = Step(subsections=[dyn] + drives, perturbation=True)
+        return Step(subsections=[dyn] + drives, perturbation=True)
+
+    make_step = {"S": static_step, "D": dynamic_step}
+    if test_type == "elastic":
+        pattern = ("S",)
+    elif test_type == "viscoelastic":
+        pattern = ("D",)
+    else:
+        pattern = MULTISTEP_PATTERNS[test_type]
+    steps = [make_step[kind]() for kind in pattern]
 
     heading = Heading(f"matrix {dim}d {mode} {traction} {bc} {test_type}")
-    return Simulation(heading=heading, model=model, steps=[step])
+    return Simulation(heading=heading, model=model, steps=steps)
 
 
 # ---------------------------------------------------------------------------
@@ -381,8 +422,9 @@ def matrix_simulation(mode, traction, bc, dim, test_type="elastic", n=None, scal
 def cell_expectations(mode, traction, bc, dim, test_type, displacement=DISPLACEMENT):
     """The structural facts ``test_matrix_abaqus`` asserts on the emitted ``.inp``.
 
-    Returns ``{step_type, perturbation, has_periodic, drive_name, drive_dof, drive_value,
-    fixed_checks}`` where ``fixed_checks`` is a list of ``(nset_name, dof, should_be_fixed)``.
+    Returns ``{steps, has_periodic, drive_name, drive_dof, drive_value, fixed_checks}`` where
+    ``steps`` is the ordered list of ``(step_type, perturbation)`` the ``.inp`` should emit
+    and ``fixed_checks`` is a list of ``(nset_name, dof, should_be_fixed)``.
     """
     drives = _drive_specs(mode, dim)
     a0, dof0 = drives[0]
@@ -418,9 +460,16 @@ def cell_expectations(mode, traction, bc, dim, test_type, displacement=DISPLACEM
                 fixed = (b == a0) or (traction == "confined_slip")
                 checks.append((b.upper() + "0ALL", _normal_dof(b), fixed))
 
+    step_of = {"S": ("STATIC", False), "D": ("STEADY STATE DYNAMICS", True)}
+    if test_type == "elastic":
+        pattern = ("S",)
+    elif test_type == "viscoelastic":
+        pattern = ("D",)
+    else:
+        pattern = MULTISTEP_PATTERNS[test_type]
+
     return {
-        "step_type": "STATIC" if test_type == "elastic" else "STEADY STATE DYNAMICS",
-        "perturbation": test_type != "elastic",
+        "steps": [step_of[kind] for kind in pattern],
         "has_periodic": has_periodic,
         "drive_name": drive_name,
         "drive_dof": dof0,
@@ -436,7 +485,7 @@ def parse_inp(text):
     """Split emitted ``.inp`` text into the keyword blocks the structural tests check."""
     boundary, displacement_boundary = [], []
     n_equation = 0
-    step_type, perturbation = None, False
+    steps = []  # ordered [(step_type, perturbation)] per *STEP block
     section = None  # "fixed" | "disp" | None
 
     for raw in text.splitlines():
@@ -451,13 +500,13 @@ def parse_inp(text):
         elif line.lower().startswith("*boundary"):
             section = "fixed"
         elif line.upper().startswith("*STEP"):
-            perturbation = "PERTURBATION" in line.upper()
+            steps.append([None, "PERTURBATION" in line.upper()])
             section = None
         elif line.upper().startswith("*STATIC"):
-            step_type = "STATIC"
+            steps[-1][0] = "STATIC"
             section = None
         elif line.upper().startswith("*STEADY STATE DYNAMICS"):
-            step_type = "STEADY STATE DYNAMICS"
+            steps[-1][0] = "STEADY STATE DYNAMICS"
             section = None
         elif line.startswith("*"):
             section = None
@@ -477,8 +526,7 @@ def parse_inp(text):
         "displacement_boundary": displacement_boundary,
         "n_equation": n_equation,
         "has_periodic": n_equation > 0,
-        "step_type": step_type,
-        "perturbation": perturbation,
+        "steps": [tuple(s) for s in steps],
     }
 
 

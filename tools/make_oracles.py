@@ -43,7 +43,7 @@ sys.path.insert(0, str(REPO))
 from tests._helpers import oracle_simulation_2d, oracle_simulation_3d  # noqa: E402
 from tests._matrix import (  # noqa: E402
     cell_expectations,
-    matrix_cells,
+    matrix_cases,
     matrix_simulation,
 )
 from microstructure_ve.backends.abaqus import write_inp, write_odb_reader  # noqa: E402
@@ -91,16 +91,15 @@ class Job:
 
 def matrix_jobs():
     jobs = []
-    for cell in matrix_cells():
-        for tt in REAL_TEST_TYPES:
-            name = f"oracle_{cell['dim']}d_{cell['mode']}_{cell['traction']}_{cell['bc']}_{tt}"
-            nset = cell_expectations(test_type=tt, **cell)["drive_name"]
-            jobs.append(Job(
-                name,
-                (lambda c=cell, t=tt: matrix_simulation(test_type=t, **c)),
-                nset,
-                DATA / (name + ".tsv"),
-            ))
+    for cell, tt in matrix_cases():
+        name = f"oracle_{cell['dim']}d_{cell['mode']}_{cell['traction']}_{cell['bc']}_{tt}"
+        nset = cell_expectations(test_type=tt, **cell)["drive_name"]
+        jobs.append(Job(
+            name,
+            (lambda c=cell, t=tt: matrix_simulation(test_type=t, **c)),
+            nset,
+            DATA / (name + ".tsv"),
+        ))
     return jobs
 
 
