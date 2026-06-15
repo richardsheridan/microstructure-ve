@@ -220,9 +220,24 @@ bcs=bcs, petsc_options={"ksp_type": "preonly", "pc_type": "lu"})`; constraint re
 
 - The reference corners (X0Y0, X1Y0, X0Y1) appear only as masters — same invariant
   `validate_constraints` enforces; a model that passes validation maps cleanly onto an MPC.
-- Scaling note: the coordinate-bytes dict API is comfortable at example scale (198 equations).
-  For very large grids, `dolfinx_mpc`'s lower-level `mpc_data` arrays accept (slave dof, master
-  dofs, coeffs) directly — our node↔dof map already provides the dofs, skipping coordinate lookup.
+- Scaling note (DONE): the coordinate-bytes dict API (`create_general_constraint`) re-locates
+  every coordinate geometrically (a per-pair `sub().collapse()`), which profiling showed to be
+  ~94% of the matrix-test time and ~1.4 s per 3D `(5,5,5)` build. `periodic_mpc` now feeds the
+  dof arrays straight to `mpc.add_constraint(V, slaves, masters, coeffs, owners, offsets)` using
+  the structured `block_of_node` map (serial: master = `local_to_global(block)*bs + comp`,
+  owner 0, one master per slave). Identical constraint (oracle parity unchanged), ~6x faster
+  suite. Serial only — fine, the LU path is serial.
+- Alternative MPC route — `mpc.create_periodic_constraint_geometrical(V, indicator, relation,
+  bcs, scale, tol)` (or the `_topological` variant): the purpose-built periodic helpers,
+  `u(x)=scale·u(relation(x))` for slaves located by `indicator`. We deliberately do NOT use them
+  with the current structured grid because (a) we already know the exact slave→master dof pairs,
+  so `add_constraint` is exact (no `tol`) and avoids the geometric search, and (b) per-axis
+  periodic calls make shared edges/corners slaves in multiple constraints (transitive chaining)
+  unless collapsed with a single all-faces indicator + origin relation. BUT if the mesh
+  generation scheme changes — e.g. an unstructured/imported mesh where we no longer hold an
+  explicit node↔dof map or exact image pairs — `create_periodic_constraint_geometrical` becomes
+  the natural (and likely faster + simpler) choice: it needs only a geometric indicator/relation,
+  not a precomputed pairing. Revalidate against the committed ABAQUS oracles if switching.
 - `FixedBoundaryCondition` / `DisplacementBoundaryCondition` → per-component `dirichletbc` via
   `locate_dofs_geometrical((V.sub(c), Vc), pred)` ✓ (or directly via the node↔dof map). The
   model-level zero baseline + step displacement collapse to one Dirichlet value per frequency
