@@ -43,6 +43,15 @@ class MatrixDolfinxTests(unittest.TestCase):
         from microstructure_ve.backends.dolfinx import _loading
 
         dim = cell["dim"]
+        arr = np.asarray(rows, dtype=complex)
+        self.assertEqual(arr.shape[1], 1 + 3 * dim)
+        self.assertTrue(np.all(np.isfinite(arr)))
+        if cell["bc"] != "periodic":
+            # Non-periodic (standard) cells are clamped Dirichlet BVPs, not a uniform-field
+            # homogenization, so the closed-form C:E invariant does not apply -- their
+            # numerical correctness is pinned by test_matrix_parity against the ABAQUS oracle.
+            return
+
         loading = _loading.macro_loading(sim)
         a0 = loading.primary_axis
         (mat,) = sim.model.materials
