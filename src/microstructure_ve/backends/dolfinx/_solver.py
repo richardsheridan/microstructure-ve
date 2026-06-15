@@ -49,10 +49,21 @@ def predict_lu_seconds(ndof, dim):
 
 
 def select_solver_kind(ndof, dim):
-    """Return ``"lu"`` if the predicted LU time is within budget, else ``"iterative"``.
+    """Pick ``"lu"`` or ``"iterative"`` for ``solver="auto"``. Benchmarking (LU vs GMRES+ILU,
+    per-frequency solve, one BLAS thread) splits sharply by dimension:
 
-    Crossover (LU_TIME_S=10s): ndof ~= 85k in 2D, ~= 7k in 3D.
+    - **2D -> always LU.** Sparse nested-dissection LU is excellent and completes to >500k ndof
+      (~184s at 526k); GMRES+ILU is 1.6-4.6x slower where it converges and *diverges* above
+      ~120k ndof (burns all GMRES iterations, KSP reason DIVERGED_ITS). It is not a viable 2D
+      solver, so ``auto`` never picks it here.
+    - **3D -> iterative above the LU budget.** LU fill explodes (~ndof^2) and is infeasible past
+      ~30k ndof (~150s+), while GMRES+ILU stays cheap (2.6x faster at ndof~2k, 16x at ~15k).
+
+    The complex-symmetric system has no AMG (GAMG/hypre are real-only), so iterative is
+    ILU-preconditioned; callers wanting it in 2D anyway can force ``solver="iterative"``.
     """
+    if dim == 2:
+        return "lu"
     return "lu" if predict_lu_seconds(ndof, dim) <= LU_TIME_S else "iterative"
 
 

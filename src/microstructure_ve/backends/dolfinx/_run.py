@@ -187,11 +187,12 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
              in-flight solve too) before propagating; the predicate runs here, never in a
              worker. With ``solver="iterative"`` ``cancel`` is also polled *inside* each
              solve (per KSP iteration), so latency is sub-second on large meshes.
-    solver:  ``"auto"`` (default) uses native LU below the time budget and the GMRES+ILU
-             ``IterativeSolver`` above it (``select_solver_kind``); ``"lu"``/``"iterative"``
+    solver:  ``"auto"`` (default) keeps LU in 2D (where it scales well and the iterative path
+             diverges) and switches to the GMRES+ILU ``IterativeSolver`` only for large 3D
+             meshes above the LU time budget (``select_solver_kind``); ``"lu"``/``"iterative"``
              force one. The complex-symmetric system has no AMG (GAMG/hypre are real-only),
-             so the iterative path is GMRES+ILU and may stagnate on the hardest large 3D
-             meshes (it raises on non-convergence). Periodic path only; standard BC uses LU.
+             so the iterative path is GMRES+ILU and may stagnate on the hardest meshes (it
+             raises on non-convergence). Periodic path only; standard BC uses LU.
     petsc_options: dict of PETSc options overriding the iterative KSP/PC (e.g.
              ``{"pc_type": "bjacobi"}``); ignored for LU.
     """
