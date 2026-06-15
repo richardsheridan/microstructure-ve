@@ -220,7 +220,7 @@ def homogeneous_simulation(n=4, dim=2, E=3000.0, nu=0.3, scale=SCALE,
         etype = "CPE4" if dim == 2 else "C3D8"
     elements = GridElements(nodes, type=etype)
     (elset,) = ElementSet.from_matl_img(img)
-    materials = [Material(elset, density=1.0, poisson=nu, youngs=E)]
+    materials = [Material(elset, density=2.65e-15, poisson=nu, youngs=E)]
 
     corner_bcs, drive = _macro_corner_bcs(nodes, lateral_bc)
     bcs = (

@@ -29,6 +29,11 @@ from microstructure_ve.utils import load_viscoelasticity
 
 from tests._helpers import DISPLACEMENT, PMMA_DATA, SCALE
 
+# Tiny realistic density (kg/micron^3): keeps ABAQUS's steady-state inertia term (-w^2 M)
+# negligible against the quasi-static FE backend across the whole sweep, so the oracle
+# comparison isn't polluted by an inertia offset at the top frequency.
+DENSITY = 2.65e-15
+
 # ---------------------------------------------------------------------------
 # axis literals
 # ---------------------------------------------------------------------------
@@ -245,16 +250,29 @@ def _checkerboard(n, dim):
     return np.indices((n,) * dim).sum(0) % 2
 
 
-_PMMA_CACHE = {}
+# The tabular table is defined on this log-uniform grid, and the viscoelastic sweep
+# (MATRIX_FREQS) is an exact subset of its nodes. Both ABAQUS (linear-in-f) and the FE
+# backend (linear-in-log-f) interpolate the *Viscoelastic table; interpolating AT a node
+# returns that node's value under either scheme, so sweeping only on nodes makes the
+# ABAQUS-vs-FE comparison interpolation-free (no lin-f/log-f offset). With shift=0 and no
+# broadening, the material's table frequencies are exactly ``freq`` (= apply_shift()), so
+# the nodes the solvers see are exactly _MATRIX_TABLE_FREQS.
+_MATRIX_TABLE_FREQS = np.logspace(-2.0, 2.0, 9)   # 2 nodes/decade over 1e-2..1e2
+MATRIX_FREQS = _MATRIX_TABLE_FREQS[::4]           # nodes 0,4,8 -> [1e-2, 1e0, 1e2]
+_TABLE_YOUNGS = None
 
 
-def _pmma_curve(stride=8):
-    """The real PMMA master curve, subsampled (cached) for a tabular-viscoelastic phase."""
-    if stride not in _PMMA_CACHE:
+def _matrix_table_youngs():
+    """PMMA complex modulus sampled onto _MATRIX_TABLE_FREQS (interpolated once, cached)."""
+    global _TABLE_YOUNGS
+    if _TABLE_YOUNGS is None:
         freq, youngs_cplx = load_viscoelasticity(PMMA_DATA)
-        keep = np.unique(np.r_[np.arange(0, len(freq), stride), len(freq) - 1])
-        _PMMA_CACHE[stride] = (freq[keep], youngs_cplx[keep])
-    return _PMMA_CACHE[stride]
+        order = np.argsort(freq)
+        lt, lf = np.log10(freq[order]), np.log10(_MATRIX_TABLE_FREQS)
+        re = np.interp(lf, lt, youngs_cplx.real[order])
+        im = np.interp(lf, lt, youngs_cplx.imag[order])
+        _TABLE_YOUNGS = re + 1j * im
+    return _TABLE_YOUNGS
 
 
 def tabular_material(elset, nu):
@@ -262,14 +280,15 @@ def tabular_material(elset, nu):
 
     Used for ``test_type="viscoelastic"`` cells so the harness exercises the genuine
     frequency-domain (``*Viscoelastic, frequency=TABULAR``) path rather than a flat
-    modulus. Its ``complex_modulus`` is exactly what the FE backend evaluates per
-    frequency, so a homogeneous RVE's homogenized response equals it (see the green
-    invariants in ``test_matrix_dolfinx``).
+    modulus. Its table lives on ``_MATRIX_TABLE_FREQS`` and the sweep ``MATRIX_FREQS`` is a
+    subset of those nodes, so ABAQUS and the FE backend evaluate it without interpolating
+    (see the note above). ``youngs`` == the table's reference modulus (index 0) so
+    ``complex_modulus`` reproduces ``youngs_cplx`` exactly at every node.
     """
-    freq, youngs_cplx = _pmma_curve()
+    youngs_cplx = _matrix_table_youngs()
     return TabularViscoelasticMaterial(
         elset, density=1.18e-15, poisson=nu, youngs=float(youngs_cplx[0].real),
-        freq=freq, youngs_cplx=youngs_cplx,
+        freq=_MATRIX_TABLE_FREQS, youngs_cplx=youngs_cplx,
     )
 
 
@@ -285,17 +304,17 @@ def _build_geometry(dim, n, scale, homogeneous, E, nu, test_type):
     def second_phase(elset):
         if test_type == "viscoelastic":
             return tabular_material(elset, nu)
-        return Material(elset, density=1.0, poisson=nu, youngs=5.0 * E)
+        return Material(elset, density=DENSITY, poisson=nu, youngs=5.0 * E)
 
     if homogeneous:
         materials = [
             tabular_material(sets[0], nu)
             if test_type == "viscoelastic"
-            else Material(sets[0], density=1.0, poisson=nu, youngs=E)
+            else Material(sets[0], density=DENSITY, poisson=nu, youngs=E)
         ]
     else:
         # an elastic filler + a second (viscoelastic or stiffer-elastic) phase
-        materials = [Material(sets[0], density=1.0, poisson=nu, youngs=E),
+        materials = [Material(sets[0], density=DENSITY, poisson=nu, youngs=E),
                      second_phase(sets[1])]
     return nodes, elements, materials
 
@@ -347,7 +366,9 @@ def matrix_simulation(mode, traction, bc, dim, test_type="elastic", n=None, scal
     if test_type == "elastic":
         step = Step(subsections=[Static()] + drives, perturbation=False)
     else:
-        dyn = Dynamic(f_initial=1e-2, f_final=1e2, f_count=3, bias=1)
+        # sweep exactly on the tabular table nodes (see MATRIX_FREQS) -> interpolation-free
+        dyn = Dynamic(f_initial=float(MATRIX_FREQS[0]), f_final=float(MATRIX_FREQS[-1]),
+                      f_count=len(MATRIX_FREQS), bias=1)
         step = Step(subsections=[dyn] + drives, perturbation=True)
 
     heading = Heading(f"matrix {dim}d {mode} {traction} {bc} {test_type}")

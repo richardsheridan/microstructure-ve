@@ -287,9 +287,13 @@ def main(argv=None):
                     help="regenerate the 3 legacy x-uniaxial oracles instead of the matrix")
     ap.add_argument("--max-inflight", type=int, default=0,
                     help="cap concurrent ABAQUS jobs (0 = launch all at once, the default)")
+    ap.add_argument("--filter", default="",
+                    help="only run jobs whose name contains this substring (e.g. viscoelastic)")
     args = ap.parse_args(argv)
 
     jobs = legacy_jobs() if args.legacy else matrix_jobs()
+    if args.filter:
+        jobs = [j for j in jobs if args.filter in j.name]
     WORK_ROOT.mkdir(parents=True, exist_ok=True)
     DATA.mkdir(parents=True, exist_ok=True)
 
