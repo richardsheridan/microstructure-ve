@@ -23,59 +23,94 @@ from ._solver import Cancelled, LuSolver, predict_lu_seconds, select_solver_kind
 from microstructure_ve.boundary import PeriodicBoundaryCondition
 
 
+class _FEProblem:
+    """The mesh-only FE pieces shared across every cell of a given mesh shape.
+
+    ``space``/``matfields`` (DG0 fields)/``forms`` depend only on (shape, scale, bbar), not
+    on the materials or loading, so they are built once and reused; the periodic extras
+    (``mpc``, ``center_bcs``, ``lu``) and the standard extras (``vc_spaces``, ``inv_maps``)
+    are built lazily on first use of each path. Per cell only the material *mapping* is
+    refilled (``matfields.update_materials``) and the matrix reassembled.
+    """
+
+    def __init__(self, space, matfields, forms):
+        self.space, self.matfields, self.forms = space, matfields, forms
+        self.mpc = self.center_bcs = self.lu = None          # periodic, lazy
+        self.vc_spaces = self.inv_maps = None                # standard dof maps, lazy
+        self.std_mats = None                                 # standard matrices/vecs/ksp, lazy
+
+
+_FE_CACHE = {}  # (shape, scale, dim, bbar) -> _FEProblem (process-level; tiny, a few shapes)
+
+
+def clear_cache():
+    """Drop the cached per-mesh-shape FE problems, releasing their dolfinx/PETSc objects.
+
+    ``run`` transparently caches the mesh-only setup (mesh, dof maps, forms, MPC, factorizable
+    matrix) keyed by ``(shape, scale, dim, bbar)``, so repeated calls on simulations that share
+    a mesh shape -- e.g. sweeping many microstructure realizations or loadings on one grid --
+    reuse it and skip the dominant build cost. The cache lives for the process; call this to
+    free memory when you move on to different mesh shapes, or to force a clean rebuild. The
+    cache assumes serial use (one ``run`` at a time, the backend's model); the ``workers`` path
+    is unaffected since each spawned process has its own cache."""
+    _FE_CACHE.clear()
+
+
+def _fe_problem(geom, model, bbar):
+    """Fetch (or build) the cached mesh-only FE problem for this geometry, rebinding it to
+    ``model``'s materials. Building the mesh/forms/MPC dominates the suite, so caching by
+    shape collapses it from once-per-cell to once-per-shape."""
+    key = (tuple(geom.shape), float(geom.scale), int(geom.dim), bool(bbar))
+    prob = _FE_CACHE.get(key)
+    if prob is None:
+        ndof = int(np.prod(geom.shape)) * geom.dim
+        if select_solver_kind(ndof, geom.dim) == "iterative":
+            import warnings
+
+            warnings.warn(
+                f"predicted LU solve ~{predict_lu_seconds(ndof, geom.dim):.0f}s for "
+                f"ndof={ndof} ({geom.dim}D) exceeds the ~10s budget; the iterative solver "
+                "is not implemented yet, falling back to LU -- a single solve cannot be "
+                "cancelled mid-factorization, so cancellation latency will exceed 10s.",
+                stacklevel=3,
+            )
+        space = assembly.Space.build(geom)
+        matfields = assembly.MaterialFields.from_model(space, model)
+        forms = assembly.Forms.build(space, matfields, bbar)
+        prob = _FEProblem(space, matfields, forms)
+        _FE_CACHE[key] = prob
+    else:
+        prob.matfields.update_materials(model)
+    return prob
+
+
 def build_solver(sim, bbar=True):
-    """Build the FE solver for ``sim`` once; return ``(solve_one, dim)``.
+    """Build the FE solver for ``sim``; return ``(solve_one, dim)``.
 
-    ``solve_one(f)`` returns the readODB-style row for one frequency. The setup (mesh,
-    dof map, materials, forms, MPC/BCs, factorizable matrix) is paid once and reused
-    across frequencies.
+    ``solve_one(f)`` returns the readODB-style row for one frequency. The mesh-only setup
+    (mesh, dof map, forms, MPC/BCs, factorizable matrix) is cached by mesh shape and reused
+    across cells (see ``_fe_problem``); only the per-cell material mapping and the
+    per-frequency matrix values are refilled.
 
-    Dispatches on the model's boundary conditions:
-
-    - *Periodic* (model carries a ``PeriodicBoundaryCondition``): corner-driven periodic
-      homogenization via MPC + LU (``_homogenize.build_solve_one``).
-    - *Standard* (no ``PeriodicBoundaryCondition``): direct-Dirichlet solve via
-      ``_standard.build_solver``.
-
-    The solver kind is chosen by ``select_solver_kind`` from the predicted LU time. Above
-    the crossover the intended solver is iterative (cancellable mid-solve), but it is not
-    implemented yet, so this warns and falls back to LU -- which can only be cancelled
-    between whole solves, so a single factorization on such a mesh will block past the
-    ~10s budget. ``cancel`` is not threaded in here: the LU path is cancelled by the
-    sweep loop in ``run`` between frequencies, not inside ``build_solver``.
+    Dispatches on the model's boundary conditions: *Periodic* (carries a
+    ``PeriodicBoundaryCondition``) -> corner-driven homogenization via MPC + LU; *Standard*
+    -> direct-Dirichlet solve via ``_standard.build_solver``.
     """
     model = sim.model
     has_pbc = any(isinstance(bc, PeriodicBoundaryCondition) for bc in model.bcs)
+    geom = spec.Geometry.from_model(model, sim)
+    prob = _fe_problem(geom, model, bbar)
 
     if not has_pbc:
-        # Standard (non-periodic) path: direct Dirichlet BVP
-        return standard.build_solver(sim, bbar)
+        return standard.build_solver(sim, prob)
 
-    # Periodic path (unchanged)
-    spec.require_periodic(model)
     loading = loadingmod.macro_loading(sim)  # raises NotImplementedError if unsupported
-    geom = spec.Geometry.from_model(model, sim)
-    dim = geom.dim
-    ndof = int(np.prod(geom.shape)) * dim
-    if select_solver_kind(ndof, dim) == "iterative":
-        import warnings
-
-        warnings.warn(
-            f"predicted LU solve ~{predict_lu_seconds(ndof, dim):.0f}s for ndof={ndof} "
-            f"({dim}D) exceeds the ~10s budget; the iterative solver is not implemented "
-            "yet, falling back to LU -- a single solve cannot be cancelled mid-"
-            "factorization, so cancellation latency will exceed 10s on this mesh.",
-            stacklevel=2,
-        )
-
-    space = assembly.Space.build(geom)
-    matfields = assembly.MaterialFields.from_model(space, model)
-    forms = assembly.Forms.build(space, matfields, bbar)
-    mpc = constraints.periodic_mpc(space)
-    bcs = constraints.center_pin(space)
-    solver = LuSolver(space, forms, matfields, mpc, bcs)
-    solve_one = homogenize.build_solve_one(space, forms, solver, loading)
-    return solve_one, space.dim
+    if prob.lu is None:
+        prob.mpc = constraints.periodic_mpc(prob.space)
+        prob.center_bcs = constraints.center_pin(prob.space)
+        prob.lu = LuSolver(prob.space, prob.forms, prob.matfields, prob.mpc, prob.center_bcs)
+    solve_one = homogenize.build_solve_one(prob.space, prob.forms, prob.lu, loading)
+    return solve_one, prob.space.dim
 
 
 _THREAD_VARS = (

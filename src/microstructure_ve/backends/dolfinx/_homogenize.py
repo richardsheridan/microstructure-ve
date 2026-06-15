@@ -30,10 +30,13 @@ def build_solve_one(space, forms, solver, loading):
     a0 = loading.primary_axis
     imposed, free = loading.imposed, loading.free
 
-    # volume-averaged stress component (m,n) responding to each active unit strain
-    pairs_ij = [(m, n) for m in range(dim) for n in range(dim)]
+    # Only the stress components actually read are assembled: the primary-axis column
+    # sigma-bar[:, a0] (the reported reaction) and the free-component diagonals (the
+    # zero-stress conditions). This is fewer forms than the full dim x dim tensor.
+    needed_pairs = sorted({(n, a0) for n in range(dim)} | set(free))
     sbar_forms = {
-        k: {ij: fem.form(sig(unit_E[k] + eps(uh[k]))[ij[0], ij[1]] * ufl.dx) for ij in pairs_ij}
+        k: {ij: fem.form(sig(unit_E[k] + eps(uh[k]))[ij[0], ij[1]] * ufl.dx)
+            for ij in needed_pairs}
         for k in active_idx
     }
 
@@ -47,7 +50,7 @@ def build_solve_one(space, forms, solver, loading):
         sbar = {}
         for k in active_idx:
             solver.solve(k)
-            sbar[k] = {ij: fem.assemble_scalar(sbar_forms[k][ij]) / area for ij in pairs_ij}
+            sbar[k] = {ij: fem.assemble_scalar(sbar_forms[k][ij]) / area for ij in needed_pairs}
 
         # macro-strain coefficient per active component: driven = imposed; free = unknown
         c = {comp: complex(imposed.get(comp, 0.0)) for comp in active}

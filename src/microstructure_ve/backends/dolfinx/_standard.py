@@ -31,10 +31,6 @@ from microstructure_ve.boundary import (
 )
 from microstructure_ve.core import _node_array
 
-from . import _assembly as assembly
-from . import _spec as spec
-from ._solver import predict_lu_seconds, select_solver_kind
-
 
 def _build_dof_maps(space):
     """Return per-component (Vc_space, flat_to_vc_inv) for Dirichlet BC construction.
@@ -124,24 +120,21 @@ def _parse_bcs(sim, space, Vc_spaces, inv_maps):
     return bcs, drive_nodes
 
 
-def build_solver(sim, bbar=True):
+def build_solver(sim, prob):
     """Build the direct-Dirichlet FE solver for a standard (non-periodic) ``sim``.
 
     Returns ``(solve_one, dim)`` where ``solve_one(f)`` returns the readODB-style row for
     one frequency: ``[f, RF_Real..., RF_Imag..., U_Real...]``.
 
-    The geometry, mesh, material fields, and stiffness form are built once and reused
-    across frequencies.  Per frequency, the complex moduli are updated, K is reassembled,
-    and a new LU factorisation is computed.  The Dirichlet BCs (values) are real and
-    frequency-independent; they are applied by ``apply_lifting`` at each reassembly.
+    ``prob`` is the cached mesh-only FE problem (``_run._FEProblem``): its ``space``,
+    material fields, stiffness ``forms`` and per-component dof maps are reused across cells
+    of the same mesh shape. Only this cell's Dirichlet BCs and per-frequency matrix values
+    are rebuilt here.
 
-    RF is computed as the nodal reaction force on the primary drive nodeset: after solving
-    for ``u``, compute ``f_int = K_full * u`` (K assembled without BC modification), then
-    sum ``f_int`` at the drive-nodeset dofs per component.  This mirrors ABAQUS's ``RF``
-    field summed over the drive nodeset in ``readODB``.
-
-    U is the sum of the solved displacements at the drive nodeset per component, matching
-    ABAQUS's ``U`` field summed over the drive nodeset.
+    RF is the nodal reaction on the primary drive nodeset: after solving for ``u``, compute
+    ``f_int = K_full * u`` (K assembled without BC modification) and sum it at the
+    drive-nodeset dofs per component, mirroring ABAQUS's ``RF`` summed over the drive
+    nodeset. ``U`` is the solved displacement summed over the drive nodeset per component.
 
     Raises ``NotImplementedError`` if any spatial component is unconstrained (free-lateral
     cell): the stiffness matrix would be singular (rigid-body-translation null space) and
@@ -168,24 +161,10 @@ def build_solver(sim, bbar=True):
             "solved displacement is non-unique -- oracle U values cannot be reproduced"
         )
 
-    geom = spec.Geometry.from_model(model, sim)
-    ndof = int(np.prod(geom.shape)) * dim
-
-    if select_solver_kind(ndof, dim) == "iterative":
-        import warnings
-        warnings.warn(
-            f"predicted LU solve ~{predict_lu_seconds(ndof, dim):.0f}s for ndof={ndof} "
-            f"({dim}D) exceeds the ~10s budget; the iterative solver is not implemented "
-            "yet, falling back to LU.",
-            stacklevel=3,
-        )
-
-    space = assembly.Space.build(geom)
-    matfields = assembly.MaterialFields.from_model(space, model)
-    forms = assembly.Forms.build(space, matfields, bbar)
-
-    # Build dof maps once (reused across BC construction and RF/U extraction)
-    Vc_spaces, inv_maps = _build_dof_maps(space)
+    space, matfields, forms = prob.space, prob.matfields, prob.forms
+    if prob.vc_spaces is None:  # per-component collapsed spaces + dof maps (shape-only)
+        prob.vc_spaces, prob.inv_maps = _build_dof_maps(space)
+    Vc_spaces, inv_maps = prob.vc_spaces, prob.inv_maps
 
     # Parse BCs -- values are real and don't change with frequency
     dirichlet_bcs, drive_nodes = _parse_bcs(sim, space, Vc_spaces, inv_maps)
@@ -195,20 +174,23 @@ def build_solver(sim, bbar=True):
     block_of_node = space.block_of_node
     blocks_drive = block_of_node[drive_nodes]
 
-    # Pre-allocate the matrix and vectors; same sparsity pattern reused each frequency.
-    matfields.set_moduli(1.0)  # placeholder to establish sparsity
-    A_bc = fempetsc.assemble_matrix(forms.a_form, bcs=dirichlet_bcs)
-    A_bc.assemble()
-    A_full = fempetsc.assemble_matrix(forms.a_form)  # no BC modification
-    A_full.assemble()
-    b = A_bc.createVecRight()
-    x = A_bc.createVecRight()
-    f_int = A_full.createVecRight()
-
-    ksp = PETSc.KSP().create(space.mesh.comm)
-    ksp.setOperators(A_bc)
-    ksp.setType("preonly")
-    ksp.getPC().setType("lu")
+    # The matrices/vectors/KSP have mesh-only sparsity (Dirichlet BCs only zero rows and set
+    # the diagonal, which is always allocated), so they are cached on ``prob`` and reused
+    # across cells of this shape; only the values (this cell's BCs + frequency moduli) are
+    # reassembled in solve_one.
+    if prob.std_mats is None:
+        matfields.set_moduli(1.0)  # placeholder to establish sparsity
+        A_bc = fempetsc.assemble_matrix(forms.a_form, bcs=dirichlet_bcs)
+        A_bc.assemble()
+        A_full = fempetsc.assemble_matrix(forms.a_form)  # no BC modification
+        A_full.assemble()
+        ksp = PETSc.KSP().create(space.mesh.comm)
+        ksp.setOperators(A_bc)
+        ksp.setType("preonly")
+        ksp.getPC().setType("lu")
+        prob.std_mats = (A_bc, A_full, A_bc.createVecRight(),
+                         A_bc.createVecRight(), A_full.createVecRight(), ksp)
+    A_bc, A_full, b, x, f_int, ksp = prob.std_mats
 
     def solve_one(f):
         # Update complex moduli and reassemble (in-place: pass A as first arg to dispatch)

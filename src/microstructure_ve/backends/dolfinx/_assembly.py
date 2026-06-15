@@ -90,12 +90,22 @@ class MaterialFields:
 
     @classmethod
     def from_model(cls, space, model):
-        mat_of_cell, poissons, youngs, modulus_fns = spec.material_cell_maps(model)
-        nu_cell = poissons[mat_of_cell]
-        youngs_cell = youngs[mat_of_cell]
         DG0 = fem.functionspace(space.mesh, ("DG", 0))
-        return cls(fem.Function(DG0), fem.Function(DG0),
-                   mat_of_cell, nu_cell, youngs_cell, space.oci, modulus_fns)
+        self = cls(fem.Function(DG0), fem.Function(DG0),
+                   None, None, None, space.oci, None)
+        self.update_materials(model)
+        return self
+
+    def update_materials(self, model):
+        """Re-bind the per-cell material mapping (poisson/youngs/modulus per cell) to a new
+        model on the same mesh. The DG0 ``mu_fn``/``lam_fn`` Functions (and the forms built
+        on them) are unchanged, so a cached solver can be reused across cells that share the
+        mesh -- only the values differ, refilled by ``set_moduli`` per frequency."""
+        mat_of_cell, poissons, youngs, modulus_fns = spec.material_cell_maps(model)
+        self.mat_of_cell = mat_of_cell
+        self.nu_cell = poissons[mat_of_cell]
+        self.youngs_cell = youngs[mat_of_cell]
+        self.modulus_fns = modulus_fns
 
     def _fill(self, E_cell):
         mu = E_cell / (2 * (1 + self.nu_cell))
