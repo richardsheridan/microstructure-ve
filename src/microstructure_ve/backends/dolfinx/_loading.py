@@ -81,14 +81,18 @@ def macro_loading(sim):
     nodes = model.nodes
     dim = nodes.dim
 
-    if len(list(sim.steps)) != 1:
-        raise NotImplementedError("the dolfinx backend supports a single step only")
     L = _axis_lengths(nodes)
 
-    drives = [s for s in sim.steps[0].subsections
-              if isinstance(s, DisplacementBoundaryCondition)]
+    # The macro loading is parsed from the first step carrying a drive. Multi-step cells
+    # drive the same macro loading every step, so one MacroLoading describes them all (the
+    # per-step analysis type -- Static vs Dynamic -- is handled by the run loop).
+    drives = []
+    for step in sim.steps:
+        drives = [s for s in step.subsections if isinstance(s, DisplacementBoundaryCondition)]
+        if drives:
+            break
     if len(drives) == 0:
-        raise ValueError("no DisplacementBoundaryCondition drive in the step")
+        raise ValueError("no DisplacementBoundaryCondition drive in any step")
 
     # fixed (node, dof) for the free-lateral inference
     pinned = set()
@@ -210,13 +214,20 @@ def can_run(sim):
     """
     from microstructure_ve.boundary import PeriodicBoundaryCondition
 
+    from microstructure_ve.steps import Dynamic, Static
+
     has_pbc = any(isinstance(bc, PeriodicBoundaryCondition) for bc in sim.model.bcs)
     if has_pbc:
         try:
             macro_loading(sim)
-            spec.frequencies(sim)
         except (NotImplementedError, ValueError):
             return False
-        return True
+        # every step must be a resolvable analysis (Static or Dynamic); the run loop
+        # sweeps each step in turn (multi-step = several such steps)
+        return all(
+            spec.find(step.subsections, Dynamic) is not None
+            or spec.find(step.subsections, Static) is not None
+            for step in sim.steps
+        )
     else:
         return _standard_can_run(sim)

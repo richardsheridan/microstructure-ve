@@ -84,16 +84,24 @@ class MaterialFields:
     lam_fn: Any
     mat_of_cell: np.ndarray
     nu_cell: np.ndarray
+    youngs_cell: np.ndarray
     oci: np.ndarray
     modulus_fns: List[Callable]
 
     @classmethod
     def from_model(cls, space, model):
-        mat_of_cell, poissons, modulus_fns = spec.material_cell_maps(model)
+        mat_of_cell, poissons, youngs, modulus_fns = spec.material_cell_maps(model)
         nu_cell = poissons[mat_of_cell]
+        youngs_cell = youngs[mat_of_cell]
         DG0 = fem.functionspace(space.mesh, ("DG", 0))
         return cls(fem.Function(DG0), fem.Function(DG0),
-                   mat_of_cell, nu_cell, space.oci, modulus_fns)
+                   mat_of_cell, nu_cell, youngs_cell, space.oci, modulus_fns)
+
+    def _fill(self, E_cell):
+        mu = E_cell / (2 * (1 + self.nu_cell))
+        lam = E_cell * self.nu_cell / ((1 + self.nu_cell) * (1 - 2 * self.nu_cell))
+        self.mu_fn.x.array[:] = mu[self.oci]
+        self.lam_fn.x.array[:] = lam[self.oci]
 
     def set_moduli(self, f):
         """Fill mu/lambda from each material's complex_modulus at frequency ``f``.
@@ -104,10 +112,16 @@ class MaterialFields:
         E_cell = np.empty(len(self.mat_of_cell), dtype=complex)
         for mi, mod in enumerate(self.modulus_fns):
             E_cell[self.mat_of_cell == mi] = complex(np.asarray(mod(np.array([f]))).ravel()[0])
-        mu = E_cell / (2 * (1 + self.nu_cell))
-        lam = E_cell * self.nu_cell / ((1 + self.nu_cell) * (1 - 2 * self.nu_cell))
-        self.mu_fn.x.array[:] = mu[self.oci]
-        self.lam_fn.x.array[:] = lam[self.oci]
+        self._fill(E_cell)
+
+    def set_moduli_elastic(self):
+        """Fill mu/lambda from each material's real ``*Elastic`` modulus (``youngs``).
+
+        This is what a ``Static`` step uses: the frequency-domain ``*Viscoelastic`` table
+        applies only to steady-state dynamics, so a static step sees the real long-term
+        modulus and produces zero loss. Used for the static steps of multi-step sims.
+        """
+        self._fill(self.youngs_cell.astype(complex))
 
 
 @dataclass(eq=False)

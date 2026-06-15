@@ -46,10 +46,11 @@ class MatrixDolfinxTests(unittest.TestCase):
         arr = np.asarray(rows, dtype=complex)
         self.assertEqual(arr.shape[1], 1 + 3 * dim)
         self.assertTrue(np.all(np.isfinite(arr)))
-        if cell["bc"] != "periodic":
+        if cell["bc"] != "periodic" or len(list(sim.steps)) > 1:
             # Non-periodic (standard) cells are clamped Dirichlet BVPs, not a uniform-field
-            # homogenization, so the closed-form C:E invariant does not apply -- their
-            # numerical correctness is pinned by test_matrix_parity against the ABAQUS oracle.
+            # homogenization; multi-step cells mix Static (real *Elastic) and Dynamic rows in
+            # one table. Neither fits the single closed-form C:E invariant, so their numerical
+            # correctness is pinned by test_matrix_parity against the ABAQUS oracle.
             return
 
         loading = _loading.macro_loading(sim)

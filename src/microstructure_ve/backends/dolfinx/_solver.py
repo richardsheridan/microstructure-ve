@@ -76,13 +76,21 @@ class LuSolver:
         self.ksp.setType("preonly")
         self.ksp.getPC().setType("lu")  # native serial LU (~25x faster than MUMPS here)
 
-    def reassemble(self, f):
-        """Re-fill the modulus fields at frequency ``f`` and refactor the matrix."""
-        self.matfields.set_moduli(f)
+    def _refactor(self):
         self.A.zeroEntries()
         dolfinx_mpc.assemble_matrix(self.forms.a_form, self.mpc, bcs=self.bcs, A=self.A)
         self.A.assemble()
         self.ksp.setOperators(self.A)  # same nonzero pattern -> values-only refactor
+
+    def reassemble(self, f):
+        """Re-fill the modulus fields at frequency ``f`` and refactor the matrix."""
+        self.matfields.set_moduli(f)
+        self._refactor()
+
+    def reassemble_elastic(self):
+        """Re-fill with the real *Elastic moduli (Static step) and refactor."""
+        self.matfields.set_moduli_elastic()
+        self._refactor()
 
     def solve(self, j):
         """Solve the fluctuation for unit macro strain ``j`` into ``uh[j]``."""

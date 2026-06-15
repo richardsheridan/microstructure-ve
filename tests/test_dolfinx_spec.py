@@ -66,9 +66,10 @@ class SpecParsingTests(unittest.TestCase):
         self.assertAlmostEqual(g.exx, 0.005 / (6 * 0.0025))
 
     def test_material_cell_maps_partition(self):
-        mat_of_cell, poissons, modulus_fns = spec.material_cell_maps(self.model)
+        mat_of_cell, poissons, youngs, modulus_fns = spec.material_cell_maps(self.model)
         self.assertEqual(len(mat_of_cell), 36)  # 6x6 pixels
         self.assertEqual(len(modulus_fns), len(self.model.materials))
+        self.assertEqual(len(youngs), len(self.model.materials))
         self.assertEqual(set(np.unique(mat_of_cell)), set(range(len(modulus_fns))))
         # each cell's assigned material owns that 1-indexed element
         for mi, mat in enumerate(self.model.materials):

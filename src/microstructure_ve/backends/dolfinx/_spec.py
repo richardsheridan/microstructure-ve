@@ -71,12 +71,13 @@ def material_cell_maps(model):
     """
     ncells = int(np.prod([d - 1 for d in model.nodes.shape]))
     mat_of_cell = np.empty(ncells, dtype=int)
-    poissons, modulus_fns = [], []
+    poissons, youngs, modulus_fns = [], [], []
     for mi, mat in enumerate(model.materials):
         mat_of_cell[np.asarray(mat.elset.elements) - 1] = mi
         poissons.append(mat.poisson)
+        youngs.append(mat.youngs)  # *Elastic real modulus (used by Static steps)
         modulus_fns.append(mat.complex_modulus)
-    return mat_of_cell, np.array(poissons), modulus_fns
+    return mat_of_cell, np.array(poissons), np.array(youngs), modulus_fns
 
 
 def periodic_pairs(shape):

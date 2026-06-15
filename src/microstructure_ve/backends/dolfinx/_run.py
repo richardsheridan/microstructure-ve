@@ -142,8 +142,16 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None):
              in-flight solve too) before propagating; the predicate runs here, never in a
              worker.
     """
-    freqs = np.asarray(spec.frequencies(sim), dtype=float)
     dim = sim.model.nodes.dim
+
+    if len(list(sim.steps)) > 1:
+        out = _run_multistep(sim, bbar, cancel)
+        if output_path is not None:
+            np.savetxt(output_path, out, fmt="%.8e", delimiter="\t",
+                       header="\t".join(_row_header(dim)), comments="")
+        return out
+
+    freqs = np.asarray(spec.frequencies(sim), dtype=float)
 
     if workers and workers > 1 and len(freqs) > 1:
         import multiprocessing
@@ -174,6 +182,28 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None):
             header="\t".join(_row_header(dim)), comments="",
         )
     return out
+
+
+def _run_multistep(sim, bbar, cancel=None):
+    """Sweep a multi-step sim step-by-step, emitting rows in the ABAQUS reader's order (per
+    step, then per frame): a ``Static`` step contributes one elastic row (zero loss) at frame
+    value 1.0 (real ``*Elastic`` moduli), a ``Dynamic`` step one row per swept frequency
+    (ascending). The FE problem (mesh/MPC/forms) is built once and reused across steps. The
+    multi-step cells drive the same macro loading each step, so one solver serves all."""
+    from microstructure_ve.steps import Dynamic, Static
+
+    solve_one, _ = build_solver(sim, bbar)
+    rows = []
+    for step in sim.steps:
+        if cancel is not None and cancel():
+            raise Cancelled("cancelled by callback")
+        dyn = spec.find(step.subsections, Dynamic)
+        if dyn is not None:
+            freqs = np.logspace(np.log10(dyn.f_initial), np.log10(dyn.f_final), dyn.f_count)
+            rows.extend(solve_one(float(f)) for f in freqs)
+        elif spec.find(step.subsections, Static) is not None:
+            rows.append(solve_one(1.0, elastic=True))  # frame value 1.0, real *Elastic moduli
+    return np.array(rows)
 
 
 def _kill_workers(ex):

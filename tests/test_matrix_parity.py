@@ -49,9 +49,12 @@ def _make_test(cell, tt):
 
         dim = cell["dim"]
         oracle = np.atleast_2d(np.loadtxt(DATA / _oracle_name(cell, tt), skiprows=1))
-        oracle = oracle[np.argsort(oracle[:, 0])]
+        # stable sort so rows that share a frequency (a multi-step Static frame and a
+        # Dynamic frame both at 1.0) keep their emission order -- the FE emits rows in the
+        # same per-step/per-frame order as the ABAQUS reader, so they stay aligned.
+        oracle = oracle[np.argsort(oracle[:, 0], kind="stable")]
         fe = run.run(matrix_simulation(test_type=tt, **cell))  # the oracle's own sim
-        fe = fe[np.argsort(fe[:, 0])]
+        fe = fe[np.argsort(fe[:, 0], kind="stable")]
         self.assertEqual(fe.shape, oracle.shape)
 
         scale = float(np.max(np.abs(oracle[:, 1:1 + dim])))  # storage sets the abs floor

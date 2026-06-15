@@ -37,8 +37,13 @@ def build_solve_one(space, forms, solver, loading):
         for k in active_idx
     }
 
-    def solve_one(f):
-        solver.reassemble(f)
+    def solve_one(f, elastic=False):
+        # elastic=True: a Static step -> real *Elastic moduli (zero loss); else the
+        # frequency-domain complex moduli at f.
+        if elastic:
+            solver.reassemble_elastic()
+        else:
+            solver.reassemble(f)
         sbar = {}
         for k in active_idx:
             solver.solve(k)
