@@ -144,15 +144,79 @@ def macro_loading(sim):
     )
 
 
+def _standard_can_run(sim):
+    """True iff ``sim`` is a well-posed standard (non-periodic, direct-Dirichlet) problem.
+
+    Requirements:
+    - Exactly one step with at least one ``DisplacementBoundaryCondition`` drive.
+    - Frequencies resolve (Static or Dynamic subsection present).
+    - Every spatial component (x, y[, z]) has at least one Dirichlet constraint (either
+      a ``FixedBoundaryCondition`` or a step drive) so the stiffness matrix is
+      non-singular.  Modes with a free lateral direction (no constraint on a transverse
+      component) have a rigid-body-translation null space; those are excluded because
+      the quasi-static FE solver (no mass term) does not uniquely determine the
+      transverse displacement, so the readODB U columns cannot match the ABAQUS oracle.
+
+    Pure numpy; no dolfinx import.
+    """
+    model = sim.model
+    if len(list(sim.steps)) != 1:
+        return False
+    step = sim.steps[0]
+
+    # Check frequencies resolve
+    try:
+        spec.frequencies(sim)
+    except (NotImplementedError, ValueError):
+        return False
+
+    # Need at least one step drive
+    has_drive = any(
+        isinstance(s, DisplacementBoundaryCondition)
+        for s in step.subsections
+    )
+    if not has_drive:
+        return False
+
+    # Collect constrained components (0-indexed) from model BCs and step drives
+    dim = model.nodes.dim
+    constrained = set()
+    for bc in model.bcs:
+        if isinstance(bc, FixedBoundaryCondition):
+            for dof in bc.dofs:
+                constrained.add(int(dof) - 1)
+    for s in step.subsections:
+        if isinstance(s, DisplacementBoundaryCondition):
+            for dof in range(s.first_dof, s.last_dof + 1):
+                constrained.add(int(dof) - 1)
+
+    # Reject if any component is unconstrained (rigid-body translation mode)
+    if constrained != set(range(dim)):
+        return False
+
+    return True
+
+
 def can_run(sim):
     """True iff the dolfinx backend can solve ``sim`` (drives parse + frequencies resolve).
 
     Pure numpy; the test harness's ``is_fe_green`` calls this, so support widens
     automatically as ``macro_loading`` / the frequency resolution grow.
+
+    Handles two cases:
+    - *Periodic* sims: validated by ``macro_loading`` (corner-driven PBC path).
+    - *Standard* sims (no ``PeriodicBoundaryCondition``): validated by
+      ``_standard_can_run`` (direct-Dirichlet path, well-posed cells only).
     """
-    try:
-        macro_loading(sim)
-        spec.frequencies(sim)
-    except (NotImplementedError, ValueError):
-        return False
-    return True
+    from microstructure_ve.boundary import PeriodicBoundaryCondition
+
+    has_pbc = any(isinstance(bc, PeriodicBoundaryCondition) for bc in sim.model.bcs)
+    if has_pbc:
+        try:
+            macro_loading(sim)
+            spec.frequencies(sim)
+        except (NotImplementedError, ValueError):
+            return False
+        return True
+    else:
+        return _standard_can_run(sim)

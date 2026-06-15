@@ -16,16 +16,26 @@ from . import (
     _homogenize as homogenize,
     _loading as loadingmod,
     _spec as spec,
+    _standard as standard,
 )
 from ._solver import Cancelled, LuSolver, predict_lu_seconds, select_solver_kind
+
+from microstructure_ve.boundary import PeriodicBoundaryCondition
 
 
 def build_solver(sim, bbar=True):
     """Build the FE solver for ``sim`` once; return ``(solve_one, dim)``.
 
     ``solve_one(f)`` returns the readODB-style row for one frequency. The setup (mesh,
-    dof map, materials, forms, MPC, factorizable matrix) is paid once and reused across
-    frequencies and both unit-strain RHS.
+    dof map, materials, forms, MPC/BCs, factorizable matrix) is paid once and reused
+    across frequencies.
+
+    Dispatches on the model's boundary conditions:
+
+    - *Periodic* (model carries a ``PeriodicBoundaryCondition``): corner-driven periodic
+      homogenization via MPC + LU (``_homogenize.build_solve_one``).
+    - *Standard* (no ``PeriodicBoundaryCondition``): direct-Dirichlet solve via
+      ``_standard.build_solver``.
 
     The solver kind is chosen by ``select_solver_kind`` from the predicted LU time. Above
     the crossover the intended solver is iterative (cancellable mid-solve), but it is not
@@ -35,6 +45,13 @@ def build_solver(sim, bbar=True):
     sweep loop in ``run`` between frequencies, not inside ``build_solver``.
     """
     model = sim.model
+    has_pbc = any(isinstance(bc, PeriodicBoundaryCondition) for bc in model.bcs)
+
+    if not has_pbc:
+        # Standard (non-periodic) path: direct Dirichlet BVP
+        return standard.build_solver(sim, bbar)
+
+    # Periodic path (unchanged)
     spec.require_periodic(model)
     loading = loadingmod.macro_loading(sim)  # raises NotImplementedError if unsupported
     geom = spec.Geometry.from_model(model, sim)
