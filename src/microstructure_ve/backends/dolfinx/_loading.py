@@ -12,8 +12,8 @@ so it is usable under the numpy-only env.
 
 Supported now: a single ``Static``/``Dynamic`` step driving one or more *normal* macro
 strains via the periodic reference corners (uniaxial along any axis; compression = several
-normal drives). Off-diagonal (shear) drives and multi-step sims raise ``NotImplementedError``
-until those features land.
+normal drives), and off-diagonal (shear) drives via simple shear. Multi-step sims raise
+``NotImplementedError`` until those features land.
 """
 from __future__ import annotations
 
@@ -107,9 +107,15 @@ def macro_loading(sim):
         a = _corner_axis(d.nset, dim)
         i = d.first_dof - 1  # 0-indexed component
         if i != a:
-            raise NotImplementedError(
-                "off-diagonal (shear) drive is not supported by the dolfinx backend yet"
-            )
+            # Off-diagonal (shear) drive: R_a displaced in dof i (= b), imposing H[b,a] = γ.
+            # Simple shear: conjugate H[a,b] = 0, so symmetric tensor strain E_{ab} = γ/2.
+            b = i
+            gamma = float(np.real(d.displacement)) / L[a]
+            imposed[(min(a, b), max(a, b))] = gamma / 2.0
+            driven_axes.add(a)
+            if primary is None:
+                primary = (a, d.first_dof, float(np.real(d.displacement)))
+            continue
         imposed[(a, a)] = float(np.real(d.displacement)) / L[a]
         driven_axes.add(a)
         if primary is None:
@@ -117,15 +123,18 @@ def macro_loading(sim):
 
     a0, primary_dof, drive_value = primary
 
-    # lateral normals not driven: free (solved to zero conjugate stress) iff their reference
-    # corner's normal dof is unconstrained; otherwise held at 0 (confined)
+    # For shear modes: all macro-strain components are fixed via no-slip BCs; free is empty.
+    # For normal modes: lateral normals not driven are free (solved to zero conjugate stress)
+    # iff their reference corner's normal dof is unconstrained; otherwise held at 0 (confined).
+    shear_imposed = any(i != j for i, j in imposed)
     free = []
-    for b in range(dim):
-        if b in driven_axes:
-            continue
-        node = int(np.ravel(_node_array(nodes.nsets[_ref_corner_key(dim, b)]))[0])
-        if (node, b + 1) not in pinned:
-            free.append((b, b))
+    if not shear_imposed:
+        for b in range(dim):
+            if b in driven_axes:
+                continue
+            node = int(np.ravel(_node_array(nodes.nsets[_ref_corner_key(dim, b)]))[0])
+            if (node, b + 1) not in pinned:
+                free.append((b, b))
 
     cross_area = float(np.prod([L[k] for k in range(dim) if k != a0]))
     return MacroLoading(

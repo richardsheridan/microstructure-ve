@@ -210,7 +210,7 @@ def homogeneous_simulation(n=4, dim=2, E=3000.0, nu=0.3, scale=SCALE,
 
     One elastic material fills an ``n**dim`` grid; corner-driven periodic BCs + an x
     drive. The ``lateral_bc`` ("confined"/"free") is encoded in the corner BCs so the FE
-    backend can infer it from the Simulation (see ``spec.infer_lateral_bc``); the
+    backend can parse it from the Simulation (see ``_loading.macro_loading``); the
     homogenized stress can then be compared to closed-form uniaxial results. ``f_count``
     sets the number of frequency points (a single point by default).
     """

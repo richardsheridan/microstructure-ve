@@ -92,11 +92,10 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None):
     """Solve ``sim`` over its frequency sweep; one row per frequency, ``(n_freq, 1+3*dim)``.
 
     Everything about the *problem* is read from ``sim`` -- there are no physics kwargs.
-    The frequencies come from the step's ``Dynamic`` subsection; the lateral traction
-    (confined vs free) is inferred from the corner BCs (see ``spec.infer_lateral_bc``);
-    the drive is read from a ``DisplacementBoundaryCondition`` in the step's
-    ``subsections`` giving the applied x displacement (with, as the ABAQUS path needs, a
-    zero-amplitude baseline ``DisplacementBoundaryCondition`` in ``model.bcs``; see
+    The frequencies come from ``spec.frequencies``; the macro loading (driven axis/mode and
+    the free vs held lateral components) is parsed from the corner BCs and the step drive(s)
+    by ``_loading.macro_loading``; the zero-amplitude baseline
+    ``DisplacementBoundaryCondition`` in ``model.bcs`` is the ABAQUS path's convention (see
     ``example.py``). The remaining kwargs are execution knobs only.
 
     Each row is ``[frequency, RF_Real_1..d, RF_Imag_1..d, U_1..d]`` (same columns as the
