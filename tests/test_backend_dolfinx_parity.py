@@ -25,13 +25,15 @@ DATA = pathlib.Path(__file__).resolve().parent / "data"
 
 @needs_dolfinx
 class AbaqusParityTests(unittest.TestCase):
-    def _check(self, sim, lateral_bc, oracle_name, dim, rtol):
+    def _check(self, sim, oracle_name, dim, rtol):
         oracle = np.loadtxt(DATA / oracle_name, skiprows=1)
         oracle = np.atleast_2d(oracle)
         oracle = oracle[np.argsort(oracle[:, 0])]
         from microstructure_ve.backends.dolfinx import _run as run
 
-        fe = run.run(sim, freqs=oracle[:, 0], lateral_bc=lateral_bc)
+        # frequencies (the Dynamic sweep) and the lateral traction are read from the sim;
+        # the oracle was generated from the same Dynamic subsection, so they line up.
+        fe = run.run(sim)
         fe = fe[np.argsort(fe[:, 0])]
         scale = np.max(np.abs(oracle[:, 1]))  # storage magnitude sets the absolute floor
         # storage RF_Real1 (col 1), loss RF_Imag1 (col 1+dim), drive U1 (col 1+2*dim)
@@ -40,16 +42,16 @@ class AbaqusParityTests(unittest.TestCase):
         np.testing.assert_allclose(fe[:, 1 + 2 * dim], oracle[:, 1 + 2 * dim], rtol=1e-6, atol=1e-12)
 
     def test_2d_confined_cpe4(self):
-        self._check(oracle_simulation_2d("confined"), "confined",
+        self._check(oracle_simulation_2d("confined"),
                     "oracle_2d_confined.tsv", dim=2, rtol=2e-3)
 
     def test_2d_free_lateral_cpe4(self):
-        self._check(oracle_simulation_2d("free"), "free",
+        self._check(oracle_simulation_2d("free"),
                     "oracle_2d_free.tsv", dim=2, rtol=2e-3)
 
     def test_3d_elastic_c3d8_machine_precision(self):
         # elastic -> no tabular interpolation -> near machine precision
-        self._check(oracle_simulation_3d(), "confined",
+        self._check(oracle_simulation_3d(),
                     "oracle_3d_elastic.tsv", dim=3, rtol=1e-5)
 
     def test_confined_stiffer_than_free(self):
@@ -58,8 +60,8 @@ class AbaqusParityTests(unittest.TestCase):
 
         sim_c = oracle_simulation_2d("confined")
         sim_f = oracle_simulation_2d("free")
-        rf_c = run.run(sim_c, freqs=[1e-7], lateral_bc="confined")[0, 1]
-        rf_f = run.run(sim_f, freqs=[1e-7], lateral_bc="free")[0, 1]
+        rf_c = run.run(sim_c)[0, 1]
+        rf_f = run.run(sim_f)[0, 1]
         self.assertLess(rf_f, rf_c)  # free modulus < confined modulus
 
 

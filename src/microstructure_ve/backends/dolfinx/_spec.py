@@ -12,8 +12,10 @@ import numpy as np
 
 from microstructure_ve.boundary import (
     DisplacementBoundaryCondition,
+    FixedBoundaryCondition,
     PeriodicBoundaryCondition,
 )
+from microstructure_ve.core import _node_array
 from microstructure_ve.steps import Dynamic
 
 
@@ -116,3 +118,64 @@ def require_periodic(model):
     """Raise unless the model carries a PeriodicBoundaryCondition (the FE backend needs it)."""
     if find(model.bcs, PeriodicBoundaryCondition) is None:
         raise ValueError("the dolfinx backend requires a PeriodicBoundaryCondition")
+
+
+def require_x_uniaxial(sim):
+    """Raise unless the loading is a single x-normal drive (the only mode implemented).
+
+    The homogenization hard-codes the driven axis as x (dof 1) and reports the x-face
+    reaction. A model whose step prescribes anything else -- a y/z normal drive, a shear
+    (off-axis dof), or compression's several simultaneous normal drives -- is not yet
+    supported; reject it here rather than silently returning the x-uniaxial answer. This
+    is the red/green tripwire: when a richer drive lands, relax this guard.
+    """
+    drives = [
+        s
+        for step in sim.steps
+        for s in step.subsections
+        if isinstance(s, DisplacementBoundaryCondition)
+    ]
+    if len(drives) != 1 or drives[0].first_dof != 1 or drives[0].last_dof != 1:
+        raise NotImplementedError(
+            "the dolfinx backend currently supports only a single x-uniaxial drive "
+            "(one DisplacementBoundaryCondition on dof 1); got "
+            f"{len(drives)} step drive(s)"
+        )
+
+
+def infer_lateral_bc(model):
+    """Read the lateral traction condition off the model's corner BCs.
+
+    The macro loading is x-uniaxial (driven via the X1 reference corner). The lateral
+    condition is encoded in whether the lateral reference corner's *normal* DOF is pinned
+    by a ``FixedBoundaryCondition``: pinned -> the lateral macro normal strain is held at
+    0 (``"confined"``); floating -> the lateral macro normal stress vanishes (``"free"``).
+    This keeps the loading a property of the ``Simulation`` rather than a backend kwarg.
+
+    The lateral reference corners (and their normal DOFs) are ``X0Y1`` dof 2 in 2D and
+    ``X0Y1Z0`` dof 2 + ``X0Y0Z1`` dof 3 in 3D. Raises if the lateral DOFs are constrained
+    inconsistently (some pinned, some free), which is neither pure confined nor pure free.
+    """
+    nodes = model.nodes
+    laterals = [("X0Y1", 2)] if nodes.dim == 2 else [("X0Y1Z0", 2), ("X0Y0Z1", 3)]
+
+    pinned = set()
+    for bc in model.bcs:
+        if isinstance(bc, FixedBoundaryCondition):
+            for ind in np.ravel(_node_array(bc.node)).tolist():
+                for dof in bc.dofs:
+                    pinned.add((int(ind), int(dof)))
+
+    flags = []
+    for key, normal_dof in laterals:
+        corner = np.ravel(_node_array(nodes.nsets[key])).tolist()
+        flags.append(any((int(ind), normal_dof) in pinned for ind in corner))
+
+    if all(flags):
+        return "confined"
+    if not any(flags):
+        return "free"
+    raise ValueError(
+        "cannot infer lateral_bc: the lateral reference-corner normal DOFs are "
+        "constrained inconsistently (neither all pinned nor all free)"
+    )

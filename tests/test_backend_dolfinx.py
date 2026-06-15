@@ -122,11 +122,12 @@ class PeriodicMpcTests(unittest.TestCase):
 
 @needs_dolfinx
 class AnalyticHomogeneousTests(unittest.TestCase):
-    def _sigma(self, sim, lateral_bc):
+    def _sigma(self, sim):
+        # lateral_bc is now read off the Simulation's corner BCs, not passed in
         from microstructure_ve.backends.dolfinx import _run as run, _spec as spec
 
         geom = spec.Geometry.from_model(sim.model, sim)
-        row = run.run(sim, freqs=[1.0], lateral_bc=lateral_bc)[0]
+        row = run.run(sim)[0]
         dim = sim.model.nodes.dim
         rf_real = np.array(row[1:1 + dim])
         return rf_real / geom.cross_area, geom.exx  # sigma-bar normal row 0..dim-1
@@ -134,23 +135,23 @@ class AnalyticHomogeneousTests(unittest.TestCase):
     def test_confined_plane_strain(self):
         E, nu = 3000.0, 0.3
         lam, mu = _lame(E, nu)
-        sim = homogeneous_simulation(n=4, dim=2, E=E, nu=nu)
-        sigma, exx = self._sigma(sim, "confined")
+        sim = homogeneous_simulation(n=4, dim=2, E=E, nu=nu, lateral_bc="confined")
+        sigma, exx = self._sigma(sim)
         self.assertAlmostEqual(sigma[0], (lam + 2 * mu) * exx, delta=abs(sigma[0]) * 1e-6)
 
     def test_free_lateral_plane_strain(self):
         E, nu = 3000.0, 0.3
         lam, mu = _lame(E, nu)
-        sim = homogeneous_simulation(n=4, dim=2, E=E, nu=nu)
-        sigma, exx = self._sigma(sim, "free")
+        sim = homogeneous_simulation(n=4, dim=2, E=E, nu=nu, lateral_bc="free")
+        sigma, exx = self._sigma(sim)
         expected = 4 * mu * (lam + mu) / (lam + 2 * mu) * exx
         self.assertAlmostEqual(sigma[0], expected, delta=abs(expected) * 1e-6)
         self.assertAlmostEqual(sigma[1], 0.0, delta=abs(expected) * 1e-6)  # lateral free
 
     def test_free_lateral_3d_is_uniaxial_stress(self):
         E, nu = 3000.0, 0.3
-        sim = homogeneous_simulation(n=3, dim=3, E=E, nu=nu)
-        sigma, exx = self._sigma(sim, "free")
+        sim = homogeneous_simulation(n=3, dim=3, E=E, nu=nu, lateral_bc="free")
+        sigma, exx = self._sigma(sim)
         self.assertAlmostEqual(sigma[0], E * exx, delta=abs(E * exx) * 1e-6)
         self.assertAlmostEqual(sigma[1], 0.0, delta=abs(E * exx) * 1e-6)
         self.assertAlmostEqual(sigma[2], 0.0, delta=abs(E * exx) * 1e-6)
@@ -162,10 +163,10 @@ class FrequencyParallelTests(unittest.TestCase):
         # frequency-varying (viscoelastic) sim so the parallel split is non-trivial
         from microstructure_ve.backends.dolfinx import _run as run
 
+        # frequency sweep + traction now come from the Simulation itself
         sim = synthetic_simulation()
-        freqs = [1e-3, 1e0, 1e3, 1e5]
-        serial = run.run(sim, freqs=freqs, lateral_bc="confined", workers=1)
-        parallel = run.run(sim, freqs=freqs, lateral_bc="confined", workers=2)
+        serial = run.run(sim, workers=1)
+        parallel = run.run(sim, workers=2)
         np.testing.assert_allclose(parallel, serial, rtol=1e-9, atol=0)
 
     def test_workers_inside_worker_process_raises(self):
@@ -174,10 +175,10 @@ class FrequencyParallelTests(unittest.TestCase):
 
         from microstructure_ve.backends.dolfinx import _run as run
 
-        sim = homogeneous_simulation(n=3, dim=2)
+        sim = homogeneous_simulation(n=3, dim=2, f_count=2)  # >1 freq to enter the parallel path
         with mock.patch("multiprocessing.parent_process", return_value=object()):
             with self.assertRaises(RuntimeError) as cm:
-                run.run(sim, freqs=[1.0, 2.0], workers=2)
+                run.run(sim, workers=2)
         self.assertIn("worker process", str(cm.exception).lower())
 
 

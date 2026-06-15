@@ -134,17 +134,17 @@ def _macro_corner_bcs(nodes, lateral_bc):
         bcs.append(FixedBoundaryCondition(ym, [1, 2] if lateral_bc == "confined" else [1]))
         return bcs, xm
     if dim == 3:
-        if lateral_bc != "confined":
-            raise ValueError("3D oracle supports confined loading only")
         origin, xm, ym, zm = (
             nodes.nsets[k] for k in ("X0Y0Z0", "X1Y0Z0", "X0Y1Z0", "X0Y0Z1")
         )
-        bcs = [
-            FixedBoundaryCondition(origin, [1, 2, 3]),
-            FixedBoundaryCondition(xm, [2, 3]),
-            FixedBoundaryCondition(ym, [1, 2, 3]),
-            FixedBoundaryCondition(zm, [1, 2, 3]),
-        ]
+        bcs = [FixedBoundaryCondition(origin, [1, 2, 3]), FixedBoundaryCondition(xm, [2, 3])]
+        if lateral_bc == "confined":
+            # hold both lateral normals: Eyy = Ezz = 0
+            bcs += [FixedBoundaryCondition(ym, [1, 2, 3]), FixedBoundaryCondition(zm, [1, 2, 3])]
+        else:
+            # free: leave each lateral normal floating (ym dof 2, zm dof 3), pin only their
+            # tangential dofs so the lateral macro normal *stresses* vanish (uniaxial stress)
+            bcs += [FixedBoundaryCondition(ym, [1, 3]), FixedBoundaryCondition(zm, [1, 2])]
         return bcs, xm
     raise ValueError("unsupported dim")
 
@@ -204,11 +204,15 @@ def oracle_simulation_3d():
 
 
 def homogeneous_simulation(n=4, dim=2, E=3000.0, nu=0.3, scale=SCALE,
-                           displacement=DISPLACEMENT, etype=None):
+                           displacement=DISPLACEMENT, etype=None,
+                           lateral_bc="confined", f_count=1):
     """A single-material (homogeneous) RVE for analytic FE checks.
 
-    One elastic material fills an ``n**dim`` grid; periodic BCs + an x drive. Lets the
-    FE backend's homogenized stress be compared to closed-form uniaxial results.
+    One elastic material fills an ``n**dim`` grid; corner-driven periodic BCs + an x
+    drive. The ``lateral_bc`` ("confined"/"free") is encoded in the corner BCs so the FE
+    backend can infer it from the Simulation (see ``spec.infer_lateral_bc``); the
+    homogenized stress can then be compared to closed-form uniaxial results. ``f_count``
+    sets the number of frequency points (a single point by default).
     """
     img = np.zeros((n,) * dim, dtype=int)  # one material everywhere
     nodes = GridNodes.from_matl_img(img, scale)
@@ -218,10 +222,14 @@ def homogeneous_simulation(n=4, dim=2, E=3000.0, nu=0.3, scale=SCALE,
     (elset,) = ElementSet.from_matl_img(img)
     materials = [Material(elset, density=1.0, poisson=nu, youngs=E)]
 
-    model = Model(nodes=nodes, elements=elements, materials=materials,
-                  bcs=[PeriodicBoundaryCondition(nodes=nodes)])
-    drive = nodes.nsets["X1Y0"]  # only its displacement value is read by the FE backend
+    corner_bcs, drive = _macro_corner_bcs(nodes, lateral_bc)
+    bcs = (
+        [PeriodicBoundaryCondition(nodes=nodes)]
+        + corner_bcs
+        + [DisplacementBoundaryCondition(drive, 1, 1, 0.0)]  # zero baseline
+    )
+    model = Model(nodes=nodes, elements=elements, materials=materials, bcs=bcs)
     disp_bc = DisplacementBoundaryCondition(drive, 1, 1, displacement)
-    dyn = Dynamic(f_initial=1.0, f_final=1.0, f_count=1, bias=1)
+    dyn = Dynamic(f_initial=1.0, f_final=1.0, f_count=f_count, bias=1)
     step = Step(subsections=[dyn, disp_bc], perturbation=True)
     return Simulation(heading=Heading("Homogeneous RVE"), model=model, steps=[step])

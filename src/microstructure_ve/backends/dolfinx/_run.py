@@ -14,7 +14,7 @@ from . import _assembly as assembly, _constraints as constraints, _homogenize as
 from ._solver import Cancelled, LuSolver, predict_lu_seconds, select_solver_kind
 
 
-def build_solver(sim, lateral_bc="confined", bbar=True):
+def build_solver(sim, bbar=True):
     """Build the FE solver for ``sim`` once; return ``(solve_one, dim)``.
 
     ``solve_one(f)`` returns the readODB-style row for one frequency. The setup (mesh,
@@ -30,6 +30,8 @@ def build_solver(sim, lateral_bc="confined", bbar=True):
     """
     model = sim.model
     spec.require_periodic(model)
+    spec.require_x_uniaxial(sim)
+    lateral_bc = spec.infer_lateral_bc(model)
     geom = spec.Geometry.from_model(model, sim)
     dim = geom.dim
     ndof = int(np.prod(geom.shape)) * dim
@@ -60,12 +62,12 @@ _THREAD_VARS = (
 _WORKER = {}  # per-process solver cache, populated by _init_worker in parallel mode
 
 
-def _init_worker(sim, lateral_bc, bbar):
+def _init_worker(sim, bbar):
     """ProcessPool worker initializer: build the solver once and cache it."""
     import os
     for v in _THREAD_VARS:
         os.environ.setdefault(v, "1")
-    _WORKER["solve_one"], _WORKER["dim"] = build_solver(sim, lateral_bc, bbar)
+    _WORKER["solve_one"], _WORKER["dim"] = build_solver(sim, bbar)
 
 
 def _worker_solve(f):
@@ -81,14 +83,16 @@ def _row_header(dim):
     )
 
 
-def run(sim, freqs=None, output_path=None, lateral_bc="confined", bbar=True, workers=1,
-        cancel=None):
-    """Solve ``sim`` over ``freqs``; return one row per frequency, ``(len(freqs), 1+3*dim)``.
+def run(sim, output_path=None, bbar=True, workers=1, cancel=None):
+    """Solve ``sim`` over its frequency sweep; one row per frequency, ``(n_freq, 1+3*dim)``.
 
-    The drive is read from the step: put a ``DisplacementBoundaryCondition`` in the
-    step's ``subsections`` giving the applied x displacement (and, as the ABAQUS path
-    needs, a zero-amplitude baseline ``DisplacementBoundaryCondition`` in ``model.bcs``;
-    see ``example.py``). ``freqs`` defaults to the step's ``Dynamic`` sweep.
+    Everything about the *problem* is read from ``sim`` -- there are no physics kwargs.
+    The frequencies come from the step's ``Dynamic`` subsection; the lateral traction
+    (confined vs free) is inferred from the corner BCs (see ``spec.infer_lateral_bc``);
+    the drive is read from a ``DisplacementBoundaryCondition`` in the step's
+    ``subsections`` giving the applied x displacement (with, as the ABAQUS path needs, a
+    zero-amplitude baseline ``DisplacementBoundaryCondition`` in ``model.bcs``; see
+    ``example.py``). The remaining kwargs are execution knobs only.
 
     Each row is ``[frequency, RF_Real_1..d, RF_Imag_1..d, U_1..d]`` (same columns as the
     ABAQUS readODB tsv), where ``RF`` is the complex reaction on the +x face and ``U`` the
@@ -99,9 +103,6 @@ def run(sim, freqs=None, output_path=None, lateral_bc="confined", bbar=True, wor
     with ``cross_area = Ly`` (2D) or ``Ly*Lz`` (3D) and ``exx = U_1 / Lx`` -- i.e. divide
     the x reaction by the cross-section and the applied macro strain (see ``Geometry``).
 
-    lateral_bc: "confined" -> lateral macro normal strains are held at 0 (plane-strain-
-             style constraint); "free" -> lateral macro normal *stresses* vanish, the cell
-             contracts by Poisson (the right choice for an apparent uniaxial modulus).
     bbar:    selective reduced integration on the volumetric term (recommended; matches
              ABAQUS CPE4/C3D8 B-bar and avoids Q1 volumetric locking).
     workers: 1 = serial. >1 spawns a ProcessPoolExecutor and splits the independent
@@ -120,9 +121,7 @@ def run(sim, freqs=None, output_path=None, lateral_bc="confined", bbar=True, wor
              in-flight solve too) before propagating; the predicate runs here, never in a
              worker.
     """
-    if freqs is None:
-        freqs = spec.default_frequencies(sim)
-    freqs = np.asarray(freqs, dtype=float)
+    freqs = np.asarray(spec.default_frequencies(sim), dtype=float)
     dim = sim.model.nodes.dim
 
     if workers and workers > 1 and len(freqs) > 1:
@@ -138,9 +137,9 @@ def run(sim, freqs=None, output_path=None, lateral_bc="confined", bbar=True, wor
                 "run(workers>1) from a guarded entry point (under "
                 '`if __name__ == "__main__":`) or set workers=1.'
             )
-        out = _run_parallel(sim, freqs, lateral_bc, bbar, workers, cancel)
+        out = _run_parallel(sim, freqs, bbar, workers, cancel)
     else:
-        solve_one, _ = build_solver(sim, lateral_bc, bbar)
+        solve_one, _ = build_solver(sim, bbar)
         rows = []
         for f in freqs:
             if cancel is not None and cancel():
@@ -170,7 +169,7 @@ def _kill_workers(ex):
             pass
 
 
-def _run_parallel(sim, freqs, lateral_bc, bbar, workers, cancel=None):
+def _run_parallel(sim, freqs, bbar, workers, cancel=None):
     """Fan the per-frequency solves across a spawn ProcessPoolExecutor (order preserved).
 
     ``cancel`` (parent-process predicate) is polled as futures complete; on True the live
@@ -190,7 +189,7 @@ def _run_parallel(sim, freqs, lateral_bc, bbar, workers, cancel=None):
         ctx = multiprocessing.get_context("spawn")
         with ProcessPoolExecutor(
             max_workers=min(int(workers), len(freqs)), mp_context=ctx,
-            initializer=_init_worker, initargs=(sim, lateral_bc, bbar),
+            initializer=_init_worker, initargs=(sim, bbar),
         ) as ex:
             if cancel is None:
                 rows = list(ex.map(_worker_solve, freqs))  # map preserves input order
