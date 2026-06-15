@@ -2,7 +2,7 @@
 
 Public API::
 
-    from microstructure_ve.backends.dolfinx import run   # (and build_solver)
+    from microstructure_ve.backends.dolfinx import run   # (and build_solver, Cancelled)
 
 ``run`` / ``build_solver`` are resolved lazily so that importing this package -- and its
 pure-numpy ``_spec`` submodule -- never pulls in dolfinx. The dolfinx-touching modules
@@ -12,7 +12,7 @@ this package stays importable under the numpy-only msve env.
 """
 from __future__ import annotations
 
-_LAZY = ("run", "build_solver")
+_LAZY = ("run", "build_solver", "Cancelled")
 
 # The FE stack these modules import at the top; a missing one means "wrong env".
 _FE_DEPS = {"dolfinx", "dolfinx_mpc", "basix", "ufl", "petsc4py", "mpi4py"}
