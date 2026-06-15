@@ -122,18 +122,15 @@ def _validate_cell(mode, traction, bc, dim):
 
 
 def is_fe_green(cell, test_type):
-    """Single capability predicate: True iff the DOLFINx backend supports this cell today.
+    """True iff the DOLFINx backend can solve this cell today.
 
-    Currently only periodic, x-uniaxial, confined/free, viscoelastic (a ``Dynamic`` step).
-    Every other cell is expected to fail until the FE backend grows that axis -- the red
-    side of the red-green harness.
+    Derived from the backend's own (pure-numpy) capability check, so support widens
+    automatically as the backend's loading parse / frequency resolution grow -- no per-
+    feature edits here. Everything else stays red (the expected-failure side of the harness).
     """
-    return (
-        cell["bc"] == "periodic"
-        and cell["mode"] == "uniaxial_x"
-        and cell["traction"] in ("free", "confined_slip")
-        and test_type == "viscoelastic"
-    )
+    from microstructure_ve.backends.dolfinx import _loading
+
+    return _loading.can_run(matrix_simulation(test_type=test_type, **cell))
 
 
 # ---------------------------------------------------------------------------

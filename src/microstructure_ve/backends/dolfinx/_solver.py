@@ -64,7 +64,7 @@ class LuSolver:
         self.mpc = mpc
         self.bcs = bcs
         V = space.V
-        self.uh = [fem.Function(V) for _ in range(space.dim)]
+        self.uh = [fem.Function(V) for _ in range(len(forms.L_forms))]
 
         matfields.set_moduli(1.0)  # placeholder values to allocate A
         self.A = dolfinx_mpc.assemble_matrix(forms.a_form, mpc, bcs=bcs)

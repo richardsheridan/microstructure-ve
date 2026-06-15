@@ -10,7 +10,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from . import _assembly as assembly, _constraints as constraints, _homogenize as homogenize, _spec as spec
+from . import (
+    _assembly as assembly,
+    _constraints as constraints,
+    _homogenize as homogenize,
+    _loading as loadingmod,
+    _spec as spec,
+)
 from ._solver import Cancelled, LuSolver, predict_lu_seconds, select_solver_kind
 
 
@@ -30,8 +36,7 @@ def build_solver(sim, bbar=True):
     """
     model = sim.model
     spec.require_periodic(model)
-    spec.require_x_uniaxial(sim)
-    lateral_bc = spec.infer_lateral_bc(model)
+    loading = loadingmod.macro_loading(sim)  # raises NotImplementedError if unsupported
     geom = spec.Geometry.from_model(model, sim)
     dim = geom.dim
     ndof = int(np.prod(geom.shape)) * dim
@@ -52,7 +57,7 @@ def build_solver(sim, bbar=True):
     mpc = constraints.periodic_mpc(space)
     bcs = constraints.center_pin(space)
     solver = LuSolver(space, forms, matfields, mpc, bcs)
-    solve_one = homogenize.build_solve_one(space, forms, solver, geom, lateral_bc)
+    solve_one = homogenize.build_solve_one(space, forms, solver, loading)
     return solve_one, space.dim
 
 
@@ -121,7 +126,7 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None):
              in-flight solve too) before propagating; the predicate runs here, never in a
              worker.
     """
-    freqs = np.asarray(spec.default_frequencies(sim), dtype=float)
+    freqs = np.asarray(spec.frequencies(sim), dtype=float)
     dim = sim.model.nodes.dim
 
     if workers and workers > 1 and len(freqs) > 1:

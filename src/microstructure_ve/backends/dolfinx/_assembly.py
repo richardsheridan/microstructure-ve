@@ -112,11 +112,21 @@ class MaterialFields:
 
 @dataclass(eq=False)
 class Forms:
-    """Bilinear form ``a``, per-unit-strain RHS forms, unit strains, and ``sig``."""
+    """Bilinear form ``a``, the symmetric unit-strain basis, per-mode RHS forms, and ``sig``.
+
+    ``modes`` is the ordered list of symmetric macro-strain components ``(i, j)`` with
+    ``i <= j``: the ``dim`` normals first, then the off-diagonal shears -- 3 in 2D
+    ((0,0),(1,1),(0,1)), 6 in 3D. ``unit_E[k]`` is the unit tensor for ``modes[k]`` (normal:
+    a 1 on the diagonal; shear: 1 in *both* off-diagonal slots, so its coefficient is the
+    tensor strain component ``E_ij``), and ``L_forms[k]`` its RHS source. The homogenizer
+    selects the active subset per loading; building the full basis here keeps the forms
+    mode-agnostic (shear modes are ready without touching this file).
+    """
 
     a_form: Any
     L_forms: List[Any]
     unit_E: List[Any]
+    modes: List[tuple]
     sig: Callable
     v: Any
 
@@ -147,13 +157,17 @@ class Forms:
             a = ufl.inner(sig(eps(u)), eps(v)) * ufl.dx
         a_form = fem.form(a)
 
-        # unit macro normal strains E0=xx, E1=yy, (E2=zz); RHS source per unit strain
+        # full symmetric basis: normals (i,i) then shears (i,j), i<j
+        modes = [(i, i) for i in range(dim)]
+        modes += [(i, j) for i in range(dim) for j in range(i + 1, dim)]
         unit_E, L_forms = [], []
-        for i in range(dim):
+        for i, j in modes:
             Ei = np.zeros((dim, dim))
-            Ei[i, i] = 1.0
+            Ei[i, j] = 1.0
+            Ei[j, i] = 1.0  # symmetric: shear sets both slots; normal sets the diagonal once
             Em = ufl.as_matrix(Ei.tolist())
             unit_E.append(Em)
             L_forms.append(fem.form(-ufl.inner(sig(Em), eps(v)) * ufl.dx))
 
-        return cls(a_form=a_form, L_forms=L_forms, unit_E=unit_E, sig=sig, v=v)
+        return cls(a_form=a_form, L_forms=L_forms, unit_E=unit_E, modes=modes,
+                   sig=sig, v=v)

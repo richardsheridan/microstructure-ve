@@ -1,9 +1,11 @@
 """Per-frequency homogenized response: volume-averaged stress and the readODB row.
 
-Confined loading prescribes the lateral macro normal strains to 0; free-lateral floats
-them so the lateral homogenized normal stresses vanish, solved by superposition of the
-per-axis unit-strain solves (same stiffness -> the extra solves are back-substitutions).
-The emitted row mirrors readODB's columns so ``verify_pbc.compare`` can diff it.
+Generic over the imposed macro strain (a ``MacroLoading`` from ``_loading``): the driven
+strain components are imposed, any ``free`` components are solved so their conjugate
+volume-averaged stress vanishes (the generalized free-lateral condition), and the reported
+row is the reaction on the primary-axis face. Only the active modes (driven + free) are
+solved; held components contribute nothing. The emitted row mirrors readODB's columns so the
+ABAQUS-parity comparison can diff it.
 """
 from __future__ import annotations
 
@@ -15,43 +17,53 @@ from dolfinx import fem
 from ._assembly import eps
 
 
-def build_solve_one(space, forms, solver, geom, lateral_bc):
+def build_solve_one(space, forms, solver, loading):
     """Return ``solve_one(f) -> [freq, RF_Real..., RF_Imag..., U...]`` for one frequency."""
-    if lateral_bc not in ("confined", "free"):
-        raise ValueError("lateral_bc must be 'confined' or 'free'")
     dim = space.dim
-    sig, unit_E, uh = forms.sig, forms.unit_E, solver.uh
-    exx, Lx, cross_area, area = geom.exx, geom.Lx, geom.cross_area, space.area
+    area = space.area
+    sig, unit_E, modes = forms.sig, forms.unit_E, forms.modes
+    uh = solver.uh
 
-    # full sigma-bar tensor per unit strain (averaged over the cell)
+    idx_of = {comp: k for k, comp in enumerate(modes)}
+    active = list(loading.active)              # symmetric components (i<=j): driven + free
+    active_idx = [idx_of[c] for c in active]
+    a0 = loading.primary_axis
+    imposed, free = loading.imposed, loading.free
+
+    # volume-averaged stress component (m,n) responding to each active unit strain
     pairs_ij = [(m, n) for m in range(dim) for n in range(dim)]
-    sbar_forms = [
-        {ij: fem.form(sig(unit_E[j] + eps(uh[j]))[ij[0], ij[1]] * ufl.dx) for ij in pairs_ij}
-        for j in range(dim)
-    ]
+    sbar_forms = {
+        k: {ij: fem.form(sig(unit_E[k] + eps(uh[k]))[ij[0], ij[1]] * ufl.dx) for ij in pairs_ij}
+        for k in active_idx
+    }
 
     def solve_one(f):
         solver.reassemble(f)
-        nsolve = dim if lateral_bc == "free" else 1
-        sbar = []  # sbar[j][(m,n)] = unit-strain-j homogenized stress component
-        for j in range(nsolve):
-            solver.solve(j)
-            sbar.append({ij: fem.assemble_scalar(sbar_forms[j][ij]) / area for ij in pairs_ij})
+        sbar = {}
+        for k in active_idx:
+            solver.solve(k)
+            sbar[k] = {ij: fem.assemble_scalar(sbar_forms[k][ij]) / area for ij in pairs_ij}
 
-        e = np.zeros(dim, dtype=complex)
-        e[0] = exx
-        if lateral_bc == "free" and dim > 1:
-            # choose lateral normal strains so sigma-bar_ii = 0 for i = 1..dim-1
-            M = np.array([[sbar[k][(i, i)] for k in range(1, dim)] for i in range(1, dim)])
-            r = np.array([-exx * sbar[0][(i, i)] for i in range(1, dim)])
-            e[1:] = np.linalg.solve(M, r)
-        # combined homogenized x-face traction: sigma-bar_{0,n} = sum_j e_j sbar[j][(0,n)]
-        sig0 = np.array(
-            [sum(e[j] * sbar[j][(0, n)] for j in range(len(sbar))) for n in range(dim)]
-        )
-        RF = sig0 * cross_area  # x-face reaction (== readODB RF at the x drive node)
+        # macro-strain coefficient per active component: driven = imposed; free = unknown
+        c = {comp: complex(imposed.get(comp, 0.0)) for comp in active}
+        if free:
+            # choose the free components so sigma-bar at each vanishes (e.g. lateral normals
+            # under apparent-uniaxial loading)
+            M = np.array([[sbar[idx_of[fc]][(fb[0], fb[0])] for fc in free] for fb in free])
+            r = np.array([
+                -sum(c[comp] * sbar[idx_of[comp]][(fb[0], fb[0])] for comp in imposed)
+                for fb in free
+            ])
+            for comp, val in zip(free, np.linalg.solve(M, r)):
+                c[comp] = val
+
+        # combined homogenized traction on the primary-axis face: sigma-bar[:, a0]
+        sig0 = np.array([
+            sum(c[comp] * sbar[idx_of[comp]][(n, a0)] for comp in active) for n in range(dim)
+        ])
+        RF = sig0 * loading.cross_area
         U = np.zeros(dim)
-        U[0] = exx * Lx
+        U[loading.primary_dof - 1] = loading.drive_value
         return [float(f)] + list(RF.real) + list(RF.imag) + list(U)
 
     return solve_one

@@ -35,6 +35,13 @@ def default_frequencies(sim):
     return np.logspace(np.log10(dyn.f_initial), np.log10(dyn.f_final), dyn.f_count)
 
 
+def frequencies(sim):
+    """The points the sweep is evaluated at -- the single entry point used by ``run`` and the
+    ``can_run`` capability check. Currently the ``Dynamic`` sweep of the first step; a
+    ``Static``-only (elastic) sim has no Dynamic and is not yet supported (raises)."""
+    return default_frequencies(sim)
+
+
 def drive_displacement(sim):
     """The applied drive displacement amplitude (real part) from any step."""
     for step in sim.steps:

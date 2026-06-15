@@ -35,31 +35,45 @@ class MatrixDolfinxTests(unittest.TestCase):
     """Methods are attached below; green cells assert, red cells expectedFailure."""
 
     def _assert_green_invariants(self, cell, sim, rows):
-        # green cells are homogeneous x-uniaxial periodic viscoelastic: the homogenized
-        # complex response must equal the material's own E*(f) through the Lamé relation
-        # (a uniform field on one material -> homogenized stress == constitutive stress).
-        from microstructure_ve.backends.dolfinx import _spec as spec
+        # Homogeneous RVE: the FE homogenized response must equal the constitutive response
+        # for the imposed macro strain (a uniform field on one material). This is mode-
+        # agnostic -- it reads the imposed/free strain off the backend's MacroLoading and
+        # contracts it with the analytic isotropic stiffness from E*(f) -- so normal, shear,
+        # and compression cells are all checked without per-mode code.
+        from microstructure_ve.backends.dolfinx import _loading
 
         dim = cell["dim"]
-        geom = spec.Geometry.from_model(sim.model, sim)
+        loading = _loading.macro_loading(sim)
+        a0 = loading.primary_axis
         (mat,) = sim.model.materials
         nu = mat.poisson
         for row in rows:
             f = row[0]
             Estar = complex(mat.complex_modulus(np.array([f]))[0])
             lam, mu = _lame(Estar, nu)
-            sigma = (np.array(row[1:1 + dim]) + 1j * np.array(row[1 + dim:1 + 2 * dim]))
-            sigma = sigma / geom.cross_area  # complex sigma-bar normal row
-            if cell["traction"] == "confined_slip":
-                target = (lam + 2 * mu) * geom.exx
-            else:  # free -> apparent uniaxial; lateral normal stresses vanish
-                num = 4 * mu * (lam + mu) / (lam + 2 * mu) if dim == 2 else Estar
-                target = num * geom.exx
-                for k in range(1, dim):
-                    self.assertAlmostEqual(sigma[k].real, 0.0, delta=abs(target) * 1e-5)
-                    self.assertAlmostEqual(sigma[k].imag, 0.0, delta=abs(target) * 1e-5)
-            self.assertAlmostEqual(sigma[0].real, target.real, delta=abs(target) * 1e-5)
-            self.assertAlmostEqual(sigma[0].imag, target.imag, delta=abs(target) * 1e-5)
+
+            E = np.zeros((dim, dim), dtype=complex)
+            for (i, j), v in loading.imposed.items():
+                E[i, j] = v
+                E[j, i] = v
+            free_axes = [b for (b, _) in loading.free]
+            if free_axes:  # choose free normals so each conjugate normal stress vanishes
+                tr_fixed = sum(E[k, k] for k in range(dim) if k not in free_axes)
+                A = np.full((len(free_axes), len(free_axes)), lam, dtype=complex)
+                A[np.diag_indices_from(A)] += 2 * mu
+                xs = np.linalg.solve(A, np.full(len(free_axes), -lam * tr_fixed, dtype=complex))
+                for b, x in zip(free_axes, xs):
+                    E[b, b] = x
+
+            sigma = lam * np.trace(E) * np.eye(dim) + 2 * mu * E
+            RF = sigma[:, a0] * loading.cross_area
+            fe_RF = np.array(row[1:1 + dim]) + 1j * np.array(row[1 + dim:1 + 2 * dim])
+            scale = float(np.max(np.abs(RF))) or 1e-30
+            np.testing.assert_allclose(fe_RF, RF, rtol=1e-4, atol=scale * 1e-5)
+
+        U = np.array(rows[0][1 + 2 * dim:1 + 3 * dim])
+        self.assertAlmostEqual(U[loading.primary_dof - 1], loading.drive_value,
+                               delta=abs(loading.drive_value) * 1e-6 + 1e-12)
 
 
 def _make_test(cell, test_type):
