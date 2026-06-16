@@ -377,3 +377,24 @@ rows (`‖A·(uniform translation)‖ ≈ 8 ≠ 0`). A robust solver needs an **
 
 **Decision: direct LU remains the default** (exact, validated). The researched recipe is recorded in
 the session memory as the starting point if/when a large-3D iterative path is pursued.
+
+## 11. Multi-step sweep parallelism (deferred)
+
+`run(workers=N)` fans only the **single-step** frequency sweep across processes (§9); the multi-step
+path (`_run_multistep`) is serial. Extending the fan-out is **deferred** until the history-dependent
+material models (`hyperelastic_plastic`, `viscoelastic_transient`) land, because the correct
+granularity depends on physics not yet implemented.
+
+Planned approach when resumed:
+- **Backend physics classifier decides what may parallelize.** Frequency-domain / linear-elastic
+  solves are mutually independent (fan out freely); history-dependent physics is not — plasticity
+  carries hysteresis state *across* steps, transient viscoelasticity evolves internal state in time,
+  so their solves form a sequential chain. Use a safe-serial default (an exact-type table of known
+  history-free analyses/materials) so an unrecognized future material stays correct (serial).
+- **Schedule = partition into independent "units."** A unit is an in-order chunk run on one worker
+  that emits a contiguous block of output rows; parallelize across units, never split one.
+  Independent physics → one unit per solve (today's max parallelism); fully dependent → a single
+  serial unit spanning all steps. The worker protocol generalizes from "frequency → row" to
+  "unit → row-block", and `_run_multistep` folds into the unified dispatch.
+- **Tests:** parity (`workers=N` == `workers=1`) on an independent multi-step case; the
+  dependent→serial branch is correct by construction until a history-dependent spec can be built.
