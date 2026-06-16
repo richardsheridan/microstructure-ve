@@ -17,19 +17,22 @@ from abaqusConstants import NODAL
 
 
 def read_odb(name, drive_nodeset):
-    """Return a list of [frequency, RF_Real..., RF_Imag..., U_Real...] rows.
+    """Return a list of [frame_value, RF_Real..., RF_Imag..., U_Real...] rows.
 
-    One row per non-zero-frequency frame across every step; the reaction force and
-    displacement are summed over the nodes of the drive node set. Raises RuntimeError
-    if no dynamic (non-zero-frequency) frames exist.
+    ``frame_value`` is the frame's independent coordinate -- frequency (Hz) for a
+    steady-state Dynamic step, step time for a Static (and future transient/plastic) step.
+    One row per loaded frame across every step (the zero base frame -- a perturbation base
+    state, or the unloaded static initial frame -- is skipped); the reaction force and
+    displacement are summed over the nodes of the drive node set. Raises RuntimeError if
+    every frame is at frame value 0 (no loaded frames).
     """
     odb = openOdb(name + ".odb", readOnly=True)
     drive_nset = odb.rootAssembly.instances["PART-1-1"].nodeSets[drive_nodeset.upper()]
     step_results = []
     for step in odb.steps.values():
         for frame in step.frames:
-            frequency = frame.frameValue
-            if frequency == 0:
+            frame_value = frame.frameValue
+            if frame_value == 0:
                 continue
 
             U = frame.fieldOutputs["U"].getSubset(region=drive_nset, position=NODAL)
@@ -44,17 +47,17 @@ def read_odb(name, drive_nodeset):
                 RF_Real += v.data
                 if v.conjugateData is not None:  # Dynamic data only
                     RF_Imag += v.conjugateData
-            step_results.append(np.concatenate(([frequency], RF_Real, RF_Imag, U_Real)))
+            step_results.append(np.concatenate(([frame_value], RF_Real, RF_Imag, U_Real)))
 
     if not step_results:
-        raise RuntimeError("no dynamic frames in any step")
+        raise RuntimeError("no loaded frames in any step (all at frame value 0)")
     return step_results
 
 
 def write_tsv(name, rows):
     """Write the reader rows to ``<name>-reaction-force.tsv`` with a column header."""
-    ncomp = (len(rows[0]) - 1) // 3  # frequency + RF_Real + RF_Imag + U per component
-    header = ["frequency"]
+    ncomp = (len(rows[0]) - 1) // 3  # frame_value + RF_Real + RF_Imag + U per component
+    header = ["frame_value"]
     for i in range(1, 1 + ncomp):
         header.append("RF_Real" + str(i))
     for i in range(1, 1 + ncomp):

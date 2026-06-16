@@ -142,7 +142,7 @@ def _worker_solve(f):
 
 def _row_header(dim):
     return (
-        ["frequency"]
+        ["frame_value"]  # frequency (Hz) for Dynamic; step time for Static/transient
         + [f"RF_Real{i + 1}" for i in range(dim)]
         + [f"RF_Imag{i + 1}" for i in range(dim)]
         + [f"U{i + 1}" for i in range(dim)]
@@ -160,8 +160,9 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     ``DisplacementBoundaryCondition`` in ``model.bcs`` is the ABAQUS path's convention (see
     ``example.py``). The remaining kwargs are execution knobs only.
 
-    Each row is ``[frequency, RF_Real_1..d, RF_Imag_1..d, U_1..d]`` (same columns as the
-    ABAQUS readODB tsv), where ``RF`` is the complex reaction on the +x face and ``U`` the
+    Each row is ``[frame_value, RF_Real_1..d, RF_Imag_1..d, U_1..d]`` (same columns as the
+    ABAQUS readODB tsv; ``frame_value`` is the frequency for a Dynamic sweep, the step time
+    for a Static/transient step), where ``RF`` is the complex reaction on the +x face and ``U`` the
     applied corner displacement. The homogenized complex modulus along x is::
 
         E*_x(f) = (RF_Real_1 + 1j*RF_Imag_1) / (cross_area * exx)
