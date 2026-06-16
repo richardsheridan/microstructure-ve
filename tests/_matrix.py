@@ -23,7 +23,11 @@ from microstructure_ve.boundary import (
     PeriodicBoundaryCondition,
 )
 from microstructure_ve.core import ElementSet, GridElements, GridNodes, NodeSet
-from microstructure_ve.materials import Material, TabularViscoelasticMaterial
+from microstructure_ve.materials import (
+    Material,
+    PlasticMaterial,
+    TabularViscoelasticMaterial,
+)
 from microstructure_ve.steps import Dynamic, Heading, Model, Simulation, Static, Step
 from microstructure_ve.utils import load_viscoelasticity
 
@@ -44,7 +48,7 @@ MODES = (
 TRACTIONS = ("free", "no_slip", "confined_slip")
 BCS = ("periodic", "standard")
 TEST_TYPES = ("elastic", "viscoelastic", "hyperelastic_plastic", "viscoelastic_transient")
-STUB_TEST_TYPES = ("hyperelastic_plastic", "viscoelastic_transient")
+STUB_TEST_TYPES = ("viscoelastic_transient",)
 DIMS = (2, 3)
 
 # Multi-step viscoelastic test types: each maps to an ordered step pattern ("S" = a *STATIC
@@ -58,12 +62,60 @@ MULTISTEP_PATTERNS = {
 }
 MULTISTEP_CELL = {"mode": "uniaxial_x", "traction": "free", "bc": "periodic", "dim": 2}
 
+# J2-plasticity cells: ``hyperelastic_plastic`` is crossed over the whole matrix (every cell),
+# like elastic/viscoelastic. A *monotonic-hardening* table (yield rises 40->70 MPa) is path-
+# independent, so the FE return map matches ABAQUS for the single-step cells. The plastic drive
+# is much smaller than the elastic cells' DISPLACEMENT (~33% strain) so the equivalent plastic
+# strain lands *inside* the table (not on the perfectly-plastic plateau).
+PLASTIC_YIELD_STRESS = [40.0, 70.0]      # MPa, monotonic hardening
+PLASTIC_PLASTIC_STRAIN = [0.0, 0.05]
+PLASTIC_DISPLACEMENT = 5.0e-4
+
+# Multi-step *plastic* test types on one robust periodic cell. Unlike the viscoelastic patterns
+# these carry a per-step drive *scale*: a plastic Static step (``"S"``) drives ``value*scale``
+# (so a reversal/cyclic pattern exercises cross-step plastic hysteresis), while Dynamic steps
+# (``"D"``) and the first step stay at the reference (+1) drive. ``_sd``/``_ds`` exercise step
+# ordering + dispatch; ``_reversal``/``_cyclic`` exercise persistent plastic state across steps.
+PLASTIC_MULTISTEP_CELL = {"mode": "uniaxial_x", "traction": "confined_slip",
+                          "bc": "periodic", "dim": 2}
+PLASTIC_MULTISTEP_PATTERNS = {
+    "hyperelastic_plastic_sd": (("S", 1.0), ("D", 1.0)),
+    "hyperelastic_plastic_ds": (("D", 1.0), ("S", 1.0)),
+    "hyperelastic_plastic_reversal": (("S", 1.0), ("S", -1.0)),
+    "hyperelastic_plastic_cyclic": (("S", 1.0), ("S", -1.0), ("S", 1.0)),
+}
+
 _AXES = ("x", "y", "z")
 
 
 def _is_viscoelastic(test_type):
-    """True for any non-elastic, non-stub test type (uses the tabular material + Dynamic)."""
-    return test_type != "elastic" and test_type not in STUB_TEST_TYPES
+    """True for the frequency-domain (tabular material + Dynamic) test types."""
+    return test_type == "viscoelastic" or test_type in MULTISTEP_PATTERNS
+
+
+def _is_plastic(test_type):
+    """True for any J2-plasticity test type (single-step or a plastic multistep ordering)."""
+    return test_type == "hyperelastic_plastic" or test_type in PLASTIC_MULTISTEP_PATTERNS
+
+
+def _resolve_displacement(test_type, displacement):
+    """Plastic cells use their own (smaller) drive; everything else keeps ``displacement``."""
+    if _is_plastic(test_type) and displacement == DISPLACEMENT:
+        return PLASTIC_DISPLACEMENT
+    return displacement
+
+
+def _step_plan(test_type):
+    """Ordered ``[(step_kind, drive_scale)]`` for ``test_type`` ('S'=Static, 'D'=Dynamic)."""
+    if test_type in ("elastic", "hyperelastic_plastic"):
+        return [("S", 1.0)]
+    if test_type == "viscoelastic":
+        return [("D", 1.0)]
+    if test_type in MULTISTEP_PATTERNS:
+        return [(kind, 1.0) for kind in MULTISTEP_PATTERNS[test_type]]
+    if test_type in PLASTIC_MULTISTEP_PATTERNS:
+        return list(PLASTIC_MULTISTEP_PATTERNS[test_type])
+    raise ValueError(f"unknown test_type {test_type!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -96,17 +148,20 @@ def matrix_cells():
 
 
 def matrix_cases():
-    """Yield ``(cell, test_type)`` for the whole suite: every cell x {elastic, viscoelastic}
-    plus the appended multi-step viscoelastic cases on ``MULTISTEP_CELL``.
+    """Yield ``(cell, test_type)`` for the whole suite: every cell x {elastic, viscoelastic,
+    hyperelastic_plastic}, plus the appended multi-step viscoelastic cases on ``MULTISTEP_CELL``
+    and the multi-step plastic orderings on ``PLASTIC_MULTISTEP_CELL``.
 
     The single enumerator every consumer (abaqus structural / dolfinx red / parity / oracle
     generation) iterates, so the multi-step cases are added in exactly one place.
     """
     for cell in matrix_cells():
-        for test_type in ("elastic", "viscoelastic"):
+        for test_type in ("elastic", "viscoelastic", "hyperelastic_plastic"):
             yield cell, test_type
     for test_type in MULTISTEP_PATTERNS:
         yield dict(MULTISTEP_CELL), test_type
+    for test_type in PLASTIC_MULTISTEP_PATTERNS:
+        yield dict(PLASTIC_MULTISTEP_CELL), test_type
 
 
 def _validate_cell(mode, traction, bc, dim):
@@ -353,19 +408,27 @@ def _build_geometry(dim, n, scale, homogeneous, E, nu, test_type):
     elements = GridElements(nodes, type=etype)
     sets = ElementSet.from_matl_img(img)
 
+    def plastic_material(elset, youngs):
+        return PlasticMaterial(elset, density=DENSITY, poisson=nu, youngs=youngs,
+                               yield_stress=PLASTIC_YIELD_STRESS,
+                               plastic_strain=PLASTIC_PLASTIC_STRAIN)
+
     def second_phase(elset):
         if _is_viscoelastic(test_type):
             return tabular_material(elset, nu)
+        if _is_plastic(test_type):
+            return plastic_material(elset, 5.0 * E)
         return Material(elset, density=DENSITY, poisson=nu, youngs=5.0 * E)
 
     if homogeneous:
-        materials = [
-            tabular_material(sets[0], nu)
-            if _is_viscoelastic(test_type)
-            else Material(sets[0], density=DENSITY, poisson=nu, youngs=E)
-        ]
+        if _is_viscoelastic(test_type):
+            materials = [tabular_material(sets[0], nu)]
+        elif _is_plastic(test_type):
+            materials = [plastic_material(sets[0], E)]
+        else:
+            materials = [Material(sets[0], density=DENSITY, poisson=nu, youngs=E)]
     else:
-        # an elastic filler + a second (viscoelastic or stiffer-elastic) phase
+        # an elastic filler + a second (viscoelastic / plastic / stiffer-elastic) phase
         materials = [Material(sets[0], density=DENSITY, poisson=nu, youngs=E),
                      second_phase(sets[1])]
     return nodes, elements, materials
@@ -386,15 +449,11 @@ def matrix_simulation(mode, traction, bc, dim, test_type="elastic", n=None, scal
     _validate_cell(mode, traction, bc, dim)
     if test_type in STUB_TEST_TYPES:
         raise NotImplementedError(
-            f"stub: {test_type} is not implemented yet. Intended: "
-            + (
-                "*Plastic + *Hyperelastic material blocks under a Static step"
-                if test_type == "hyperelastic_plastic"
-                else "a time-domain (transient) viscoelastic step"
-            )
+            f"stub: {test_type} is not implemented yet. Intended: a time-domain "
+            "(transient) viscoelastic step"
         )
-    if test_type not in ("elastic", "viscoelastic") and test_type not in MULTISTEP_PATTERNS:
-        raise ValueError(f"unknown test_type {test_type!r}")
+    plan = _step_plan(test_type)  # raises ValueError for an unknown test_type
+    displacement = _resolve_displacement(test_type, displacement)
     if n is None:
         n = 6 if dim == 2 else 4
 
@@ -414,25 +473,22 @@ def matrix_simulation(mode, traction, bc, dim, test_type="elastic", n=None, scal
     model = Model(nodes=nodes, elements=elements, materials=materials,
                   bcs=base_bcs + baselines, nsets=extra_nsets)
 
-    drives = [DisplacementBoundaryCondition(ns, d, d, value) for ns, d in drive_specs]
+    def static_step(dr):
+        return Step(subsections=[Static()] + dr, perturbation=False)
 
-    def static_step():
-        return Step(subsections=[Static()] + drives, perturbation=False)
-
-    def dynamic_step():
+    def dynamic_step(dr):
         # sweep exactly on the tabular table nodes (see MATRIX_FREQS) -> interpolation-free
         dyn = Dynamic(f_initial=float(MATRIX_FREQS[0]), f_final=float(MATRIX_FREQS[-1]),
                       f_count=len(MATRIX_FREQS), bias=1)
-        return Step(subsections=[dyn] + drives, perturbation=True)
+        return Step(subsections=[dyn] + dr, perturbation=True)
 
+    # one step per (kind, drive_scale): a plastic reversal/cyclic pattern drives each Static step
+    # at value*scale (so plastic state accumulates/reverses across steps).
     make_step = {"S": static_step, "D": dynamic_step}
-    if test_type == "elastic":
-        pattern = ("S",)
-    elif test_type == "viscoelastic":
-        pattern = ("D",)
-    else:
-        pattern = MULTISTEP_PATTERNS[test_type]
-    steps = [make_step[kind]() for kind in pattern]
+    steps = []
+    for kind, scale in plan:
+        dr = [DisplacementBoundaryCondition(ns, d, d, value * scale) for ns, d in drive_specs]
+        steps.append(make_step[kind](dr))
 
     heading = Heading(f"matrix {dim}d {mode} {traction} {bc} {test_type}")
     return Simulation(heading=heading, model=model, steps=steps)
@@ -450,6 +506,7 @@ def cell_expectations(mode, traction, bc, dim, test_type, displacement=DISPLACEM
     """
     drives = _drive_specs(mode, dim)
     a0, dof0 = drives[0]
+    displacement = _resolve_displacement(test_type, displacement)
     value = -displacement if mode == "compression" else displacement
 
     if bc == "periodic":
@@ -483,12 +540,7 @@ def cell_expectations(mode, traction, bc, dim, test_type, displacement=DISPLACEM
                 checks.append((b.upper() + "0ALL", _normal_dof(b), fixed))
 
     step_of = {"S": ("STATIC", False), "D": ("STEADY STATE DYNAMICS", True)}
-    if test_type == "elastic":
-        pattern = ("S",)
-    elif test_type == "viscoelastic":
-        pattern = ("D",)
-    else:
-        pattern = MULTISTEP_PATTERNS[test_type]
+    pattern = [kind for kind, _scale in _step_plan(test_type)]
 
     return {
         "steps": [step_of[kind] for kind in pattern],

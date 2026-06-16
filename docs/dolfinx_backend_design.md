@@ -398,3 +398,55 @@ Planned approach when resumed:
   "unit → row-block", and `_run_multistep` folds into the unified dispatch.
 - **Tests:** parity (`workers=N` == `workers=1`) on an independent multi-step case; the
   dependent→serial branch is correct by construction until a history-dependent spec can be built.
+
+## 12. J2 plasticity (`_plastic.py`, executed 2026-06-16)
+
+Small-strain von-Mises isotropic-hardening plasticity for `Static` steps carrying a
+`PlasticMaterial`, across the full matrix: **2D plane strain + 3D**, **periodic + standard** BCs,
+all modes (normal / shear / compression, free / confined), single-step and **multi-step** orderings.
+Validated cell-by-cell against ABAQUS oracles (`tests/test_matrix_parity.py`).
+
+Design decisions and rationale:
+
+- **Return mapping in numpy at the quadrature points, not in UFL.** The FEniCSx env is a
+  *complex-scalar* PETSc build, where UFL yield conditionals (`max`, `conditional` on the Mises
+  test) are ill-defined. The radial return + algorithmic tangent are computed in real numpy over a
+  flat `(n_quad,)` batch and fed back as Quadrature-space coefficients (`sig_q`, `C_q`); the
+  assembled complex matrices carry real values. Quadrature degree 2 (4 pts/quad = CPE4, 8 pts/hex =
+  C3D8). The consistent tangent is obtained by **finite-differencing the return map** (the meshes are
+  tiny, and FD avoids hand-deriving the plane-strain/3D algorithmic modulus).
+- **Hand-rolled Newton, not `dolfinx_mpc.NonlinearProblem`/SNES.** The SNES nonlinear path is
+  documented-skipped in complex builds, and a hand-rolled loop is what lets us refresh the return-map
+  coefficients between iterations. Periodic assembly reuses the proven `dolfinx_mpc` + complex-LU
+  plumbing from `_solver.LuSolver`; the standard path uses `dolfinx.fem.petsc` with direct Dirichlet.
+- **Mean-dilatation B-bar on the constitutive strain.** J2 plastic flow is near-isochoric, so Q1/hex
+  full integration volumetrically locks. The in-plane/3D volumetric strain is replaced by its
+  per-cell mean before the return map (for rectangular Q1 the cell mean == centroid value, i.e. the
+  standard B-bar), matching the elastic path's selective-reduced-integration treatment.
+- **Multi-step history = one persistent solver per sim (realizes the §11 "sequential chain").** A
+  single `_PlasticSolver` is built per simulation; `solve()` ramps the macro strain from the
+  previously committed `E_current` to each step's target, committing `(eps_p, p, u~)` between steps,
+  so reversal/cyclic patterns accumulate the correct hysteresis. Plastic `Static` steps thus coalesce
+  into one serial unit; intervening `Dynamic` steps stay *linear* perturbations about the base state
+  (their steady-state reaction is unaffected by the plastic prestress) and use the existing
+  `solve_one`. Steps may drive different magnitudes, so the drive is parsed per step
+  (`_loading.macro_loading(sim, step=...)`).
+- **Standard (non-periodic) plasticity.** Macro loading enters as prescribed face displacements
+  (total strain = `eps(u)`, no fluctuation/macro-strain split); the reaction is the internal-force
+  vector `∫ sig:eps(v)` summed at the drive face — the nonlinear analogue of the linear path's
+  `K_full·u`. Standard cells are single-step and fully constrained (free-lateral cells are made
+  well-posed by minimal rigid-body pins), so there is no free-lateral root-find.
+- **Free-lateral (periodic) components** are solved by a small outer scalar root-find (driving the
+  conjugate volume-averaged stress to zero); confined cells skip it.
+- **Hardening table** `(plastic_strain, yield_stress)` is piecewise-linear with *constant
+  extrapolation* past the last point (perfectly plastic there), matching ABAQUS `*Plastic`.
+
+**Parity fidelity / tolerance carve-outs.** Every cell's homogenized reaction matches ABAQUS at the
+standard `RTOL=1e-4`; the periodic cells match to ~1e-8 because the reported volume-averaged stress is
+insensitive to the B-bar detail. The exceptions, documented in `test_matrix_parity.py`, are all
+*standard*-BC local quantities where the mean-dilatation plastic B-bar is slightly less faithful than
+ABAQUS's CPE4 selective-reduced-integration B-bar: 2D standard compression/shear storage RF (relaxed
+to 1e-3) and the standard plastic drive column (relaxed to 5e-3 — the *driven* displacement is exact
+to ~1e-7, only the loaded face's solved *transverse slip* drifts, ~0.3% on 3D free cells). A fully
+consistent deviatoric/volumetric-split B-bar would tighten these but is a larger refactor with risk to
+the 20 already-exact periodic cells, so it is deferred.

@@ -24,11 +24,11 @@ Build a small representative volume element (RVE) and emit an ABAQUS input deck:
 ```python
 import numpy as np
 from microstructure_ve.core import GridNodes, GridElements, ElementSet
-from microstructure_ve.materials import Material
+from microstructure_ve.materials import Material, PlasticMaterial
 from microstructure_ve.boundary import (
     PeriodicBoundaryCondition, FixedBoundaryCondition, DisplacementBoundaryCondition,
 )
-from microstructure_ve.steps import Model, Simulation, Step, Dynamic, Heading
+from microstructure_ve.steps import Model, Simulation, Step, Dynamic, Static, Heading
 from microstructure_ve.backends.abaqus import write_inp
 
 img = np.ones((4, 4), dtype=int); img[1:3, 1:3] = 0           # 0 = particle, 1 = matrix
@@ -37,7 +37,8 @@ elements = GridElements(nodes, type="CPE4")                    # 2D, full integr
 particle_elset, matrix_elset = ElementSet.from_matl_img(img)   # sorted ascending by value
 materials = [
     Material(particle_elset, density=2.65e-15, poisson=0.15, youngs=5e5),
-    Material(matrix_elset,   density=1.18e-15, poisson=0.35, youngs=3e3),
+    PlasticMaterial(matrix_elset, density=1.18e-15, poisson=0.35, youngs=3e3,
+                    yield_stress=[40.0, 25.0], plastic_strain=[0.0, 0.05]),  # softens 40->25 MPa by 5% eps_pl
 ]
 
 # corner-driven periodic BCs with an x drive
@@ -49,11 +50,16 @@ model = Model(nodes=nodes, elements=elements, materials=materials, bcs=[
     FixedBoundaryCondition(y_drive, dofs=[1]),
     DisplacementBoundaryCondition(x_drive, 1, 1, 0.0),         # baseline
 ])
-step = Step(subsections=[
+dyn_step = Step(subsections=[
     Dynamic(f_initial=1e-7, f_final=1e5, f_count=30, bias=1),
-    DisplacementBoundaryCondition(x_drive, 1, 1, 0.005),       # the macro drive
+    DisplacementBoundaryCondition(x_drive, 1, 1, 0.005),       # harmonic macro drive (perturbation)
 ], perturbation=True)
-sim = Simulation(heading=Heading("quick start"), model=model, steps=[step])
+# a general (nonlinear) static step that loads the matrix past yield into the softening branch
+static_step = Step(subsections=[
+    Static(),
+    DisplacementBoundaryCondition(x_drive, 1, 1, 4e-4),        # ~4% macro x-strain (Lx = 0.01)
+], perturbation=False)
+sim = Simulation(heading=Heading("quick start"), model=model, steps=[dyn_step, static_step])
 
 write_inp(sim, "rve.inp")          # -> ABAQUS input deck
 ```
@@ -63,9 +69,11 @@ Solve the same `sim` license-free with the DOLFINx backend (needs the FEniCSx en
 ```python
 from microstructure_ve.backends.dolfinx import run
 
-result = run(sim, lateral_bc="free")   # ndarray (n_freqs, 1 + 3*dim)
-# columns: [frequency, RF_Real_1..d, RF_Imag_1..d, U_1..d]
+result = run(sim, lateral_bc="free")   # ndarray (n_freqs + 1, 1 + 3*dim)
+# columns: [frame_value, RF_Real_1..d, RF_Imag_1..d, U_1..d]
 # homogenized modulus along x:  E*_x(f) = (RF_Real_1 + 1j*RF_Imag_1) / (cross_area * exx)
+# the trailing row is the static step (frame_value 1.0); the DOLFINx backend solves it
+# linear-elastic -- the *Plastic table is honored only by the ABAQUS deck above.
 ```
 
 `lateral_bc="free"` lets the cell contract laterally (apparent uniaxial modulus);

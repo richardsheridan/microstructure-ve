@@ -75,22 +75,30 @@ def _corner_axis(nset, dim):
     )
 
 
-def macro_loading(sim):
-    """Parse ``sim`` into a ``MacroLoading`` (raises NotImplementedError if unsupported)."""
+def macro_loading(sim, step=None):
+    """Parse ``sim`` into a ``MacroLoading`` (raises NotImplementedError if unsupported).
+
+    By default the drive is read from the first step carrying one; most multi-step cells drive
+    the same macro loading every step, so one ``MacroLoading`` describes them all. Pass ``step``
+    to parse a *specific* step's drive instead -- needed when steps drive different magnitudes
+    (e.g. a harmonic Dynamic step at one amplitude followed by a larger Static plastic load).
+    """
     model = sim.model
     nodes = model.nodes
     dim = nodes.dim
 
     L = _axis_lengths(nodes)
 
-    # The macro loading is parsed from the first step carrying a drive. Multi-step cells
-    # drive the same macro loading every step, so one MacroLoading describes them all (the
-    # per-step analysis type -- Static vs Dynamic -- is handled by the run loop).
-    drives = []
-    for step in sim.steps:
-        drives = [s for s in step.subsections if isinstance(s, DisplacementBoundaryCondition)]
-        if drives:
-            break
+    if step is not None:
+        drives = [s for s in step.subsections
+                  if isinstance(s, DisplacementBoundaryCondition)]
+    else:
+        drives = []
+        for st in sim.steps:
+            drives = [s for s in st.subsections
+                      if isinstance(s, DisplacementBoundaryCondition)]
+            if drives:
+                break
     if len(drives) == 0:
         raise ValueError("no DisplacementBoundaryCondition drive in any step")
 

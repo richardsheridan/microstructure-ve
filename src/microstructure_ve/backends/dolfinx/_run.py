@@ -199,7 +199,7 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     """
     dim = sim.model.nodes.dim
 
-    if len(list(sim.steps)) > 1:
+    if len(list(sim.steps)) > 1 or _has_plastic_static(sim):
         out = _run_multistep(sim, bbar, cancel, solver, petsc_options)
         if output_path is not None:
             np.savetxt(output_path, out, fmt="%.8e", delimiter="\t",
@@ -240,16 +240,48 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     return out
 
 
+def _has_plastic_static(sim):
+    """True iff ``sim`` carries a ``PlasticMaterial`` and a ``Static`` step (numpy-only check).
+
+    Such a Static step needs the nonlinear return-mapping solve (``_plastic``) instead of the
+    linear elastic ``solve_one``; a Dynamic step over the same materials stays linear (the
+    *Plastic table is irrelevant to a steady-state perturbation)."""
+    from microstructure_ve.materials import PlasticMaterial
+    from microstructure_ve.steps import Static
+
+    if not any(isinstance(m, PlasticMaterial) for m in sim.model.materials):
+        return False
+    return any(any(isinstance(s, Static) for s in step.subsections) for step in sim.steps)
+
+
 def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None):
     """Sweep a multi-step sim step-by-step, emitting rows in the ABAQUS reader's order (per
-    step, then per frame): a ``Static`` step contributes one elastic row (zero loss) at frame
-    value 1.0 (real ``*Elastic`` moduli), a ``Dynamic`` step one row per swept frequency
+    step, then per frame): a ``Static`` step contributes one row (zero loss) at frame value 1.0
+    -- elastic (real ``*Elastic`` moduli) or, if a ``PlasticMaterial`` is present, the nonlinear
+    J2 return-mapping solve (``_plastic``) -- and a ``Dynamic`` step one row per swept frequency
     (ascending). The FE problem (mesh/MPC/forms) is built once and reused across steps. The
     multi-step cells drive the same macro loading each step, so one solver serves all."""
+    from microstructure_ve.materials import PlasticMaterial
     from microstructure_ve.steps import Dynamic, Static
 
     solve_one, _ = build_solver(sim, bbar, cancel=cancel,
                                 petsc_options=petsc_options, solver=solver)
+    has_plastic = any(isinstance(m, PlasticMaterial) for m in sim.model.materials)
+    has_pbc = any(isinstance(bc, PeriodicBoundaryCondition) for bc in sim.model.bcs)
+    plastic_solver = None
+    if has_plastic:
+        from . import _plastic as _plastic
+        geom = spec.Geometry.from_model(sim.model, sim)
+        prob = _fe_problem(geom, sim.model, bbar)          # cached, populated by build_solver
+        # ONE persistent solver for the whole sim: plastic state (eps_p, p, u~, E_current)
+        # carries across consecutive plastic Static steps, so reversal/cyclic patterns
+        # accumulate the correct hysteresis. The standard (non-periodic) path drives face
+        # Dirichlet directly and is single-step (no macro-strain/free split).
+        if has_pbc:
+            plastic_solver = _plastic.make_solver(prob, sim.model)
+        else:
+            plastic_solver = _plastic.make_standard_solver(prob, sim.model, sim)
+
     rows = []
     for step in sim.steps:
         if cancel is not None and cancel():
@@ -259,7 +291,16 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None):
             freqs = np.logspace(np.log10(dyn.f_initial), np.log10(dyn.f_final), dyn.f_count)
             rows.extend(solve_one(float(f)) for f in freqs)
         elif spec.find(step.subsections, Static) is not None:
-            rows.append(solve_one(1.0, elastic=True))  # frame value 1.0, real *Elastic moduli
+            if has_plastic and has_pbc:
+                # parse this step's own drive (steps may drive different magnitudes -- e.g. a
+                # harmonic step then a plastic load, or a load then a reversal)
+                loading = loadingmod.macro_loading(sim, step=step)
+                n_incr = 1 if not list(loading.free) else 20
+                rows.append(plastic_solver.solve(loading, n_incr))
+            elif has_plastic:
+                rows.append(plastic_solver.solve())            # standard: BCs parsed from sim
+            else:
+                rows.append(solve_one(1.0, elastic=True))  # frame value 1.0, real *Elastic
     return np.array(rows)
 
 
