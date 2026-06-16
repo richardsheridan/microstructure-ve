@@ -11,7 +11,12 @@ import io
 import pathlib
 import unittest
 
+import numpy as np
+
 from microstructure_ve.backends.abaqus import write_inp
+from microstructure_ve.backends.abaqus._inp import emit
+from microstructure_ve.core import ElementSet
+from microstructure_ve.materials import PlasticMaterial
 
 from tests._helpers import synthetic_simulation
 
@@ -37,6 +42,22 @@ class SyntheticInpRegression(unittest.TestCase):
                 f"emission length differs: emitted {len(e_lines)} lines, "
                 f"golden {len(g_lines)} lines"
             )
+
+
+class PlasticEmission(unittest.TestCase):
+    def test_plastic_block_follows_elastic(self):
+        mat = PlasticMaterial(
+            ElementSet(3, np.array([1, 2])), density=2.65e-15, poisson=0.15,
+            youngs=5.0e5, yield_stress=[250.0, 300.0], plastic_strain=[0.0, 0.02],
+        )
+        buf = io.StringIO()
+        emit(mat, buf)
+        lines = buf.getvalue().splitlines()
+        # the *Plastic block opens immediately after the *Elastic constants line
+        ei = lines.index("*Elastic")
+        self.assertEqual(lines[ei + 2], "*Plastic")
+        self.assertEqual(lines[ei + 3], "2.500000e+02, 0.000000e+00")
+        self.assertEqual(lines[ei + 4], "3.000000e+02, 2.000000e-02")
 
 
 if __name__ == "__main__":

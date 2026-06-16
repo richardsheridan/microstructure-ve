@@ -27,6 +27,7 @@ from microstructure_ve.equations import (
 )
 from microstructure_ve.materials import (
     Material,
+    PlasticMaterial,
     PronyViscoelasticMaterial,
     TabularViscoelasticMaterial,
 )
@@ -189,6 +190,14 @@ def _emit_material_base(obj, f):
 @emit.register(Material)
 def _(obj, f):
     _emit_material_base(obj, f)
+
+
+@emit.register(PlasticMaterial)
+def _(obj, f):
+    _emit_material_base(obj, f)
+    f.write("*Plastic\n")
+    for s, e in zip(obj.yield_stress, obj.plastic_strain):
+        f.write(f"{s:.6e}, {e:.6e}\n")
 
 
 @emit.register(TabularViscoelasticMaterial)

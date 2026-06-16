@@ -11,7 +11,7 @@ import unittest
 import numpy as np
 
 from microstructure_ve.core import ElementSet
-from microstructure_ve.materials import TabularViscoelasticMaterial
+from microstructure_ve.materials import PlasticMaterial, TabularViscoelasticMaterial
 from microstructure_ve.utils import load_viscoelasticity
 
 PMMA_DATA = pathlib.Path(__file__).resolve().parent.parent / "PMMA_shifted_R10_data.txt"
@@ -101,6 +101,31 @@ class ComplexModulusInterpolation(unittest.TestCase):
         wgr_lin = wgstar.real[0] + frac * (wgstar.real[1] - wgstar.real[0])
         linear = mat.youngs * ((1.0 - wgi_lin) + 1j * wgr_lin)
         self.assertGreater(abs(got - linear), 1e-3)
+
+
+class PlasticMaterialFields(unittest.TestCase):
+    def _mat(self, yield_stress, plastic_strain):
+        return PlasticMaterial(
+            _elset(), density=2.65e-15, poisson=0.15, youngs=5.0e5,
+            yield_stress=yield_stress, plastic_strain=plastic_strain,
+        )
+
+    def test_constructs_and_round_trips_the_hardening_table(self):
+        mat = self._mat([250.0, 300.0, 360.0], [0.0, 0.02, 0.05])
+        self.assertEqual(mat.yield_stress, [250.0, 300.0, 360.0])
+        self.assertEqual(mat.plastic_strain, [0.0, 0.02, 0.05])
+
+    def test_mismatched_lengths_raise(self):
+        with self.assertRaises(ValueError):
+            self._mat([250.0, 300.0], [0.0])
+
+    def test_complex_modulus_is_frequency_flat_elastic(self):
+        # plasticity is amplitude/path-dependent, not frequency-dependent: the inherited
+        # complex_modulus query is just the elastic youngs at every frequency.
+        mat = self._mat([250.0], [0.0])
+        np.testing.assert_array_equal(
+            mat.complex_modulus(np.array([1e0, 1e3])), [5.0e5 + 0j, 5.0e5 + 0j]
+        )
 
 
 if __name__ == "__main__":

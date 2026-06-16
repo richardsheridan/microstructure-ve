@@ -47,6 +47,28 @@ class Material:
 
 
 @dataclass
+class PlasticMaterial(Material):
+    """A rate-independent, isotropic-hardening, von-Mises (J2) plastic material.
+
+    Elastic response is the inherited linear-elastic ``youngs``/``poisson`` (the ``*Elastic``
+    block); plasticity adds a hardening table of (yield stress, plastic strain) pairs that ABAQUS
+    reads as a ``*Plastic`` block. The two lists are the table columns and must be the same length.
+    Plasticity is amplitude/path-dependent, not frequency-dependent, so the frequency-domain
+    ``complex_modulus`` query is unchanged (inherited: frequency-flat ``youngs``).
+    """
+
+    yield_stress: list[float]  # MPa, von-Mises yield stress at each hardening point
+    plastic_strain: list[float]  # dimensionless equivalent plastic strain (first point usually 0)
+
+    def __post_init__(self):
+        if len(self.yield_stress) != len(self.plastic_strain):
+            raise ValueError(
+                f"yield_stress and plastic_strain must be the same length; got "
+                f"{len(self.yield_stress)} and {len(self.plastic_strain)}"
+            )
+
+
+@dataclass
 class TabularViscoelasticMaterial(Material):
     freq: np.ndarray  # excitation freq in Hz
     youngs_cplx: np.ndarray  # complex youngs modulus
