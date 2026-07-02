@@ -8,7 +8,12 @@ import unittest
 
 import numpy as np
 
-from tests._helpers import SCALE, homogeneous_simulation, synthetic_simulation
+from tests._helpers import (
+    SCALE,
+    homogeneous_simulation,
+    oracle_simulation_prony,
+    synthetic_simulation,
+)
 
 try:
     import dolfinx  # noqa: F401
@@ -155,6 +160,35 @@ class AnalyticHomogeneousTests(unittest.TestCase):
         self.assertAlmostEqual(sigma[0], E * exx, delta=abs(E * exx) * 1e-6)
         self.assertAlmostEqual(sigma[1], 0.0, delta=abs(E * exx) * 1e-6)
         self.assertAlmostEqual(sigma[2], 0.0, delta=abs(E * exx) * 1e-6)
+
+
+@needs_dolfinx
+class PronyViscoelasticBehaviorTests(unittest.TestCase):
+    """The silent-correctness fix: a Prony material must produce a frequency-varying,
+    lossy homogenized modulus -- not the flat elastic the base ``complex_modulus`` gave.
+    """
+
+    def _homogenized_Ex(self, sim):
+        from microstructure_ve.backends.dolfinx import _run as run, _spec as spec
+
+        geom = spec.Geometry.from_model(sim.model, sim)
+        out = run.run(sim)
+        dim = sim.model.nodes.dim
+        rf = out[:, 1:1 + dim] + 1j * out[:, 1 + dim:1 + 2 * dim]
+        return rf[:, 0] / (geom.cross_area * geom.exx)  # confined M ~ (lam+2mu) ∝ E*(f)
+
+    def test_prony_modulus_is_frequency_varying_and_lossy(self):
+        # wide sweep so both the relaxed and glassy plateaus are reached (tau=1s)
+        sim = oracle_simulation_prony(f_initial=1e-6, f_final=1e6, f_count=25)
+        Ex = self._homogenized_Ex(sim)
+        storage, loss = Ex.real, Ex.imag
+        # storage stiffens from relaxed toward glassy across the sweep (not flat-elastic)
+        self.assertGreater(storage[-1], 1.5 * storage[0])
+        # a genuine loss peak in the transition, vanishing at both plateaus
+        self.assertGreater(loss.max(), 0.05 * storage.mean())
+        self.assertLess(loss[0], 1e-3 * storage[0])
+        self.assertLess(loss[-1], 1e-3 * storage[-1])
+        self.assertTrue(np.all(loss >= -1e-6 * storage.mean()))
 
 
 @needs_dolfinx

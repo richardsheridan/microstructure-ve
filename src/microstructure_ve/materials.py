@@ -161,6 +161,62 @@ class TabularViscoelasticMaterial(Material):
 
 @dataclass
 class PronyViscoelasticMaterial(Material):
+    """A generalized-Maxwell (Prony series) viscoelastic material.
+
+    The inherited ``youngs``/``poisson`` are the **long-term (relaxed)** elastic constants;
+    the series adds one Maxwell arm per entry: ``shear_modulus_coefficients`` (G_i) and
+    ``bulk_modulus_coefficients`` (K_i) are the *absolute* moduli of each arm and
+    ``relaxation_times`` (tau_i) their time constants -- the three arrays share one length.
+    The ABAQUS backend emits these as a ``*Viscoelastic, frequency=PRONY`` block (ratios
+    relative to the instantaneous moduli, with ``*Elastic, moduli=LONG TERM``); the DOLFINx
+    backend consumes ``complex_modulus`` below.
+
+    Note: the DOLFINx backend assumes a **frequency-independent Poisson ratio** (as its
+    tabular path does), so it faithfully solves only constant-nu Prony materials -- those
+    whose bulk arms are proportional to the shear arms (``K_i/K_inf == G_i/G_inf``). ABAQUS
+    handles the general (frequency-dependent-nu) case.
+    """
+
     shear_modulus_coefficients: np.ndarray
     bulk_modulus_coefficients: np.ndarray
     relaxation_times: np.ndarray
+
+    def complex_modulus(self, freqs):
+        """Complex Young's modulus E*(f) of a generalized-Maxwell (Prony) solid.
+
+        Backend-neutral material query (used by the DOLFINx backend; the ABAQUS path
+        emits a ``*Viscoelastic, frequency=PRONY`` block instead). The shear and bulk
+        relaxation moduli are Prony series about the long-term (relaxed) elastic moduli
+        ``G_inf = youngs/(2(1+nu))`` and ``K_inf = youngs/(3(1-2nu))``::
+
+            G*(w) = G_inf + sum_i G_i (j w tau_i)/(1 + j w tau_i)
+
+        (same for ``K*`` with the bulk coefficients), evaluated at angular frequency
+        ``w = 2 pi f``, then recombined into ``E* = 9 K* G* / (3 K* + G*)``. With no
+        Prony terms this reduces to the frequency-flat elastic ``youngs``. Returns a
+        complex array shaped like ``freqs``.
+
+        >>> import numpy as np
+        >>> from microstructure_ve.core import ElementSet
+        >>> from microstructure_ve.materials import PronyViscoelasticMaterial
+        >>> mat = PronyViscoelasticMaterial(
+        ...     ElementSet(1, np.array([1])), density=1.0, poisson=0.3, youngs=3000.0,
+        ...     shear_modulus_coefficients=np.array([2000.0]),
+        ...     bulk_modulus_coefficients=np.array([1000.0]),
+        ...     relaxation_times=np.array([1.0]))
+        >>> E = mat.complex_modulus(np.array([1e-9, 1e9]))  # relaxed, then glassy
+        >>> np.round(E.real, 3)
+        array([3000.   , 7276.056])
+        >>> bool(np.allclose(E.imag, 0.0, atol=1e-3))  # no loss at either extreme
+        True
+        """
+        freqs = np.asarray(freqs, dtype=float)
+        w = 2 * np.pi * freqs
+        g_inf = self.youngs / (2 * (1 + self.poisson))
+        k_inf = self.youngs / (3 * (1 - 2 * self.poisson))
+        tau = np.asarray(self.relaxation_times, dtype=float)
+        jwt = 1j * w[..., np.newaxis] * tau  # (..., n_terms)
+        arms = jwt / (1 + jwt)
+        g_star = g_inf + arms @ np.asarray(self.shear_modulus_coefficients, dtype=float)
+        k_star = k_inf + arms @ np.asarray(self.bulk_modulus_coefficients, dtype=float)
+        return 9 * k_star * g_star / (3 * k_star + g_star)

@@ -15,7 +15,11 @@ from microstructure_ve.boundary import (
     PeriodicBoundaryCondition,
 )
 from microstructure_ve.core import ElementSet, GridElements, GridNodes
-from microstructure_ve.materials import Material, TabularViscoelasticMaterial
+from microstructure_ve.materials import (
+    Material,
+    PronyViscoelasticMaterial,
+    TabularViscoelasticMaterial,
+)
 from microstructure_ve.steps import Dynamic, Heading, Model, Simulation, Step
 from microstructure_ve.utils import load_viscoelasticity, periodic_assign_intph
 
@@ -201,6 +205,47 @@ def oracle_simulation_3d():
     dyn = Dynamic(f_initial=1e-7, f_final=1e5, f_count=2, bias=1)
     step = Step(subsections=[dyn, disp], perturbation=True)
     return Simulation(heading=Heading("oracle 3d elastic"), model=model, steps=[step])
+
+
+def _constant_nu_prony_material(elset, youngs=3000.0, nu=0.3, g_coeff=6000.0, tau=1.0,
+                                density=2.65e-15):
+    """A single-arm Prony material with a *frequency-independent* Poisson ratio.
+
+    The DOLFINx VE path (like the tabular one) assumes constant nu, so the bulk Prony
+    coefficient is set proportional to the shear one -- ``K_i/K_inf == G_i/G_inf`` -- which
+    keeps ``nu`` fixed across frequency. Both backends then model the identical material, so
+    their homogenized response can be compared directly (no frequency-dependent-nu gap).
+    """
+    g_inf = youngs / (2 * (1 + nu))
+    k_inf = youngs / (3 * (1 - 2 * nu))
+    return PronyViscoelasticMaterial(
+        elset, density=density, poisson=nu, youngs=youngs,
+        shear_modulus_coefficients=np.array([g_coeff]),
+        bulk_modulus_coefficients=np.array([g_coeff * k_inf / g_inf]),
+        relaxation_times=np.array([tau]),
+    )
+
+
+def oracle_simulation_prony(f_initial=1e-3, f_final=1e3, f_count=13, dim=2, nu=0.3):
+    """Homogeneous constant-nu Prony RVE, corner-driven confined-x -- the PRONY parity oracle.
+
+    ABAQUS evaluates the Prony series analytically in the frequency domain (no table to
+    interpolate), so the FE-vs-ABAQUS homogenized response should match tightly. The sweep
+    straddles the relaxation (tau=1s) so both the relaxed and glassy plateaus are exercised.
+    """
+    img = np.zeros((4,) * dim, dtype=int)
+    nodes = GridNodes.from_matl_img(img, SCALE)
+    elements = GridElements(nodes, type="CPE4" if dim == 2 else "C3D8")
+    (elset,) = ElementSet.from_matl_img(img)
+    materials = [_constant_nu_prony_material(elset, nu=nu)]
+    corner_bcs, drive = _macro_corner_bcs(nodes, "confined")
+    bcs = ([PeriodicBoundaryCondition(nodes=nodes)] + corner_bcs
+           + [DisplacementBoundaryCondition(drive, 1, 1, 0.0)])
+    model = Model(nodes=nodes, elements=elements, materials=materials, bcs=bcs)
+    disp = DisplacementBoundaryCondition(drive, 1, 1, DISPLACEMENT)
+    dyn = Dynamic(f_initial=f_initial, f_final=f_final, f_count=f_count, bias=1)
+    step = Step(subsections=[dyn, disp], perturbation=True)
+    return Simulation(heading=Heading("oracle prony"), model=model, steps=[step])
 
 
 def homogeneous_simulation(n=4, dim=2, E=3000.0, nu=0.3, scale=SCALE,

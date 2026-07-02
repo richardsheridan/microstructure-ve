@@ -11,7 +11,11 @@ import unittest
 
 import numpy as np
 
-from tests._helpers import oracle_simulation_2d, oracle_simulation_3d
+from tests._helpers import (
+    oracle_simulation_2d,
+    oracle_simulation_3d,
+    oracle_simulation_prony,
+)
 
 try:
     import dolfinx  # noqa: F401
@@ -48,6 +52,13 @@ class AbaqusParityTests(unittest.TestCase):
     def test_2d_free_lateral_cpe4(self):
         self._check(oracle_simulation_2d("free"),
                     "oracle_2d_free.tsv", dim=2, rtol=2e-3)
+
+    def test_prony_confined_cpe4(self):
+        # PRONY is evaluated analytically in the frequency domain (no table to interpolate)
+        # and the RVE is homogeneous+confined (FE stress is exact), so agreement is near
+        # machine precision (measured ~1.6e-7), like the 3D elastic case.
+        self._check(oracle_simulation_prony(),
+                    "oracle_prony_2d.tsv", dim=2, rtol=1e-5)
 
     def test_3d_elastic_c3d8_machine_precision(self):
         # elastic -> no tabular interpolation -> near machine precision

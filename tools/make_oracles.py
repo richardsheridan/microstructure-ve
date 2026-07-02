@@ -40,7 +40,11 @@ import time
 REPO = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from tests._helpers import oracle_simulation_2d, oracle_simulation_3d  # noqa: E402
+from tests._helpers import (  # noqa: E402
+    oracle_simulation_2d,
+    oracle_simulation_3d,
+    oracle_simulation_prony,
+)
 from tests._matrix import (  # noqa: E402
     cell_expectations,
     matrix_cases,
@@ -111,6 +115,8 @@ def legacy_jobs():
             DATA / "oracle_2d_free.tsv"),
         Job("oracle_3d_elastic", oracle_simulation_3d, "X1Y0Z0",
             DATA / "oracle_3d_elastic.tsv"),
+        Job("oracle_prony_2d", oracle_simulation_prony, "X1Y0",
+            DATA / "oracle_prony_2d.tsv"),
     ]
 
 

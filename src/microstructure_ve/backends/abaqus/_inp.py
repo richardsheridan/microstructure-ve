@@ -171,10 +171,16 @@ def _(obj, f):
     )
 
 
-def _emit_material_base(obj, f):
-    """The shared ``*Solid Section`` / ``*Material`` / ``*Elastic`` block."""
+def _emit_material_base(obj, f, elastic_moduli=None):
+    """The shared ``*Solid Section`` / ``*Material`` / ``*Elastic`` block.
+
+    ``elastic_moduli`` tags the ``*Elastic`` keyword (e.g. ``"LONG TERM"`` for a Prony
+    material whose ``youngs``/``poisson`` are the relaxed moduli); ``None`` emits the plain
+    ``*Elastic`` used by every other material, byte-for-byte unchanged.
+    """
     emit(obj.elset, f)
     mc = obj.elset.matl_code
+    elastic = "*Elastic" if elastic_moduli is None else f"*Elastic, moduli={elastic_moduli}"
     f.write(
         f"""\
 *Solid Section, elset=SET-{mc:d}, material=MAT-{mc:d}
@@ -182,7 +188,7 @@ def _emit_material_base(obj, f):
 *Material, name=MAT-{mc:d}
 *Density
 {obj.density:.6e}
-*Elastic
+{elastic}
 {obj.youngs:.6e}, {obj.poisson:.6e}
 """
     )
@@ -215,12 +221,16 @@ def _(obj, f):
 
 @emit.register(PronyViscoelasticMaterial)
 def _(obj, f):
-    _emit_material_base(obj, f)
-    # Abaqus wants these normalized by the instantaneous modulus
-    g_0 = obj.youngs / 3 / (1 + obj.poisson) + np.sum(obj.shear_modulus_coefficients)
-    g_ratios = obj.shear_modulus_coefficients / g_0
-    k_0 = obj.youngs / 3 / (1 - 2 * obj.poisson) + np.sum(obj.bulk_modulus_coefficients)
-    k_ratios = obj.bulk_modulus_coefficients / k_0
+    # youngs/poisson are the LONG-TERM (relaxed) moduli in this package (see Material), so tag
+    # *Elastic accordingly; ABAQUS then derives the instantaneous moduli from the Prony ratios.
+    _emit_material_base(obj, f, elastic_moduli="LONG TERM")
+    # ABAQUS PRONY ratios g_i = G_i/G_0, k_i = K_i/K_0 are relative to the INSTANTANEOUS moduli
+    # G_0 = G_inf + sum(G_i), K_0 = K_inf + sum(K_i), with the relaxed G_inf = E/(2(1+nu)) and
+    # K_inf = E/(3(1-2nu)). This matches PronyViscoelasticMaterial.complex_modulus exactly.
+    g_inf = obj.youngs / (2 * (1 + obj.poisson))
+    k_inf = obj.youngs / (3 * (1 - 2 * obj.poisson))
+    g_ratios = obj.shear_modulus_coefficients / (g_inf + np.sum(obj.shear_modulus_coefficients))
+    k_ratios = obj.bulk_modulus_coefficients / (k_inf + np.sum(obj.bulk_modulus_coefficients))
 
     f.write("*Viscoelastic, frequency=PRONY\n")
     for g, k, t in zip(g_ratios, k_ratios, obj.relaxation_times):

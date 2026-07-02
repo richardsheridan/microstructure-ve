@@ -11,7 +11,11 @@ import unittest
 import numpy as np
 
 from microstructure_ve.core import ElementSet
-from microstructure_ve.materials import PlasticMaterial, TabularViscoelasticMaterial
+from microstructure_ve.materials import (
+    PlasticMaterial,
+    PronyViscoelasticMaterial,
+    TabularViscoelasticMaterial,
+)
 from microstructure_ve.utils import load_viscoelasticity
 
 PMMA_DATA = pathlib.Path(__file__).resolve().parent.parent / "PMMA_shifted_R10_data.txt"
@@ -126,6 +130,82 @@ class PlasticMaterialFields(unittest.TestCase):
         np.testing.assert_array_equal(
             mat.complex_modulus(np.array([1e0, 1e3])), [5.0e5 + 0j, 5.0e5 + 0j]
         )
+
+
+class PronyComplexModulus(unittest.TestCase):
+    """``complex_modulus`` for a generalized-Maxwell (Prony) material.
+
+    E*(f) is built from the shear/bulk Prony series at angular frequency w = 2*pi*f and
+    recombined as E* = 9 K* G* / (3 K* + G*). These pin the physical limits (relaxed at
+    f->0, instantaneous at f->inf), the loss sign/shape, and the exact single-term value.
+    """
+
+    YOUNGS = 3000.0
+    POISSON = 0.3
+
+    def _mat(self, G=(2000.0,), K=(1000.0,), tau=(1.0,), youngs=None, poisson=None):
+        return PronyViscoelasticMaterial(
+            _elset(), density=1.18e-15,
+            poisson=self.POISSON if poisson is None else poisson,
+            youngs=self.YOUNGS if youngs is None else youngs,
+            shear_modulus_coefficients=np.array(G, dtype=float),
+            bulk_modulus_coefficients=np.array(K, dtype=float),
+            relaxation_times=np.array(tau, dtype=float),
+        )
+
+    def test_low_frequency_recovers_youngs(self):
+        # w->0: every Maxwell arm relaxes, so E* -> the long-term (elastic) youngs, real.
+        E = self._mat().complex_modulus(np.array([1e-12]))
+        np.testing.assert_allclose(E.real, [self.YOUNGS], rtol=1e-6)
+        np.testing.assert_allclose(E.imag, [0.0], atol=1e-3)
+
+    def test_high_frequency_recovers_instantaneous_modulus(self):
+        # w->inf: every arm is glassy, so G* -> G_inf+sum(G_i), K* -> K_inf+sum(K_i),
+        # and E* -> the instantaneous E_0 from those, real.
+        G, K = (2000.0,), (1000.0,)
+        mat = self._mat(G, K, (1.0,))
+        G_inf = self.YOUNGS / (2 * (1 + self.POISSON))
+        K_inf = self.YOUNGS / (3 * (1 - 2 * self.POISSON))
+        G0, K0 = G_inf + sum(G), K_inf + sum(K)
+        E0 = 9 * K0 * G0 / (3 * K0 + G0)
+        E = mat.complex_modulus(np.array([1e12]))
+        np.testing.assert_allclose(E.real, [E0], rtol=1e-6)
+        np.testing.assert_allclose(E.imag, [0.0], atol=1e-3)
+
+    def test_loss_is_nonnegative_and_vanishes_at_extremes(self):
+        freqs = np.logspace(-6, 6, 25) / (2 * np.pi)  # w spans 1e-6 .. 1e6
+        E = self._mat().complex_modulus(freqs)
+        self.assertTrue(np.all(E.imag >= -1e-9))
+        self.assertLess(E.imag[0], 1e-3 * E.real[0])
+        self.assertLess(E.imag[-1], 1e-3 * E.real[-1])
+        self.assertGreater(E.imag.max(), 1.0)  # a genuine loss peak in between
+
+    def test_single_term_peaks_near_wtau_unity(self):
+        tau = 1.0
+        freqs = np.logspace(-3, 3, 601) / (2 * np.pi)  # w spans 1e-3 .. 1e3
+        E = self._mat(G=(2000.0,), K=(1000.0,), tau=(tau,)).complex_modulus(freqs)
+        w_peak = 2 * np.pi * freqs[np.argmax(E.imag)]
+        # the E* recombination shifts the peak modestly off w*tau == 1, but keeps it O(1)
+        self.assertGreater(w_peak * tau, 0.2)
+        self.assertLess(w_peak * tau, 5.0)
+
+    def test_matches_hand_computed_single_term(self):
+        # single Maxwell arm at w*tau == 1: (j w tau)/(1 + j w tau) == j/(1+j).
+        mat = self._mat(G=(2000.0,), K=(1000.0,), tau=(1.0,))
+        f = 1.0 / (2 * np.pi)  # -> w = 1
+        G_inf = self.YOUNGS / (2 * (1 + self.POISSON))
+        K_inf = self.YOUNGS / (3 * (1 - 2 * self.POISSON))
+        frac = 1j / (1 + 1j)
+        Gs = G_inf + 2000.0 * frac
+        Ks = K_inf + 1000.0 * frac
+        expected = 9 * Ks * Gs / (3 * Ks + Gs)
+        got = mat.complex_modulus(np.array([f]))[0]
+        np.testing.assert_allclose(got, expected, rtol=1e-10)
+
+    def test_no_prony_terms_is_flat_elastic(self):
+        # no arms -> reduces to the base Material (frequency-flat elastic youngs).
+        E = self._mat(G=(), K=(), tau=()).complex_modulus(np.array([1e-3, 1e0, 1e3]))
+        np.testing.assert_allclose(E, [self.YOUNGS + 0j] * 3, rtol=1e-12)
 
 
 if __name__ == "__main__":
