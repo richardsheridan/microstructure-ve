@@ -25,12 +25,13 @@ from microstructure_ve.equations import (
     EqualityEquation,
     SequentialDifferenceEquation,
 )
-from microstructure_ve.materials import (
-    Material,
-    PlasticMaterial,
-    PronyViscoelasticMaterial,
-    TabularViscoelasticMaterial,
+from microstructure_ve.constitutive import (
+    Elastic,
+    Plastic,
+    PronyViscoelastic,
+    TabularViscoelastic,
 )
+from microstructure_ve.materials import Material
 from microstructure_ve.steps import (
     Dynamic,
     Heading,
@@ -171,15 +172,16 @@ def _(obj, f):
     )
 
 
-def _emit_material_base(obj, f, elastic_moduli=None):
+def _emit_material_base(material, response, f, elastic_moduli=None):
     """The shared ``*Solid Section`` / ``*Material`` / ``*Elastic`` block.
 
-    ``elastic_moduli`` tags the ``*Elastic`` keyword (e.g. ``"LONG TERM"`` for a Prony
-    material whose ``youngs``/``poisson`` are the relaxed moduli); ``None`` emits the plain
-    ``*Elastic`` used by every other material, byte-for-byte unchanged.
+    ``material`` supplies ``elset``/``density``; ``response`` supplies the elastic constants.
+    ``elastic_moduli`` tags the ``*Elastic`` keyword (e.g. ``"LONG TERM"`` for a Prony response
+    whose ``youngs``/``poisson`` are the relaxed moduli); ``None`` emits the plain ``*Elastic``
+    used by every other response, byte-for-byte unchanged.
     """
-    emit(obj.elset, f)
-    mc = obj.elset.matl_code
+    emit(material.elset, f)
+    mc = material.elset.matl_code
     elastic = "*Elastic" if elastic_moduli is None else f"*Elastic, moduli={elastic_moduli}"
     f.write(
         f"""\
@@ -187,53 +189,70 @@ def _emit_material_base(obj, f, elastic_moduli=None):
 1.
 *Material, name=MAT-{mc:d}
 *Density
-{obj.density:.6e}
+{material.density:.6e}
 {elastic}
-{obj.youngs:.6e}, {obj.poisson:.6e}
+{response.youngs:.6e}, {response.poisson:.6e}
 """
     )
 
 
 @emit.register(Material)
 def _(obj, f):
-    _emit_material_base(obj, f)
+    # A Material is a container; dispatch the *Elastic / *Plastic / *Viscoelastic block on the
+    # type of its constitutive response (the thing that actually varies), not the Material type.
+    emit_response(obj.response, obj, f)
 
 
-@emit.register(PlasticMaterial)
-def _(obj, f):
-    _emit_material_base(obj, f)
+@singledispatch
+def emit_response(response, material, f):
+    """Write the ``*Elastic`` (+ ``*Plastic`` / ``*Viscoelastic``) block for ``response``."""
+    raise NotImplementedError(f"no ABAQUS emitter for response {type(response).__name__}")
+
+
+@emit_response.register(Elastic)
+def _(response, material, f):
+    _emit_material_base(material, response, f)
+
+
+@emit_response.register(Plastic)
+def _(response, material, f):
+    _emit_material_base(material, response, f)
     f.write("*Plastic\n")
-    for s, e in zip(obj.yield_stress, obj.plastic_strain):
+    for s, e in zip(response.yield_stress, response.plastic_strain):
         f.write(f"{s:.6e}, {e:.6e}\n")
 
 
-@emit.register(TabularViscoelasticMaterial)
-def _(obj, f):
-    _emit_material_base(obj, f)
+@emit_response.register(TabularViscoelastic)
+def _(response, material, f):
+    _emit_material_base(material, response, f)
     f.write("*Viscoelastic, frequency=TABULAR\n")
-    wgstar, wkstar = obj.normalize_constant_nu_modulus()
-    freq = obj.apply_shift()
+    wgstar, wkstar = response.normalize_constant_nu_modulus()
+    freq = response.apply_shift()
     for wgr, wgi, wkr, wki, fr in zip(
         wgstar.real, wgstar.imag, wkstar.real, wkstar.imag, freq
     ):
         f.write(f"{wgr:.6e}, {wgi:.6e}, {wkr:.6e}, {wki:.6e}, {fr:.6e}\n")
 
 
-@emit.register(PronyViscoelasticMaterial)
-def _(obj, f):
+@emit_response.register(PronyViscoelastic)
+def _(response, material, f):
     # youngs/poisson are the LONG-TERM (relaxed) moduli in this package (see Material), so tag
     # *Elastic accordingly; ABAQUS then derives the instantaneous moduli from the Prony ratios.
-    _emit_material_base(obj, f, elastic_moduli="LONG TERM")
+    _emit_material_base(material, response, f, elastic_moduli="LONG TERM")
     # ABAQUS PRONY ratios g_i = G_i/G_0, k_i = K_i/K_0 are relative to the INSTANTANEOUS moduli
     # G_0 = G_inf + sum(G_i), K_0 = K_inf + sum(K_i), with the relaxed G_inf = E/(2(1+nu)) and
-    # K_inf = E/(3(1-2nu)). This matches PronyViscoelasticMaterial.complex_modulus exactly.
-    g_inf = obj.youngs / (2 * (1 + obj.poisson))
-    k_inf = obj.youngs / (3 * (1 - 2 * obj.poisson))
-    g_ratios = obj.shear_modulus_coefficients / (g_inf + np.sum(obj.shear_modulus_coefficients))
-    k_ratios = obj.bulk_modulus_coefficients / (k_inf + np.sum(obj.bulk_modulus_coefficients))
+    # K_inf = E/(3(1-2nu)). This matches PronyViscoelastic.complex_modulus exactly.
+    g_inf = response.youngs / (2 * (1 + response.poisson))
+    k_inf = response.youngs / (3 * (1 - 2 * response.poisson))
+    g_ratios = response.shear_modulus_coefficients / (
+        g_inf + np.sum(response.shear_modulus_coefficients)
+    )
+    k_ratios = response.bulk_modulus_coefficients / (
+        k_inf + np.sum(response.bulk_modulus_coefficients)
+    )
 
     f.write("*Viscoelastic, frequency=PRONY\n")
-    for g, k, t in zip(g_ratios, k_ratios, obj.relaxation_times):
+    for g, k, t in zip(g_ratios, k_ratios, response.relaxation_times):
         f.write(f"{g:.6e}, {k:.6e}, {t:.6e}\n")
 
 

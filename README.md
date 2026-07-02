@@ -24,7 +24,8 @@ Build a small representative volume element (RVE) and emit an ABAQUS input deck:
 ```python
 import numpy as np
 from microstructure_ve.core import GridNodes, GridElements, ElementSet
-from microstructure_ve.materials import Material, PlasticMaterial
+from microstructure_ve.materials import Material
+from microstructure_ve.constitutive import Elastic, Plastic
 from microstructure_ve.boundary import (
     PeriodicBoundaryCondition, FixedBoundaryCondition, DisplacementBoundaryCondition,
 )
@@ -36,9 +37,10 @@ nodes = GridNodes.from_matl_img(img, scale=0.0025)
 elements = GridElements(nodes, type="CPE4")                    # 2D, full integration
 particle_elset, matrix_elset = ElementSet.from_matl_img(img)   # sorted ascending by value
 materials = [
-    Material(particle_elset, density=2.65e-15, poisson=0.15, youngs=5e5),
-    PlasticMaterial(matrix_elset, density=1.18e-15, poisson=0.35, youngs=3e3,
-                    yield_stress=[40.0, 25.0], plastic_strain=[0.0, 0.05]),  # softens 40->25 MPa by 5% eps_pl
+    Material(particle_elset, density=2.65e-15, response=Elastic(poisson=0.15, youngs=5e5)),
+    Material(matrix_elset, density=1.18e-15, response=Plastic(
+        poisson=0.35, youngs=3e3,
+        yield_stress=[40.0, 25.0], plastic_strain=[0.0, 0.05])),  # softens 40->25 MPa by 5% eps_pl
 ]
 
 # corner-driven periodic BCs with an x drive

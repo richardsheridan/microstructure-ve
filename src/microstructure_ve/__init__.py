@@ -5,7 +5,8 @@ solver-neutral spec dataclasses from their submodules and the backends from
 ``microstructure_ve.backends``::
 
     from microstructure_ve.core import GridNodes, GridElements, ElementSet
-    from microstructure_ve.materials import Material, TabularViscoelasticMaterial
+    from microstructure_ve.materials import Material
+    from microstructure_ve.constitutive import Elastic, TabularViscoelastic
     from microstructure_ve.boundary import PeriodicBoundaryCondition, FixedBoundaryCondition
     from microstructure_ve.steps import Model, Simulation, Step, Dynamic, Heading
     from microstructure_ve.backends import write_inp   # ABAQUS .inp emission

@@ -22,12 +22,9 @@ from microstructure_ve.boundary import (
     FixedBoundaryCondition,
     PeriodicBoundaryCondition,
 )
+from microstructure_ve.constitutive import Elastic, Plastic, TabularViscoelastic
 from microstructure_ve.core import ElementSet, GridElements, GridNodes, NodeSet
-from microstructure_ve.materials import (
-    Material,
-    PlasticMaterial,
-    TabularViscoelasticMaterial,
-)
+from microstructure_ve.materials import Material
 from microstructure_ve.steps import Dynamic, Heading, Model, Simulation, Static, Step
 from microstructure_ve.utils import load_viscoelasticity
 
@@ -383,7 +380,7 @@ def _matrix_table_youngs():
 
 
 def tabular_material(elset, nu):
-    """A ``TabularViscoelasticMaterial`` on ``elset`` off the PMMA master curve.
+    """A ``TabularViscoelastic`` response (on ``elset``) off the PMMA master curve.
 
     Used for ``test_type="viscoelastic"`` cells so the harness exercises the genuine
     frequency-domain (``*Viscoelastic, frequency=TABULAR``) path rather than a flat
@@ -393,9 +390,12 @@ def tabular_material(elset, nu):
     ``complex_modulus`` reproduces ``youngs_cplx`` exactly at every node.
     """
     youngs_cplx = _matrix_table_youngs()
-    return TabularViscoelasticMaterial(
-        elset, density=1.18e-15, poisson=nu, youngs=float(youngs_cplx[0].real),
-        freq=_MATRIX_TABLE_FREQS, youngs_cplx=youngs_cplx,
+    return Material(
+        elset, density=1.18e-15,
+        response=TabularViscoelastic(
+            poisson=nu, youngs=float(youngs_cplx[0].real),
+            freq=_MATRIX_TABLE_FREQS, youngs_cplx=youngs_cplx,
+        ),
     )
 
 
@@ -409,16 +409,17 @@ def _build_geometry(dim, n, scale, homogeneous, E, nu, test_type):
     sets = ElementSet.from_matl_img(img)
 
     def plastic_material(elset, youngs):
-        return PlasticMaterial(elset, density=DENSITY, poisson=nu, youngs=youngs,
-                               yield_stress=PLASTIC_YIELD_STRESS,
-                               plastic_strain=PLASTIC_PLASTIC_STRAIN)
+        return Material(elset, density=DENSITY,
+                        response=Plastic(poisson=nu, youngs=youngs,
+                                         yield_stress=PLASTIC_YIELD_STRESS,
+                                         plastic_strain=PLASTIC_PLASTIC_STRAIN))
 
     def second_phase(elset):
         if _is_viscoelastic(test_type):
             return tabular_material(elset, nu)
         if _is_plastic(test_type):
             return plastic_material(elset, 5.0 * E)
-        return Material(elset, density=DENSITY, poisson=nu, youngs=5.0 * E)
+        return Material(elset, density=DENSITY, response=Elastic(poisson=nu, youngs=5.0 * E))
 
     if homogeneous:
         if _is_viscoelastic(test_type):
@@ -426,10 +427,10 @@ def _build_geometry(dim, n, scale, homogeneous, E, nu, test_type):
         elif _is_plastic(test_type):
             materials = [plastic_material(sets[0], E)]
         else:
-            materials = [Material(sets[0], density=DENSITY, poisson=nu, youngs=E)]
+            materials = [Material(sets[0], density=DENSITY, response=Elastic(poisson=nu, youngs=E))]
     else:
         # an elastic filler + a second (viscoelastic / plastic / stiffer-elastic) phase
-        materials = [Material(sets[0], density=DENSITY, poisson=nu, youngs=E),
+        materials = [Material(sets[0], density=DENSITY, response=Elastic(poisson=nu, youngs=E)),
                      second_phase(sets[1])]
     return nodes, elements, materials
 

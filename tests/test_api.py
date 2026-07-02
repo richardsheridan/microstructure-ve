@@ -14,7 +14,8 @@ import unittest
 EXPECTED = {
     "NodeSet", "GridNodes", "GridElements", "ElementSet",
     "SequentialDifferenceEquation", "EqualityEquation", "DriveEquation",
-    "Material", "TabularViscoelasticMaterial", "PronyViscoelasticMaterial",
+    "Material",
+    "Elastic", "Plastic", "TabularViscoelastic", "PronyViscoelastic",
     "BoundaryConditions", "FixedBoundaryCondition", "DisplacementBoundaryCondition",
     "PeriodicBoundaryCondition", "OldPeriodicBoundaryCondition", "validate_constraints",
     "Heading", "Static", "Dynamic", "Step", "Model", "Simulation",

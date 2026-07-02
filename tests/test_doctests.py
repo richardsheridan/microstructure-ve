@@ -15,7 +15,7 @@ import importlib
 DOCTEST_MODULES = [
     "microstructure_ve.core",
     "microstructure_ve.equations",
-    "microstructure_ve.materials",
+    "microstructure_ve.constitutive",
     "microstructure_ve.boundary",
     "microstructure_ve.steps",
     "microstructure_ve.utils",

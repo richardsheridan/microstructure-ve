@@ -19,9 +19,10 @@ from .boundary import (
     PeriodicBoundaryCondition,
     validate_constraints,
 )
+from .constitutive import Elastic, Plastic, PronyViscoelastic, TabularViscoelastic
 from .core import ElementSet, GridElements, GridNodes, NodeSet
 from .equations import DriveEquation, EqualityEquation, SequentialDifferenceEquation
-from .materials import Material, PronyViscoelasticMaterial, TabularViscoelasticMaterial
+from .materials import Material
 from .steps import Dynamic, Heading, Model, Simulation, Static, Step
 from .utils import (
     assign_intph,
@@ -37,7 +38,9 @@ __all__ = [
     # equations
     "SequentialDifferenceEquation", "EqualityEquation", "DriveEquation",
     # materials
-    "Material", "TabularViscoelasticMaterial", "PronyViscoelasticMaterial",
+    "Material",
+    # constitutive responses
+    "Elastic", "Plastic", "TabularViscoelastic", "PronyViscoelastic",
     # boundary
     "BoundaryConditions", "FixedBoundaryCondition", "DisplacementBoundaryCondition",
     "PeriodicBoundaryCondition", "OldPeriodicBoundaryCondition", "validate_constraints",

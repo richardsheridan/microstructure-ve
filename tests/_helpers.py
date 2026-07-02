@@ -14,12 +14,13 @@ from microstructure_ve.boundary import (
     FixedBoundaryCondition,
     PeriodicBoundaryCondition,
 )
-from microstructure_ve.core import ElementSet, GridElements, GridNodes
-from microstructure_ve.materials import (
-    Material,
-    PronyViscoelasticMaterial,
-    TabularViscoelasticMaterial,
+from microstructure_ve.constitutive import (
+    Elastic,
+    PronyViscoelastic,
+    TabularViscoelastic,
 )
+from microstructure_ve.core import ElementSet, GridElements, GridNodes
+from microstructure_ve.materials import Material
 from microstructure_ve.steps import Dynamic, Heading, Model, Simulation, Step
 from microstructure_ve.utils import load_viscoelasticity, periodic_assign_intph
 
@@ -64,26 +65,31 @@ def synthetic_materials(intph_img, stride=_TABLE_STRIDE):
     youngs_plat = youngs_cplx[0].real
     filler_elset, intph_elset, mat_elset = ElementSet.from_matl_img(intph_img)
     return [
-        Material(filler_elset, density=2.65e-15, youngs=5e5, poisson=0.15),
-        TabularViscoelasticMaterial(
+        Material(filler_elset, density=2.65e-15,
+                 response=Elastic(youngs=5e5, poisson=0.15)),
+        Material(
             intph_elset,
             density=1.18e-15,
-            poisson=0.35,
-            shift=-4.0,
-            youngs=youngs_plat,
-            freq=freq,
-            youngs_cplx=youngs_cplx,
-            left_broadening=1.8,
-            right_broadening=1.5,
+            response=TabularViscoelastic(
+                poisson=0.35,
+                shift=-4.0,
+                youngs=youngs_plat,
+                freq=freq,
+                youngs_cplx=youngs_cplx,
+                left_broadening=1.8,
+                right_broadening=1.5,
+            ),
         ),
-        TabularViscoelasticMaterial(
+        Material(
             mat_elset,
             density=1.18e-15,
-            poisson=0.35,
-            youngs=youngs_plat,
-            freq=freq,
-            youngs_cplx=youngs_cplx,
-            shift=-6.0,
+            response=TabularViscoelastic(
+                poisson=0.35,
+                youngs=youngs_plat,
+                freq=freq,
+                youngs_cplx=youngs_cplx,
+                shift=-6.0,
+            ),
         ),
     ]
 
@@ -191,8 +197,8 @@ def oracle_simulation_3d():
     # realistic small densities (kg/micron^3) so ABAQUS's inertia term -w^2 M stays
     # negligible vs the quasi-static FE backend even at the top sweep frequency
     materials = [
-        Material(sets[0], density=2.65e-15, poisson=0.3, youngs=1000.0),
-        Material(sets[1], density=2.65e-15, poisson=0.3, youngs=5000.0),
+        Material(sets[0], density=2.65e-15, response=Elastic(poisson=0.3, youngs=1000.0)),
+        Material(sets[1], density=2.65e-15, response=Elastic(poisson=0.3, youngs=5000.0)),
     ]
     bcs, drive = _macro_corner_bcs(nodes, "confined")
     bcs = (
@@ -218,11 +224,14 @@ def _constant_nu_prony_material(elset, youngs=3000.0, nu=0.3, g_coeff=6000.0, ta
     """
     g_inf = youngs / (2 * (1 + nu))
     k_inf = youngs / (3 * (1 - 2 * nu))
-    return PronyViscoelasticMaterial(
-        elset, density=density, poisson=nu, youngs=youngs,
-        shear_modulus_coefficients=np.array([g_coeff]),
-        bulk_modulus_coefficients=np.array([g_coeff * k_inf / g_inf]),
-        relaxation_times=np.array([tau]),
+    return Material(
+        elset, density=density,
+        response=PronyViscoelastic(
+            poisson=nu, youngs=youngs,
+            shear_modulus_coefficients=np.array([g_coeff]),
+            bulk_modulus_coefficients=np.array([g_coeff * k_inf / g_inf]),
+            relaxation_times=np.array([tau]),
+        ),
     )
 
 
@@ -265,7 +274,7 @@ def homogeneous_simulation(n=4, dim=2, E=3000.0, nu=0.3, scale=SCALE,
         etype = "CPE4" if dim == 2 else "C3D8"
     elements = GridElements(nodes, type=etype)
     (elset,) = ElementSet.from_matl_img(img)
-    materials = [Material(elset, density=2.65e-15, poisson=nu, youngs=E)]
+    materials = [Material(elset, density=2.65e-15, response=Elastic(poisson=nu, youngs=E))]
 
     corner_bcs, drive = _macro_corner_bcs(nodes, lateral_bc)
     bcs = (

@@ -1,7 +1,7 @@
 """Small-strain J2 (von Mises) isotropic-hardening plasticity for ``Static`` steps.
 
 The linear backend (``_homogenize``) superposes per-unit-macro-strain solves, valid only for a
-linear material. A ``PlasticMaterial`` is history/path-dependent, so a Static step carrying one
+linear material. A ``Plastic`` response is history/path-dependent, so a Static step carrying one
 needs a genuine nonlinear solve. This module provides it for the periodic, corner-driven
 homogenization in **2D (plane strain) and 3D**, including multi-step sims where plastic state
 persists across consecutive plastic Static steps (load/reverse hysteresis).
@@ -36,7 +36,7 @@ from dolfinx import fem
 import dolfinx.fem.petsc as fempetsc
 import dolfinx_mpc
 
-from microstructure_ve.materials import PlasticMaterial
+from microstructure_ve.constitutive import Plastic
 
 _QUAD_DEGREE = 2          # 2x2(x2) Gauss = ABAQUS CPE4 (4 pts) / C3D8 (8 pts)
 _FD_STEP = 1e-7           # finite-difference step for the (consistent) algorithmic tangent
@@ -56,9 +56,9 @@ def _hardening_table(material):
 
     A non-plastic (elastic) phase gets a single infinite yield so it never returns plastic.
     """
-    if isinstance(material, PlasticMaterial):
-        return (np.asarray(material.plastic_strain, dtype=float),
-                np.asarray(material.yield_stress, dtype=float))
+    if isinstance(material.response, Plastic):
+        return (np.asarray(material.response.plastic_strain, dtype=float),
+                np.asarray(material.response.yield_stress, dtype=float))
     return np.array([0.0]), np.array([np.inf])
 
 

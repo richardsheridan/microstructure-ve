@@ -241,15 +241,15 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
 
 
 def _has_plastic_static(sim):
-    """True iff ``sim`` carries a ``PlasticMaterial`` and a ``Static`` step (numpy-only check).
+    """True iff ``sim`` carries a ``Plastic`` response and a ``Static`` step (numpy-only check).
 
     Such a Static step needs the nonlinear return-mapping solve (``_plastic``) instead of the
     linear elastic ``solve_one``; a Dynamic step over the same materials stays linear (the
     *Plastic table is irrelevant to a steady-state perturbation)."""
-    from microstructure_ve.materials import PlasticMaterial
+    from microstructure_ve.constitutive import Plastic
     from microstructure_ve.steps import Static
 
-    if not any(isinstance(m, PlasticMaterial) for m in sim.model.materials):
+    if not any(isinstance(m.response, Plastic) for m in sim.model.materials):
         return False
     return any(any(isinstance(s, Static) for s in step.subsections) for step in sim.steps)
 
@@ -257,16 +257,16 @@ def _has_plastic_static(sim):
 def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None):
     """Sweep a multi-step sim step-by-step, emitting rows in the ABAQUS reader's order (per
     step, then per frame): a ``Static`` step contributes one row (zero loss) at frame value 1.0
-    -- elastic (real ``*Elastic`` moduli) or, if a ``PlasticMaterial`` is present, the nonlinear
+    -- elastic (real ``*Elastic`` moduli) or, if a ``Plastic`` response is present, the nonlinear
     J2 return-mapping solve (``_plastic``) -- and a ``Dynamic`` step one row per swept frequency
     (ascending). The FE problem (mesh/MPC/forms) is built once and reused across steps. The
     multi-step cells drive the same macro loading each step, so one solver serves all."""
-    from microstructure_ve.materials import PlasticMaterial
+    from microstructure_ve.constitutive import Plastic
     from microstructure_ve.steps import Dynamic, Static
 
     solve_one, _ = build_solver(sim, bbar, cancel=cancel,
                                 petsc_options=petsc_options, solver=solver)
-    has_plastic = any(isinstance(m, PlasticMaterial) for m in sim.model.materials)
+    has_plastic = any(isinstance(m.response, Plastic) for m in sim.model.materials)
     has_pbc = any(isinstance(bc, PeriodicBoundaryCondition) for bc in sim.model.bcs)
     plastic_solver = None
     if has_plastic:

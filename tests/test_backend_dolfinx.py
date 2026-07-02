@@ -46,6 +46,7 @@ class AssemblyTests(unittest.TestCase):
         # original_cell_index remap (naive order would scramble the microstructure)
         from microstructure_ve.backends.dolfinx import _assembly as assembly, _spec as spec
         from microstructure_ve.core import ElementSet, GridElements, GridNodes
+        from microstructure_ve.constitutive import Elastic
         from microstructure_ve.materials import Material
         from microstructure_ve.steps import Model
         import numpy as np
@@ -56,7 +57,8 @@ class AssemblyTests(unittest.TestCase):
         e0, e1 = ElementSet.from_matl_img(img)
         E0, E1, nu = 1000.0, 5000.0, 0.3
         model = Model(nodes=nodes, elements=elements,
-                      materials=[Material(e0, 1.0, nu, E0), Material(e1, 1.0, nu, E1)])
+                      materials=[Material(e0, 1.0, Elastic(nu, E0)),
+                                 Material(e1, 1.0, Elastic(nu, E1))])
         # build a minimal space + fields (no full solver needed)
         from microstructure_ve.backends.dolfinx._spec import Geometry
         geom = Geometry(2, SCALE, nodes.shape, [2 * SCALE, 2 * SCALE], 2 * SCALE, 2 * SCALE, 1.0)

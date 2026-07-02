@@ -74,9 +74,9 @@ def material_cell_maps(model):
     poissons, youngs, modulus_fns = [], [], []
     for mi, mat in enumerate(model.materials):
         mat_of_cell[np.asarray(mat.elset.elements) - 1] = mi
-        poissons.append(mat.poisson)
-        youngs.append(mat.youngs)  # *Elastic real modulus (used by Static steps)
-        modulus_fns.append(mat.complex_modulus)
+        poissons.append(mat.response.poisson)
+        youngs.append(mat.response.youngs)  # *Elastic real modulus (used by Static steps)
+        modulus_fns.append(mat.response.complex_modulus)
     return mat_of_cell, np.array(poissons), np.array(youngs), modulus_fns
 
 

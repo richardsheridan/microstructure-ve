@@ -6,6 +6,7 @@ import numpy as np
 
 from microstructure_ve.backends.abaqus._inp import emit
 from microstructure_ve.boundary import PeriodicBoundaryCondition
+from microstructure_ve.constitutive import Elastic
 from microstructure_ve.core import ElementSet, GridElements, GridNodes
 from microstructure_ve.materials import Material
 from microstructure_ve.steps import (
@@ -29,7 +30,7 @@ def _small_model_parts():
     nodes = GridNodes.from_matl_img(img, 1.0)
     elements = GridElements(nodes, type="CPE4R")
     (elset,) = ElementSet.from_matl_img(img)
-    materials = [Material(elset, density=1.0, poisson=0.3, youngs=1.0)]
+    materials = [Material(elset, density=1.0, response=Elastic(poisson=0.3, youngs=1.0))]
     return nodes, elements, materials
 
 

@@ -1,28 +1,24 @@
-"""Material physics queries: ``complex_modulus`` and the normalization it inverts.
+"""Constitutive-response physics queries: ``complex_modulus`` and the normalization it inverts.
 
-These are correctness assertions (not characterization): ``complex_modulus`` must be
-the exact inverse of ``normalize_constant_nu_modulus`` at the table nodes, and must
-interpolate in log10(frequency), matching how ABAQUS rebuilds E*(f) from the emitted
-``*VISCOELASTIC, FREQUENCY=TABULAR`` block.
+These are correctness assertions (not characterization): the ``TabularViscoelastic``
+response's ``complex_modulus`` must be the exact inverse of ``normalize_constant_nu_modulus``
+at the table nodes, and must interpolate in log10(frequency), matching how ABAQUS rebuilds
+E*(f) from the emitted ``*VISCOELASTIC, FREQUENCY=TABULAR`` block. They target the response
+object directly -- that is the unit under test (a ``Material`` merely binds it to an elset).
 """
 import pathlib
 import unittest
 
 import numpy as np
 
-from microstructure_ve.core import ElementSet
-from microstructure_ve.materials import (
-    PlasticMaterial,
-    PronyViscoelasticMaterial,
-    TabularViscoelasticMaterial,
+from microstructure_ve.constitutive import (
+    Plastic,
+    PronyViscoelastic,
+    TabularViscoelastic,
 )
 from microstructure_ve.utils import load_viscoelasticity
 
 PMMA_DATA = pathlib.Path(__file__).resolve().parent.parent / "PMMA_shifted_R10_data.txt"
-
-
-def _elset():
-    return ElementSet(1, np.array([1]))
 
 
 def _pmma_material(shift=0.0, left=1.0, right=1.0, youngs=None):
@@ -30,9 +26,7 @@ def _pmma_material(shift=0.0, left=1.0, right=1.0, youngs=None):
     if youngs is None:
         youngs = youngs_cplx[0].real
     return (
-        TabularViscoelasticMaterial(
-            _elset(),
-            density=1.18e-15,
+        TabularViscoelastic(
             poisson=0.35,
             youngs=youngs,
             freq=freq,
@@ -75,8 +69,8 @@ class ComplexModulusInterpolation(unittest.TestCase):
         # Two-point table: storage/loss chosen so wg-star is easy to reason about.
         freq = np.array([1.0e0, 1.0e2])
         youngs_cplx = np.array([10.0 + 1.0j, 6.0 + 3.0j])
-        mat = TabularViscoelasticMaterial(
-            _elset(), density=1.0, poisson=0.3,
+        mat = TabularViscoelastic(
+            poisson=0.3,
             youngs=youngs_cplx[0].real, freq=freq, youngs_cplx=youngs_cplx,
         )
         wgstar, _ = mat.normalize_constant_nu_modulus()
@@ -93,8 +87,8 @@ class ComplexModulusInterpolation(unittest.TestCase):
         # otherwise the "interpolate in log-frequency" contract is silently broken.
         freq = np.array([1.0e0, 1.0e2])
         youngs_cplx = np.array([10.0 + 1.0j, 6.0 + 3.0j])
-        mat = TabularViscoelasticMaterial(
-            _elset(), density=1.0, poisson=0.3,
+        mat = TabularViscoelastic(
+            poisson=0.3,
             youngs=youngs_cplx[0].real, freq=freq, youngs_cplx=youngs_cplx,
         )
         got = mat.complex_modulus(np.array([10.0]))[0]
@@ -107,10 +101,10 @@ class ComplexModulusInterpolation(unittest.TestCase):
         self.assertGreater(abs(got - linear), 1e-3)
 
 
-class PlasticMaterialFields(unittest.TestCase):
+class PlasticResponseFields(unittest.TestCase):
     def _mat(self, yield_stress, plastic_strain):
-        return PlasticMaterial(
-            _elset(), density=2.65e-15, poisson=0.15, youngs=5.0e5,
+        return Plastic(
+            poisson=0.15, youngs=5.0e5,
             yield_stress=yield_stress, plastic_strain=plastic_strain,
         )
 
@@ -124,7 +118,7 @@ class PlasticMaterialFields(unittest.TestCase):
             self._mat([250.0, 300.0], [0.0])
 
     def test_complex_modulus_is_frequency_flat_elastic(self):
-        # plasticity is amplitude/path-dependent, not frequency-dependent: the inherited
+        # plasticity is amplitude/path-dependent, not frequency-dependent: the
         # complex_modulus query is just the elastic youngs at every frequency.
         mat = self._mat([250.0], [0.0])
         np.testing.assert_array_equal(
@@ -133,7 +127,7 @@ class PlasticMaterialFields(unittest.TestCase):
 
 
 class PronyComplexModulus(unittest.TestCase):
-    """``complex_modulus`` for a generalized-Maxwell (Prony) material.
+    """``complex_modulus`` for a generalized-Maxwell (Prony) response.
 
     E*(f) is built from the shear/bulk Prony series at angular frequency w = 2*pi*f and
     recombined as E* = 9 K* G* / (3 K* + G*). These pin the physical limits (relaxed at
@@ -144,8 +138,7 @@ class PronyComplexModulus(unittest.TestCase):
     POISSON = 0.3
 
     def _mat(self, G=(2000.0,), K=(1000.0,), tau=(1.0,), youngs=None, poisson=None):
-        return PronyViscoelasticMaterial(
-            _elset(), density=1.18e-15,
+        return PronyViscoelastic(
             poisson=self.POISSON if poisson is None else poisson,
             youngs=self.YOUNGS if youngs is None else youngs,
             shear_modulus_coefficients=np.array(G, dtype=float),
@@ -203,7 +196,7 @@ class PronyComplexModulus(unittest.TestCase):
         np.testing.assert_allclose(got, expected, rtol=1e-10)
 
     def test_no_prony_terms_is_flat_elastic(self):
-        # no arms -> reduces to the base Material (frequency-flat elastic youngs).
+        # no arms -> reduces to Elastic (frequency-flat elastic youngs).
         E = self._mat(G=(), K=(), tau=()).complex_modulus(np.array([1e-3, 1e0, 1e3]))
         np.testing.assert_allclose(E, [self.YOUNGS + 0j] * 3, rtol=1e-12)
 

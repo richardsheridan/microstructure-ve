@@ -29,8 +29,9 @@ from microstructure_ve.boundary import (
     OldPeriodicBoundaryCondition,
     PeriodicBoundaryCondition,
 )
+from microstructure_ve.constitutive import Elastic, TabularViscoelastic
 from microstructure_ve.core import ElementSet, GridElements, GridNodes, NodeSet
-from microstructure_ve.materials import Material, TabularViscoelasticMaterial
+from microstructure_ve.materials import Material
 from microstructure_ve.steps import Dynamic, Heading, Model, Simulation, Step
 from microstructure_ve.utils import load_viscoelasticity, periodic_assign_intph
 
@@ -55,26 +56,31 @@ def build_common():
     filler_elset, intph_elset, mat_elset = ElementSet.from_matl_img(intph_img)
 
     materials = [
-        Material(filler_elset, density=2.65e-15, youngs=5e5, poisson=0.15),
-        TabularViscoelasticMaterial(
+        Material(filler_elset, density=2.65e-15,
+                 response=Elastic(youngs=5e5, poisson=0.15)),
+        Material(
             intph_elset,
             density=1.18e-15,
-            poisson=0.35,
-            shift=-4.0,
-            youngs=youngs_plat,
-            freq=freq,
-            youngs_cplx=youngs_cplx,
-            left_broadening=1.8,
-            right_broadening=1.5,
+            response=TabularViscoelastic(
+                poisson=0.35,
+                shift=-4.0,
+                youngs=youngs_plat,
+                freq=freq,
+                youngs_cplx=youngs_cplx,
+                left_broadening=1.8,
+                right_broadening=1.5,
+            ),
         ),
-        TabularViscoelasticMaterial(
+        Material(
             mat_elset,
             density=1.18e-15,
-            poisson=0.35,
-            youngs=youngs_plat,
-            freq=freq,
-            youngs_cplx=youngs_cplx,
-            shift=-6.0,
+            response=TabularViscoelastic(
+                poisson=0.35,
+                youngs=youngs_plat,
+                freq=freq,
+                youngs_cplx=youngs_cplx,
+                shift=-6.0,
+            ),
         ),
     ]
     dyn = Dynamic(f_initial=1e-7, f_final=1e5, f_count=30, bias=1)

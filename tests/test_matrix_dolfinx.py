@@ -41,14 +41,14 @@ class MatrixDolfinxTests(unittest.TestCase):
         # contracts it with the analytic isotropic stiffness from E*(f) -- so normal, shear,
         # and compression cells are all checked without per-mode code.
         from microstructure_ve.backends.dolfinx import _loading
-        from microstructure_ve.materials import PlasticMaterial
+        from microstructure_ve.constitutive import Plastic
 
         dim = cell["dim"]
         arr = np.asarray(rows, dtype=complex)
         self.assertEqual(arr.shape[1], 1 + 3 * dim)
         self.assertTrue(np.all(np.isfinite(arr)))
         if (cell["bc"] != "periodic" or len(list(sim.steps)) > 1
-                or any(isinstance(m, PlasticMaterial) for m in sim.model.materials)):
+                or any(isinstance(m.response, Plastic) for m in sim.model.materials)):
             # Non-periodic (standard) cells are clamped Dirichlet BVPs, not a uniform-field
             # homogenization; multi-step cells mix Static (real *Elastic) and Dynamic rows in
             # one table; a plastic cell's response is nonlinear, not the linear C:E. None fit
@@ -59,10 +59,10 @@ class MatrixDolfinxTests(unittest.TestCase):
         loading = _loading.macro_loading(sim)
         a0 = loading.primary_axis
         (mat,) = sim.model.materials
-        nu = mat.poisson
+        nu = mat.response.poisson
         for row in rows:
             f = row[0]
-            Estar = complex(mat.complex_modulus(np.array([f]))[0])
+            Estar = complex(mat.response.complex_modulus(np.array([f]))[0])
             lam, mu = _lame(Estar, nu)
 
             E = np.zeros((dim, dim), dtype=complex)

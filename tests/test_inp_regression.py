@@ -15,8 +15,9 @@ import numpy as np
 
 from microstructure_ve.backends.abaqus import write_inp
 from microstructure_ve.backends.abaqus._inp import emit
+from microstructure_ve.constitutive import Plastic
 from microstructure_ve.core import ElementSet
-from microstructure_ve.materials import PlasticMaterial
+from microstructure_ve.materials import Material
 
 from tests._helpers import synthetic_simulation
 
@@ -46,9 +47,10 @@ class SyntheticInpRegression(unittest.TestCase):
 
 class PlasticEmission(unittest.TestCase):
     def test_plastic_block_follows_elastic(self):
-        mat = PlasticMaterial(
-            ElementSet(3, np.array([1, 2])), density=2.65e-15, poisson=0.15,
-            youngs=5.0e5, yield_stress=[250.0, 300.0], plastic_strain=[0.0, 0.02],
+        mat = Material(
+            ElementSet(3, np.array([1, 2])), density=2.65e-15,
+            response=Plastic(poisson=0.15, youngs=5.0e5,
+                             yield_stress=[250.0, 300.0], plastic_strain=[0.0, 0.02]),
         )
         buf = io.StringIO()
         emit(mat, buf)
