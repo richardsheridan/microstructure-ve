@@ -3,15 +3,23 @@
 > **Status (implemented).** This is the original design + validation record. The backend now
 > lives in the package at `src/microstructure_ve/backends/dolfinx/`, split by concern into
 > private submodules: `_spec` (msve-dataclass parsing, pure numpy), `_assembly` (mesh / dof map /
-> DG0 fields / B-bar forms), `_constraints` (periodic MPC + interior pin), `_solver` (native-LU,
-> factorization reuse), `_homogenize` (σ̄ + free-lateral superposition), and `_run` (orchestration
-> + frequency-parallel sweep). The public entry point is
-> `from microstructure_ve.backends.dolfinx import run` →
-> `run(sim, freqs=…, lateral=…, bbar=…, workers=…)`. It is exercised by `tests/test_dolfinx_spec.py`
+> DG0 fields / B-bar forms), `_constraints` (periodic MPC + interior pin), `_loading` (macro-loading
+> parse: driven axis/mode + free-vs-held lateral), `_solver` (native-LU / GMRES+ILU, factorization
+> reuse), `_homogenize` (σ̄ + free-lateral superposition), `_standard` (direct-Dirichlet non-periodic
+> path), `_plastic` (J2 return-mapping, §12), and `_run` (orchestration + frequency-parallel sweep).
+> The public entry point is `from microstructure_ve.backends.dolfinx import run` →
+> `run(sim, output_path=…, bbar=…, workers=…, cancel=…, solver=…, petsc_options=…)` — no physics
+> kwargs; the problem (frequencies, driven axis/mode, free-vs-held lateral) is read from `sim`. It is
+> exercised by `tests/test_dolfinx_spec.py`
 > (msve tier) and `tests/test_backend_dolfinx.py` (dolfinx-gated: mesh/dof/MPC + the homogeneous
 > analytic stresses + frequency-parallel equivalence), with ABAQUS parity in
 > `tests/test_backend_dolfinx_parity.py`. The sections below are retained as the design rationale
 > and the measured benchmark/validation results.
+>
+> **Note on names.** The dated "executed …" sections below are a point-in-time record and refer to
+> the pre-refactor single-file layout — `dolfinx_backend.py`/`example_dolfinx.py`/`bench_dolfinx.py`
+> and a standalone `readODB.py`. Those are now the `backends/dolfinx/` subpackage above and the
+> `write_odb_reader` helper (`backends/abaqus/_read_abaqus_odb.py`); the history text is left as-is.
 
 Every load-bearing API claim below was smoke-tested on this host against the pinned stack in
 the `fenicsx` conda env (created 2026-06-12):

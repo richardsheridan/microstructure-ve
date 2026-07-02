@@ -1,8 +1,7 @@
 """Boundary conditions, periodic constraints, and over-constraint validation.
 
 Pure data plus the constraint bookkeeping (``dependent_dofs`` / ``prescribed_dofs``)
-that ``validate_constraints`` and both backends consume. Emission lives in the ABAQUS
-backend.
+that ``validate_constraints`` and both backends consume. 
 """
 from __future__ import annotations
 
@@ -63,7 +62,6 @@ class PeriodicBoundaryCondition:
     On construction it eagerly builds the constraint ``equations`` (``u_dep - u_img =
     u_refHi - u_refLo``) that couple opposite boundaries through the reference corner
     nodes (X0Y0, X1Y0, X0Y1, ...); driving those corners imposes the macro deformation.
-    The equation count is grid-size-independent (6 in 2D, 48 in 3D).
     """
 
     nodes: GridNodes
@@ -166,12 +164,13 @@ class OldPeriodicBoundaryCondition(DisplacementBoundaryCondition):
 def validate_constraints(bcs):
     """Raise ValueError if a dependent (eliminated) DOF is over-constrained.
 
-    ABAQUS eliminates the first-listed (node, dof) of every *Equation. That dependent
-    DOF must not also be (a) the dependent term of another *Equation, nor (b) prescribed
-    by a *Boundary -- either is an over-constraint ABAQUS rejects. Double-*Boundary on a
-    DOF is tolerated (a model-level baseline plus a step displacement is normal) and is
-    not flagged. Catches the error at Model construction instead of at solve time.
     """
+    # ABAQUS eliminates the first-listed (node, dof) of every *Equation. That dependent
+    # DOF must not also be (a) the dependent term of another *Equation, nor (b) prescribed
+    # by a *Boundary -- either is an over-constraint ABAQUS rejects. Double-*Boundary on a
+    # DOF is tolerated (a model-level baseline plus a step displacement is normal) and is
+    # not flagged. Catches the error at Model construction instead of at solve time.
+
     # Each constraint yields (node_inds, scalar dof) groups it eliminates / prescribes.
     def gather(attr):
         groups = []

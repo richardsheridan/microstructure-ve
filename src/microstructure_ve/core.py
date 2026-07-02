@@ -1,8 +1,7 @@
 """Geometry and mesh primitives: node grids, node sets, elements.
 
 These are pure solver-neutral data: they carry the structured-grid geometry and the
-boundary node sets. Serialization to an ABAQUS ``.inp`` lives in the ABAQUS backend
-(``microstructure_ve.backends.abaqus``), not on these classes.
+boundary node sets.
 """
 from __future__ import annotations
 
@@ -19,8 +18,10 @@ from dataclasses import dataclass, field
 
 
 Sides_3d = {
-    # Abaqus interprets this as [Z, Y, X]
-    # Remeber that np arrays are written in [H, W, D] or [Y, X, Z]
+    # Axis order [Z, Y, X]: array axis 0 is Z, the last axis is X (matching the nodeset
+    # labels below). Every backend's coordinate emission reverses the index axes --
+    # np.indices(shape)[::-1] -- so nodes come out at physical (x, y, z) and the
+    # microstructure array itself is never transposed.
     # FACES
     "X0": np.s_[1:-1, 1:-1, 0],   # Left (Face)
     "X1": np.s_[1:-1, 1:-1, -1],  # Right (Face)
@@ -112,7 +113,7 @@ class NodeSet:
 
 
 def _node_array(token):
-    """1-indexed ABAQUS node numbers for a NodeSet or a bare int, as a 1D int ndarray.
+    """1-indexed node numbers for a NodeSet or a bare int, as a 1D int ndarray.
 
     Returns a view of NodeSet.node_inds when present (np.asarray won't copy an
     existing ndarray); a 1-element array for a bare int. Used to enumerate the DOFs
@@ -180,8 +181,7 @@ class GridElements:
 
     2D types: ``CPE4R`` (plane strain, reduced integration), ``CPS4R`` (plane stress,
     reduced), ``CPE4`` (plane strain, full integration). 3D: ``C3D8R`` (reduced),
-    ``C3D8`` (full). The ``*R`` variants are reduced-integration; the full-integration
-    types exist for tight parity with a full-integration FE backend.
+    ``C3D8`` (full). The ``*R`` variants are reduced-integration.
     """
 
     nodes: GridNodes

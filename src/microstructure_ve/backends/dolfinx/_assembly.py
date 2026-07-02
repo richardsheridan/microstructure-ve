@@ -47,7 +47,8 @@ class Space:
     def build(cls, geom):
         dim, scale, shape = geom.dim, geom.scale, geom.shape
 
-        # tensor-product (basix lexicographic) cell ordering, same in 2D and 3D
+        # tensor-product (basix lexicographic) cell ordering, same in 2D and 3D.
+        # [::-1] reverses the [Z, Y, X] index axes into physical (x, y, z); see Sides_3d in core.
         coords = np.column_stack([(scale * c).ravel() for c in np.indices(shape)[::-1]])
         all_nodes = 1 + np.ravel_multi_index(np.indices(shape), shape)
         slices = list(product((np.s_[:-1], np.s_[1:]), repeat=dim))

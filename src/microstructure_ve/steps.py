@@ -1,7 +1,7 @@
 """Analysis steps and the top-level model / simulation containers (pure data).
 
 ``Model`` still runs ``validate_constraints`` at construction so the over-constraint
-guarantee holds for every backend. Emission lives in the ABAQUS backend.
+guarantee holds for every backend.
 """
 from __future__ import annotations
 
@@ -20,14 +20,14 @@ class Heading:
 
 @dataclass
 class Static:
-    """Data for an ABAQUS STATIC subsection of STEP"""
+    """Data for an static subsection of a Step"""
 
     long_term: bool = False
 
 
 @dataclass
 class Dynamic:
-    """Data for an ABAQUS STEADY STATE DYNAMICS subsection of STEP"""
+    """Data for a STEADY STATE DYNAMICS subsection of a Step"""
 
     f_initial: float
     f_final: float
@@ -37,7 +37,7 @@ class Dynamic:
 
 @dataclass
 class Step:
-    """An ABAQUS ``*STEP`` block.
+    """A block representing a change in boundary conditions to induce a response.
 
     ``subsections`` is an ordered iterable of the step's contents -- an analysis type
     (``Static`` / ``Dynamic``) together with the step-level boundary conditions

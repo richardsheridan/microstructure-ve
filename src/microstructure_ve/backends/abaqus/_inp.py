@@ -69,6 +69,7 @@ def _(obj, f):
 
 @emit.register(GridNodes)
 def _(obj, f):
+    # [::-1] reverses the [Z, Y, X] index axes into physical (x, y, z); see Sides_3d in core.
     coords = [np.ravel(c) for c in obj.scale * np.indices(obj.shape)[::-1]]
     f.write("*Node\n")
     for node_num, *p in zip(obj.node_nums, *coords):

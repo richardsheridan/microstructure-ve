@@ -69,17 +69,18 @@ Solve the same `sim` license-free with the DOLFINx backend (needs the FEniCSx en
 ```python
 from microstructure_ve.backends.dolfinx import run
 
-result = run(sim, lateral_bc="free")   # ndarray (n_freqs + 1, 1 + 3*dim)
+result = run(sim)                      # ndarray (n_freqs + 1, 1 + 3*dim)
 # columns: [frame_value, RF_Real_1..d, RF_Imag_1..d, U_1..d]
 # homogenized modulus along x:  E*_x(f) = (RF_Real_1 + 1j*RF_Imag_1) / (cross_area * exx)
 # the trailing row is the static step (frame_value 1.0); the DOLFINx backend solves it
 # linear-elastic -- the *Plastic table is honored only by the ABAQUS deck above.
 ```
 
-`lateral_bc="free"` lets the cell contract laterally (apparent uniaxial modulus);
-`"confined"` holds the lateral macro strains at zero. Pass `workers=N` to fan the
-independent per-frequency solves across processes (guard the call under
-`if __name__ == "__main__":`).
+There are no physics kwargs: everything about the problem is read from `sim`. Whether the
+lateral macro strains float (free, apparent uniaxial modulus) or are held at zero (confined)
+is inferred from the corner BCs — the quickstart above pins the drive face against shear and
+drives x only, i.e. confined. Pass `workers=N` to fan the independent per-frequency solves
+across processes (guard the call under `if __name__ == "__main__":`).
 
 ## Documentation
 

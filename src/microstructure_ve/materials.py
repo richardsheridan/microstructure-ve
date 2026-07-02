@@ -2,8 +2,7 @@
 
 The classes hold material data plus *queries* both backends consume: ``complex_modulus``
 (E*(f) for the FE backend) and the ABAQUS normalization helpers (``normalize_*``,
-``apply_shift``) the ABAQUS emitter uses to build its tabular table. Emission of the
-``*Material`` keyword blocks lives in the ABAQUS backend.
+``apply_shift``) the ABAQUS emitter uses to build its tabular table.
 """
 from __future__ import annotations
 
