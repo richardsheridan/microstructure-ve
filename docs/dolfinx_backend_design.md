@@ -368,23 +368,50 @@ ProcessPool overtakes ThreadPool.)
 5. **Direct LU is impractical at large 3D:** 24³/32³ exceed ~30 min/solve (3D LU fill-in scales
    ~quadratically in dof), motivating an iterative solver — see §10.
 
-## 10. Iterative solver investigation (not adopted)
+## 10. Iterative solver: GMRES+ILU crossover for large 3D (adopted)
 
-To make large 3D tractable an iterative solver was investigated. A deep-research pass
-(dolfinx_mpc demos + tests, PETSc docs, FEniCS discourse) gave the canonical recipe: attach the
-rigid-body **near**-nullspace (`dolfinx_mpc.utils.rigid_motions_nullspace`) and solve with **GMRES +
-GAMG** — *not* CG (the complex-symmetric frequency-domain stiffness is indefinite *and* non-Hermitian,
-so CG is invalid), monitoring the **true** residual (PETSc's default preconditioned-residual test
-falsely "converges" in one iteration on the constrained operator).
+Direct LU is the default everywhere it is feasible; an iterative solver was added for the large-3D
+regime where LU is not. **`IterativeSolver` = GMRES + ILU**, selected automatically by
+`select_solver_kind(ndof, dim)`: 2D always stays LU, and 3D switches to iterative once
+`predict_lu_seconds` (the `_solver._COST` nested-dissection model — 2D fill ~ndof^1.5, 3D ~ndof^2)
+exceeds `LU_TIME_S = 10 s`. The ILU KSP monitor also gives sub-second `cancel` latency mid-solve,
+where LU can only be cancelled between whole frequencies.
 
-Implemented, it reached ~1e-4…1e-7 vs LU for the realistic **viscoelastic** case but was **not
-robust** — it false-converges on the purely-elastic case. Root cause (verified): the rigid-body modes
-on `V` are **not** the nullspace of the dolfinx_mpc *reduced* matrix, whose slave rows are identity
-rows (`‖A·(uniform translation)‖ ≈ 8 ≠ 0`). A robust solver needs an **MPC-homogenized** nullspace
-(the shipped helper does not build one) plus convergence tuning — beyond scope here.
+**History — why ILU, not the textbook GMRES+GAMG.** A first pass tried the canonical recipe: the
+rigid-body **near**-nullspace (`dolfinx_mpc.utils.rigid_motions_nullspace`) with **GMRES + GAMG** —
+*not* CG (the complex-symmetric frequency-domain stiffness is indefinite *and* non-Hermitian, so CG is
+invalid), monitoring the **true** residual (PETSc's default preconditioned-residual test falsely
+"converges" in one iteration on the constrained operator). It reached ~1e-4…1e-7 vs LU on the
+viscoelastic case but was **not robust** — it false-converges on the purely-elastic case, because the
+rigid-body modes on `V` are **not** the nullspace of the dolfinx_mpc *reduced* matrix (slave rows are
+identity rows, `‖A·(uniform translation)‖ ≈ 8 ≠ 0`); a robust nullspace solver needs an
+MPC-homogenized nullspace the shipped helper does not build. AMG is unavailable regardless — GAMG and
+hypre are real-only and the operator is complex — so the adopted solver is plain ILU-preconditioned
+GMRES, with no nullspace.
 
-**Decision: direct LU remains the default** (exact, validated). The researched recipe is recorded in
-the session memory as the starting point if/when a large-3D iterative path is pursued.
+**Benchmark** (per-frequency `solve_one`, one BLAS thread; reproducer `tools/bench_solvers.py`,
+recorded calibration `tools/bench_solvers_results.json`):
+
+| dim | ndof | LU (s) | GMRES+ILU (s) | iter/LU | outcome |
+| --- | --- | --- | --- | --- | --- |
+| 2D | 4.8k | 0.15 | 0.25 | 1.6× | both ok |
+| 2D | 42k | 4.38 | 20.3 | 4.6× | both ok |
+| 2D | 116k | 20.0 | — | — | **iterative DIVERGED_ITS** |
+| 2D | 132k / 526k | 25 / 184 | — | — | LU ok; **iterative DNC** (1000 iters, KSP reason −3) |
+| 3D | 2.2k | 0.73 | 0.28 | 0.38× | iterative faster |
+| 3D | 6.6k | 9.70 | 1.11 | 0.11× | iterative faster |
+| 3D | 14.7k | 50.0 | 3.08 | 0.06× | iterative faster |
+
+- **2D → always LU.** Nested-dissection LU completes past 500k ndof; GMRES+ILU is 1.6–4.6× slower
+  where it converges and **diverges above ~120k ndof** (burns all iterations, DIVERGED_ITS), so `auto`
+  never picks it in 2D (a caller can still force `solver="iterative"`).
+- **3D → iterative above the LU budget.** LU fill explodes ~ndof² (50 s already at ~15k) while
+  GMRES+ILU stays cheap (16× faster at ~15k), so `auto` crosses over once `predict_lu_seconds` exceeds
+  `LU_TIME_S`.
+
+The `_COST` constants are fit to this single-core benchmark on the 2× Xeon Gold 6148 host; rerun
+`tools/bench_solvers.py` to recalibrate on other hardware. (§9's `bench_dolfinx.py` is a *separate*
+frequency-parallel benchmark — spawn/init/steady — unrelated to this LU-vs-iterative crossover.)
 
 ## 11. Multi-step sweep parallelism (deferred)
 

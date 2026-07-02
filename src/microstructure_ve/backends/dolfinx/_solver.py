@@ -8,11 +8,9 @@ Cancellation. A direct LU ``ksp.solve()`` is a single C call with no Python brea
 and no monitor callback (PREONLY+LU never fires ``setMonitor``), so it can only be
 cancelled *between* whole solves -- the orchestration loop in ``_run.py`` polls the user
 ``cancel`` predicate between frequencies. That is acceptable only while a single solve
-stays short; ``select_solver_kind`` predicts the LU time from problem size and flags
-meshes whose factorization is expected to exceed ``LU_TIME_S``. Above that crossover the
-intended home is ``IterativeSolver``, whose per-KSP-iteration monitor *can* poll the
-callback (sub-second latency); until that solver is implemented the caller falls back to
-LU with a warning.
+stays short; ``select_solver_kind`` predicts the LU time from problem size and, above
+``LU_TIME_S``, picks ``IterativeSolver`` (GMRES+ILU) instead, whose per-KSP-iteration
+monitor *can* poll the callback (sub-second latency).
 """
 from __future__ import annotations
 
@@ -29,7 +27,7 @@ class Cancelled(RuntimeError):
 # --- LU cost model -----------------------------------------------------------------
 # Sparse-direct factorization under nested dissection scales with dimension: 2D fill
 # ~O(ndof^1.5), 3D fill ~O(ndof^2). Constants calibrated to the single-core steady
-# times in bench_dolfinx.py (2x Xeon Gold 6148, one core; regenerate that benchmark to
+# times in tools/bench_solvers.py (2x Xeon Gold 6148, one core; rerun that benchmark to
 # recalibrate on other hardware). ndof = n_nodes * dim for the vector P1 space.
 LU_TIME_S = 10.0  # crossover budget: above this predicted LU time, prefer the iterative solver
 _COST = {2: (3.98e-7, 1.5), 3: (1.92e-7, 2.0)}  # dim -> (coefficient, exponent)
