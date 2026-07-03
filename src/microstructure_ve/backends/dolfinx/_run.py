@@ -20,7 +20,7 @@ from . import (
 )
 from ._solver import Cancelled, IterativeSolver, LuSolver, select_solver_kind
 
-from microstructure_ve.boundary import PeriodicBoundaryCondition
+from microstructure_ve.boundary import PeriodicBoundaryConstraint
 
 
 class _FEProblem:
@@ -83,7 +83,7 @@ def build_solver(sim, bbar=True, cancel=None, petsc_options=None, solver="auto")
     per-frequency matrix values are refilled.
 
     Dispatches on the model's boundary conditions: *Periodic* (carries a
-    ``PeriodicBoundaryCondition``) -> corner-driven homogenization via MPC; *Standard* ->
+    ``PeriodicBoundaryConstraint``) -> corner-driven homogenization via MPC; *Standard* ->
     direct-Dirichlet solve via ``_standard.build_solver`` (LU only for now).
 
     ``solver``: ``"auto"`` picks LU below the time budget and the GMRES+ILU
@@ -94,7 +94,7 @@ def build_solver(sim, bbar=True, cancel=None, petsc_options=None, solver="auto")
     if solver not in ("auto", "lu", "iterative"):
         raise ValueError(f"solver must be 'auto', 'lu' or 'iterative', got {solver!r}")
     model = sim.model
-    has_pbc = any(isinstance(bc, PeriodicBoundaryCondition) for bc in model.bcs)
+    has_pbc = any(isinstance(bc, PeriodicBoundaryConstraint) for bc in model.bcs)
     geom = spec.Geometry.from_model(model, sim)
     prob = _fe_problem(geom, model, bbar)
 
@@ -156,9 +156,9 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     Everything about the *problem* is read from ``sim`` -- there are no physics kwargs.
     The frequencies come from ``spec.frequencies``; the macro loading (driven axis/mode and
     the free vs held lateral components) is parsed from the corner BCs and the step drive(s)
-    by ``_loading.macro_loading``; the zero-amplitude baseline
-    ``DisplacementBoundaryCondition`` in ``model.bcs`` is the ABAQUS path's convention (see
-    ``example.py``). The remaining kwargs are execution knobs only.
+    by ``_loading.macro_loading``; the zero-amplitude baseline ``Prescribed`` condition
+    in ``model.bcs`` is the ABAQUS path's convention (see ``example.py``). The remaining
+    kwargs are execution knobs only.
 
     Each row is ``[frame_value, RF_Real_1..d, RF_Imag_1..d, U_1..d]`` (same columns as the
     ABAQUS readODB tsv; ``frame_value`` is the frequency for a Dynamic sweep, the step time
@@ -267,7 +267,7 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None):
     solve_one, _ = build_solver(sim, bbar, cancel=cancel,
                                 petsc_options=petsc_options, solver=solver)
     has_plastic = any(isinstance(m.response, Plastic) for m in sim.model.materials)
-    has_pbc = any(isinstance(bc, PeriodicBoundaryCondition) for bc in sim.model.bcs)
+    has_pbc = any(isinstance(bc, PeriodicBoundaryConstraint) for bc in sim.model.bcs)
     plastic_solver = None
     if has_plastic:
         from . import _plastic as _plastic

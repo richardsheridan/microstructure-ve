@@ -11,8 +11,9 @@ from dataclasses import dataclass
 import numpy as np
 
 from microstructure_ve.boundary import (
-    DisplacementBoundaryCondition,
-    PeriodicBoundaryCondition,
+    BoundaryCondition,
+    PeriodicBoundaryConstraint,
+    Prescribed,
 )
 from microstructure_ve.steps import Dynamic, Static
 
@@ -21,6 +22,14 @@ def find(items, cls):
     """First element of ``items`` that is an instance of ``cls`` (or None)."""
     for it in items:
         if isinstance(it, cls):
+            return it
+    return None
+
+
+def find_drive(items):
+    """First ``BoundaryCondition`` in ``items`` carrying a ``Prescribed`` drive (or None)."""
+    for it in items:
+        if isinstance(it, BoundaryCondition) and isinstance(it.constraint, Prescribed):
             return it
     return None
 
@@ -52,13 +61,13 @@ def frequencies(sim):
 def drive_displacement(sim):
     """The applied drive displacement amplitude (real part) from any step."""
     for step in sim.steps:
-        sub = find(step.subsections, DisplacementBoundaryCondition)
+        sub = find_drive(step.subsections)
         if sub is not None:
-            return float(np.real(sub.displacement))
+            return float(np.real(sub.constraint.value))
     raise ValueError(
-        "no drive found: put a DisplacementBoundaryCondition giving the applied x "
-        "displacement in a step's `subsections` (model-level bcs are not read for the "
-        "drive amplitude)"
+        "no drive found: put a BoundaryCondition with a Prescribed constraint giving the "
+        "applied x displacement in a step's `subsections` (model-level bcs are not read "
+        "for the drive amplitude)"
     )
 
 
@@ -130,6 +139,6 @@ class Geometry:
 
 
 def require_periodic(model):
-    """Raise unless the model carries a PeriodicBoundaryCondition (the FE backend needs it)."""
-    if find(model.bcs, PeriodicBoundaryCondition) is None:
-        raise ValueError("the dolfinx backend requires a PeriodicBoundaryCondition")
+    """Raise unless the model carries a PeriodicBoundaryConstraint (the FE backend needs it)."""
+    if find(model.bcs, PeriodicBoundaryConstraint) is None:
+        raise ValueError("the dolfinx backend requires a PeriodicBoundaryConstraint")

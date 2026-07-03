@@ -13,11 +13,10 @@ import unittest
 # from it -- so the docs and this test cannot drift out of sync.
 EXPECTED = {
     "NodeSet", "GridNodes", "GridElements", "ElementSet",
-    "SequentialDifferenceEquation", "EqualityEquation", "DriveEquation",
     "Material",
     "Elastic", "Plastic", "TabularViscoelastic", "PronyViscoelastic",
-    "BoundaryConditions", "FixedBoundaryCondition", "DisplacementBoundaryCondition",
-    "PeriodicBoundaryCondition", "OldPeriodicBoundaryCondition", "validate_constraints",
+    "BoundaryCondition", "Fixed", "Prescribed",
+    "PeriodicBoundaryConstraint", "validate_constraints",
     "Heading", "Static", "Dynamic", "Step", "Model", "Simulation",
     "in_sorted", "load_matlab_microstructure", "assign_intph",
     "periodic_assign_intph", "load_viscoelasticity",

@@ -23,8 +23,9 @@ from typing import Dict, List, Tuple
 import numpy as np
 
 from microstructure_ve.boundary import (
-    DisplacementBoundaryCondition,
-    FixedBoundaryCondition,
+    BoundaryCondition,
+    Fixed,
+    Prescribed,
 )
 from microstructure_ve.core import _node_array
 
@@ -89,49 +90,54 @@ def macro_loading(sim, step=None):
 
     L = _axis_lengths(nodes)
 
+    def _drives(items):
+        return [s for s in items
+                if isinstance(s, BoundaryCondition) and isinstance(s.constraint, Prescribed)]
+
     if step is not None:
-        drives = [s for s in step.subsections
-                  if isinstance(s, DisplacementBoundaryCondition)]
+        drives = _drives(step.subsections)
     else:
         drives = []
         for st in sim.steps:
-            drives = [s for s in st.subsections
-                      if isinstance(s, DisplacementBoundaryCondition)]
+            drives = _drives(st.subsections)
             if drives:
                 break
     if len(drives) == 0:
-        raise ValueError("no DisplacementBoundaryCondition drive in any step")
+        raise ValueError("no Prescribed drive in any step")
 
     # fixed (node, dof) for the free-lateral inference
     pinned = set()
     for bc in model.bcs:
-        if isinstance(bc, FixedBoundaryCondition):
-            for ind in np.ravel(_node_array(bc.node)):
-                for dof in bc.dofs:
+        if isinstance(bc, BoundaryCondition) and isinstance(bc.constraint, Fixed):
+            for ind in np.ravel(_node_array(bc.target)):
+                for dof in bc.constraint.dofs:
                     pinned.add((int(ind), int(dof)))
 
     imposed = {}
     driven_axes = set()
     primary = None
     for d in drives:
-        if d.first_dof != d.last_dof:
+        dofs = list(d.constraint.dofs)
+        if len(dofs) != 1:
             raise NotImplementedError("only single-dof drives are supported")
-        a = _corner_axis(d.nset, dim)
-        i = d.first_dof - 1  # 0-indexed component
+        drive_dof = int(dofs[0])
+        value = float(np.real(d.constraint.value))
+        a = _corner_axis(d.target, dim)
+        i = drive_dof - 1  # 0-indexed component
         if i != a:
             # Off-diagonal (shear) drive: R_a displaced in dof i (= b), imposing H[b,a] = γ.
             # Simple shear: conjugate H[a,b] = 0, so symmetric tensor strain E_{ab} = γ/2.
             b = i
-            gamma = float(np.real(d.displacement)) / L[a]
+            gamma = value / L[a]
             imposed[(min(a, b), max(a, b))] = gamma / 2.0
             driven_axes.add(a)
             if primary is None:
-                primary = (a, d.first_dof, float(np.real(d.displacement)))
+                primary = (a, drive_dof, value)
             continue
-        imposed[(a, a)] = float(np.real(d.displacement)) / L[a]
+        imposed[(a, a)] = value / L[a]
         driven_axes.add(a)
         if primary is None:
-            primary = (a, d.first_dof, float(np.real(d.displacement)))
+            primary = (a, drive_dof, value)
 
     a0, primary_dof, drive_value = primary
 
@@ -160,10 +166,10 @@ def _standard_can_run(sim):
     """True iff ``sim`` is a well-posed standard (non-periodic, direct-Dirichlet) problem.
 
     Requirements:
-    - Exactly one step with at least one ``DisplacementBoundaryCondition`` drive.
+    - Exactly one step with at least one ``Prescribed`` drive.
     - Frequencies resolve (Static or Dynamic subsection present).
     - Every spatial component (x, y[, z]) has at least one Dirichlet constraint (either
-      a ``FixedBoundaryCondition`` or a step drive) so the stiffness matrix is
+      a ``Fixed`` boundary condition or a step drive) so the stiffness matrix is
       non-singular.  Modes with a free lateral direction (no constraint on a transverse
       component) have a rigid-body-translation null space; those are excluded because
       the quasi-static FE solver (no mass term) does not uniquely determine the
@@ -184,7 +190,7 @@ def _standard_can_run(sim):
 
     # Need at least one step drive
     has_drive = any(
-        isinstance(s, DisplacementBoundaryCondition)
+        isinstance(s, BoundaryCondition) and isinstance(s.constraint, Prescribed)
         for s in step.subsections
     )
     if not has_drive:
@@ -194,12 +200,12 @@ def _standard_can_run(sim):
     dim = model.nodes.dim
     constrained = set()
     for bc in model.bcs:
-        if isinstance(bc, FixedBoundaryCondition):
-            for dof in bc.dofs:
+        if isinstance(bc, BoundaryCondition) and isinstance(bc.constraint, Fixed):
+            for dof in bc.constraint.dofs:
                 constrained.add(int(dof) - 1)
     for s in step.subsections:
-        if isinstance(s, DisplacementBoundaryCondition):
-            for dof in range(s.first_dof, s.last_dof + 1):
+        if isinstance(s, BoundaryCondition) and isinstance(s.constraint, Prescribed):
+            for dof in s.constraint.dofs:
                 constrained.add(int(dof) - 1)
 
     # Reject if any component is unconstrained (rigid-body translation mode)
@@ -217,14 +223,14 @@ def can_run(sim):
 
     Handles two cases:
     - *Periodic* sims: validated by ``macro_loading`` (corner-driven PBC path).
-    - *Standard* sims (no ``PeriodicBoundaryCondition``): validated by
+    - *Standard* sims (no ``PeriodicBoundaryConstraint``): validated by
       ``_standard_can_run`` (direct-Dirichlet path, well-posed cells only).
     """
-    from microstructure_ve.boundary import PeriodicBoundaryCondition
+    from microstructure_ve.boundary import PeriodicBoundaryConstraint
 
     from microstructure_ve.steps import Dynamic, Static
 
-    has_pbc = any(isinstance(bc, PeriodicBoundaryCondition) for bc in sim.model.bcs)
+    has_pbc = any(isinstance(bc, PeriodicBoundaryConstraint) for bc in sim.model.bcs)
     if has_pbc:
         try:
             macro_loading(sim)

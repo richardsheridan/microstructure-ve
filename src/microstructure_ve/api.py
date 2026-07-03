@@ -12,16 +12,14 @@ from ``microstructure_ve.backends.abaqus`` / ``microstructure_ve.backends.dolfin
 from __future__ import annotations
 
 from .boundary import (
-    BoundaryConditions,
-    DisplacementBoundaryCondition,
-    FixedBoundaryCondition,
-    OldPeriodicBoundaryCondition,
-    PeriodicBoundaryCondition,
+    BoundaryCondition,
+    Fixed,
+    PeriodicBoundaryConstraint,
+    Prescribed,
     validate_constraints,
 )
 from .constitutive import Elastic, Plastic, PronyViscoelastic, TabularViscoelastic
 from .core import ElementSet, GridElements, GridNodes, NodeSet
-from .equations import DriveEquation, EqualityEquation, SequentialDifferenceEquation
 from .materials import Material
 from .steps import Dynamic, Heading, Model, Simulation, Static, Step
 from .utils import (
@@ -35,15 +33,13 @@ from .utils import (
 __all__ = [
     # core
     "NodeSet", "GridNodes", "GridElements", "ElementSet",
-    # equations
-    "SequentialDifferenceEquation", "EqualityEquation", "DriveEquation",
     # materials
     "Material",
     # constitutive responses
     "Elastic", "Plastic", "TabularViscoelastic", "PronyViscoelastic",
     # boundary
-    "BoundaryConditions", "FixedBoundaryCondition", "DisplacementBoundaryCondition",
-    "PeriodicBoundaryCondition", "OldPeriodicBoundaryCondition", "validate_constraints",
+    "BoundaryCondition", "Fixed", "Prescribed",
+    "PeriodicBoundaryConstraint", "validate_constraints",
     # steps
     "Heading", "Static", "Dynamic", "Step", "Model", "Simulation",
     # utils

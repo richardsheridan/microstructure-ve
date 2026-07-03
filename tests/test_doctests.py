@@ -14,7 +14,6 @@ import importlib
 # is excluded (it is import-gated on odbAccess).
 DOCTEST_MODULES = [
     "microstructure_ve.core",
-    "microstructure_ve.equations",
     "microstructure_ve.constitutive",
     "microstructure_ve.boundary",
     "microstructure_ve.steps",

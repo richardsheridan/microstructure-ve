@@ -10,9 +10,10 @@ import pathlib
 import numpy as np
 
 from microstructure_ve.boundary import (
-    DisplacementBoundaryCondition,
-    FixedBoundaryCondition,
-    PeriodicBoundaryCondition,
+    BoundaryCondition,
+    Fixed,
+    PeriodicBoundaryConstraint,
+    Prescribed,
 )
 from microstructure_ve.constitutive import (
     Elastic,
@@ -113,16 +114,14 @@ def synthetic_simulation():
         elements=elements,
         materials=materials,
         bcs=[
-            PeriodicBoundaryCondition(nodes=nodes),
-            FixedBoundaryCondition(origin, dofs=[1, 2]),
-            FixedBoundaryCondition(x_macro, dofs=[2]),
-            FixedBoundaryCondition(y_macro, dofs=[1]),
-            DisplacementBoundaryCondition(x_macro, first_dof=1, last_dof=1, displacement=0.0),
+            PeriodicBoundaryConstraint(nodes=nodes),
+            BoundaryCondition(origin, Fixed(dofs=[1, 2])),
+            BoundaryCondition(x_macro, Fixed(dofs=[2])),
+            BoundaryCondition(y_macro, Fixed(dofs=[1])),
+            BoundaryCondition(x_macro, Prescribed(dofs=[1], value=0.0)),
         ],
     )
-    disp_bc = DisplacementBoundaryCondition(
-        x_macro, first_dof=1, last_dof=1, displacement=DISPLACEMENT
-    )
+    disp_bc = BoundaryCondition(x_macro, Prescribed(dofs=[1], value=DISPLACEMENT))
     dyn = Dynamic(f_initial=1e-7, f_final=1e5, f_count=30, bias=1)
     step = Step(subsections=[dyn, disp_bc], perturbation=True)
     return Simulation(
@@ -140,21 +139,22 @@ def _macro_corner_bcs(nodes, lateral_bc):
     dim = nodes.dim
     if dim == 2:
         origin, xm, ym = (nodes.nsets[k] for k in ("X0Y0", "X1Y0", "X0Y1"))
-        bcs = [FixedBoundaryCondition(origin, [1, 2]), FixedBoundaryCondition(xm, [2])]
-        bcs.append(FixedBoundaryCondition(ym, [1, 2] if lateral_bc == "confined" else [1]))
+        bcs = [BoundaryCondition(origin, Fixed([1, 2])), BoundaryCondition(xm, Fixed([2]))]
+        bcs.append(BoundaryCondition(ym, Fixed([1, 2] if lateral_bc == "confined" else [1])))
         return bcs, xm
     if dim == 3:
         origin, xm, ym, zm = (
             nodes.nsets[k] for k in ("X0Y0Z0", "X1Y0Z0", "X0Y1Z0", "X0Y0Z1")
         )
-        bcs = [FixedBoundaryCondition(origin, [1, 2, 3]), FixedBoundaryCondition(xm, [2, 3])]
+        bcs = [BoundaryCondition(origin, Fixed([1, 2, 3])), BoundaryCondition(xm, Fixed([2, 3]))]
         if lateral_bc == "confined":
             # hold both lateral normals: Eyy = Ezz = 0
-            bcs += [FixedBoundaryCondition(ym, [1, 2, 3]), FixedBoundaryCondition(zm, [1, 2, 3])]
+            bcs += [BoundaryCondition(ym, Fixed([1, 2, 3])),
+                    BoundaryCondition(zm, Fixed([1, 2, 3]))]
         else:
             # free: leave each lateral normal floating (ym dof 2, zm dof 3), pin only their
             # tangential dofs so the lateral macro normal *stresses* vanish (uniaxial stress)
-            bcs += [FixedBoundaryCondition(ym, [1, 3]), FixedBoundaryCondition(zm, [1, 2])]
+            bcs += [BoundaryCondition(ym, Fixed([1, 3])), BoundaryCondition(zm, Fixed([1, 2]))]
         return bcs, xm
     raise ValueError("unsupported dim")
 
@@ -173,12 +173,12 @@ def oracle_simulation_2d(lateral_bc="confined"):
     materials = synthetic_materials(img, stride=1)
     bcs, drive = _macro_corner_bcs(nodes, lateral_bc)
     bcs = (
-        [PeriodicBoundaryCondition(nodes=nodes)]
+        [PeriodicBoundaryConstraint(nodes=nodes)]
         + bcs
-        + [DisplacementBoundaryCondition(drive, 1, 1, 0.0)]  # zero baseline
+        + [BoundaryCondition(drive, Prescribed([1], 0.0))]  # zero baseline
     )
     model = Model(nodes=nodes, elements=elements, materials=materials, bcs=bcs)
-    disp = DisplacementBoundaryCondition(drive, 1, 1, DISPLACEMENT)
+    disp = BoundaryCondition(drive, Prescribed([1], DISPLACEMENT))
     dyn = Dynamic(f_initial=1e-7, f_final=1e5, f_count=30, bias=1)
     step = Step(subsections=[dyn, disp], perturbation=True)
     return Simulation(heading=Heading("oracle 2d " + lateral_bc), model=model, steps=[step])
@@ -202,12 +202,12 @@ def oracle_simulation_3d():
     ]
     bcs, drive = _macro_corner_bcs(nodes, "confined")
     bcs = (
-        [PeriodicBoundaryCondition(nodes=nodes)]
+        [PeriodicBoundaryConstraint(nodes=nodes)]
         + bcs
-        + [DisplacementBoundaryCondition(drive, 1, 1, 0.0)]
+        + [BoundaryCondition(drive, Prescribed([1], 0.0))]
     )
     model = Model(nodes=nodes, elements=elements, materials=materials, bcs=bcs)
-    disp = DisplacementBoundaryCondition(drive, 1, 1, DISPLACEMENT)
+    disp = BoundaryCondition(drive, Prescribed([1], DISPLACEMENT))
     dyn = Dynamic(f_initial=1e-7, f_final=1e5, f_count=2, bias=1)
     step = Step(subsections=[dyn, disp], perturbation=True)
     return Simulation(heading=Heading("oracle 3d elastic"), model=model, steps=[step])
@@ -248,10 +248,10 @@ def oracle_simulation_prony(f_initial=1e-3, f_final=1e3, f_count=13, dim=2, nu=0
     (elset,) = ElementSet.from_matl_img(img)
     materials = [_constant_nu_prony_material(elset, nu=nu)]
     corner_bcs, drive = _macro_corner_bcs(nodes, "confined")
-    bcs = ([PeriodicBoundaryCondition(nodes=nodes)] + corner_bcs
-           + [DisplacementBoundaryCondition(drive, 1, 1, 0.0)])
+    bcs = ([PeriodicBoundaryConstraint(nodes=nodes)] + corner_bcs
+           + [BoundaryCondition(drive, Prescribed([1], 0.0))])
     model = Model(nodes=nodes, elements=elements, materials=materials, bcs=bcs)
-    disp = DisplacementBoundaryCondition(drive, 1, 1, DISPLACEMENT)
+    disp = BoundaryCondition(drive, Prescribed([1], DISPLACEMENT))
     dyn = Dynamic(f_initial=f_initial, f_final=f_final, f_count=f_count, bias=1)
     step = Step(subsections=[dyn, disp], perturbation=True)
     return Simulation(heading=Heading("oracle prony"), model=model, steps=[step])
@@ -278,12 +278,12 @@ def homogeneous_simulation(n=4, dim=2, E=3000.0, nu=0.3, scale=SCALE,
 
     corner_bcs, drive = _macro_corner_bcs(nodes, lateral_bc)
     bcs = (
-        [PeriodicBoundaryCondition(nodes=nodes)]
+        [PeriodicBoundaryConstraint(nodes=nodes)]
         + corner_bcs
-        + [DisplacementBoundaryCondition(drive, 1, 1, 0.0)]  # zero baseline
+        + [BoundaryCondition(drive, Prescribed([1], 0.0))]  # zero baseline
     )
     model = Model(nodes=nodes, elements=elements, materials=materials, bcs=bcs)
-    disp_bc = DisplacementBoundaryCondition(drive, 1, 1, displacement)
+    disp_bc = BoundaryCondition(drive, Prescribed([1], displacement))
     dyn = Dynamic(f_initial=1.0, f_final=1.0, f_count=f_count, bias=1)
     step = Step(subsections=[dyn, disp_bc], perturbation=True)
     return Simulation(heading=Heading("Homogeneous RVE"), model=model, steps=[step])

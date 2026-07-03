@@ -1,7 +1,11 @@
-"""Boundary conditions, periodic constraints, and over-constraint validation.
+"""Boundary conditions, the periodic constraint, and over-constraint validation.
 
-Pure data plus the constraint bookkeeping (``dependent_dofs`` / ``prescribed_dofs``)
-that ``validate_constraints`` and both backends consume. 
+Boundary conditions are "has-a" containers mirroring ``Material``: a ``BoundaryCondition``
+binds a constraint component (``Fixed`` -- pin to zero -- or ``Prescribed`` -- drive to a
+value) to a target node or node set. The whole-grid periodic face coupling is *not* a
+per-node boundary condition, so it stands beside them as ``PeriodicBoundaryConstraint``.
+All are pure data plus the constraint bookkeeping (``dependent_dofs`` /
+``prescribed_dofs``) that ``validate_constraints`` and both backends consume.
 """
 from __future__ import annotations
 
@@ -10,58 +14,63 @@ from typing import Iterable, List, Union
 
 import numpy as np
 
-from .core import GridNodes, NodeSet, Sides_2d, _node_array
-from .equations import DriveEquation, EqualityEquation, SequentialDifferenceEquation
-
-
-class BoundaryConditions:
-    """Marker base for everything that lives in a model's ``bcs`` list."""
+from .core import GridNodes, NodeSet, _node_array
 
 
 @dataclass
-class FixedBoundaryCondition(BoundaryConditions):
-    """Pin (zero) the given DOFs of a node or node set.
+class Fixed:
+    """Pin (zero) the given DOFs of the target.
 
-    ``node`` is a NodeSet or a 1-indexed node number; ``dofs`` is an iterable of
-    1-indexed DOFs (1=x, 2=y, 3=z). E.g. pin the origin in-plane: ``dofs=[1, 2]``.
+    ``dofs`` is an iterable of 1-indexed DOFs (1=x, 2=y, 3=z). E.g. pin a node
+    in-plane: ``Fixed(dofs=[1, 2])``.
     """
 
-    node: Union[NodeSet, int]
     dofs: Iterable
 
-    def prescribed_dofs(self):
-        nodes = _node_array(self.node)
-        for dof in self.dofs:
-            yield nodes, dof
-
 
 @dataclass
-class DisplacementBoundaryCondition(BoundaryConditions):
-    """Prescribe a displacement on DOFs ``first_dof..last_dof`` (1-indexed) of ``nset``.
+class Prescribed:
+    """Prescribe displacement ``value`` on the given DOFs of the target.
 
-    Used both as the macro drive (the applied amplitude) and, with ``displacement=0``,
-    as a baseline. The DOLFINx backend reads the drive amplitude from the one placed in
-    a step's ``subsections``.
+    ``dofs`` is an iterable of 1-indexed DOFs (1=x, 2=y, 3=z). Used both as the macro
+    drive (the applied amplitude, placed in a step's ``subsections``) and, with
+    ``value=0``, as a model-level baseline (the ABAQUS initial-state convention).
     """
 
-    nset: Union[NodeSet, int]
-    first_dof: int
-    last_dof: int
-    displacement: float
+    dofs: Iterable
+    value: float
+
+
+@dataclass
+class BoundaryCondition:
+    """A ``constraint`` (``Fixed`` / ``Prescribed``) applied to a set of nodes.
+
+    ``target`` is a NodeSet or a 1-indexed node number; the physics of the constraint
+    lives on ``constraint`` (has-a, like ``Material.response``)::
+
+        BoundaryCondition(origin, Fixed(dofs=[1, 2]))
+        BoundaryCondition(drive_corner, Prescribed(dofs=[1], value=0.005))
+    """
+
+    target: Union[NodeSet, int]
+    constraint: Union[Fixed, Prescribed]
 
     def prescribed_dofs(self):
-        nodes = _node_array(self.nset)
-        for dof in range(self.first_dof, self.last_dof + 1):
+        nodes = _node_array(self.target)
+        for dof in self.constraint.dofs:
             yield nodes, dof
 
 
 @dataclass
-class PeriodicBoundaryCondition:
-    """Periodic boundary conditions tying each face to its opposite.
+class PeriodicBoundaryConstraint:
+    """Whole-grid periodic coupling tying each boundary face to its opposite.
 
-    On construction it eagerly builds the constraint ``equations`` (``u_dep - u_img =
-    u_refHi - u_refLo``) that couple opposite boundaries through the reference corner
-    nodes (X0Y0, X1Y0, X0Y1, ...); driving those corners imposes the macro deformation.
+    Not a per-node boundary condition -- it couples every boundary node pair
+    (``u_dep - u_img = u_refHi - u_refLo``) through the reference corner nodes
+    (X0Y0, X1Y0, X0Y1, ...); driving those corners imposes the macro deformation.
+    On construction it builds ``node_pairs`` -- ``[dependent, image, refHi, refLo]``
+    per boundary group -- which the ABAQUS backend emits as ``*Equation`` blocks
+    (the DOLFINx backend applies its own equivalent MPC pairing).
     """
 
     nodes: GridNodes
@@ -109,56 +118,21 @@ class PeriodicBoundaryCondition:
         else:
             raise ValueError('GridNodes has illegal number of dimensions', self.nodes.dim)
 
-        # Build the equations eagerly so dependents are enumerable before to_inp
-        # (and so SequentialDifferenceEquation's node-count check runs at construction).
-        # Count is len(node_pairs) * dim (6 in 2D, 48 in 3D) -- independent of grid size.
-        self.equations: List[SequentialDifferenceEquation] = [
-            SequentialDifferenceEquation(node_pair, i + 1)
-            for node_pair in self.node_pairs
-            for i in range(self.nodes.dim)
-        ]
+        # The dependent and image faces pair node-by-node; check at construction so a
+        # broken pairing table fails here, not at emission/solve time.
+        for dep, img, *_ in self.node_pairs:
+            n0, n1 = len(dep.node_inds), len(img.node_inds)
+            if n0 != n1:
+                raise ValueError(
+                    "paired node sets must have equal node counts", n0, n1
+                )
 
     def dependent_dofs(self):
-        for eq in self.equations:
-            yield from eq.dependent_dofs()
-
-
-@dataclass
-class OldPeriodicBoundaryCondition(DisplacementBoundaryCondition):
-    nodes: GridNodes
-
-    def __post_init__(self):
-        def make_set(name):
-            return NodeSet.from_slice(name, Sides_2d[name], self.nodes)
-
-        ndim = len(self.nodes.shape)
-        self.driven_nset = NodeSet.from_slice("X1ALL", np.s_[:, -1], self.nodes)
-        self.node_pairs: List[List[NodeSet]] = [
-            [NodeSet.from_slice("X0ALL", np.s_[:, 0], self.nodes), self.driven_nset],
-            [make_set("Y0"), make_set("Y1")],
-            [make_set("X1Y0"), make_set("X1Y1")],
-        ]
-        # Displacement at any surface node is equal to the opposing surface
-        # node in both degrees of freedom unless one of the surfaces is a driver.
-        # in that case, add the avg displacement from the drive node
-        self.eq_pairs: List[List[EqualityEquation]] = [
-            [EqualityEquation(p, x + 1) for x in range(ndim)]
-            if (self.driven_nset not in p)
-            else [
-                DriveEquation(p, x + 1, drive_node=self.nset)
-                if x in range(self.first_dof - 1, self.last_dof)
-                else EqualityEquation(p, x + 1)
-                for x in range(ndim)
-            ]
-            for p in self.node_pairs
-        ]
-
-    def dependent_dofs(self):
-        # Aggregate the dependents of every equation; prescribed_dofs (the driven
-        # nset) is inherited from DisplacementBoundaryCondition.
-        for eq_pair in self.eq_pairs:
-            for eq in eq_pair:
-                yield from eq.dependent_dofs()
+        # The first-listed nset of each pair is the dependent (eliminated) term of the
+        # emitted *Equation, one group per dof (pair-major, dof-minor).
+        for pair in self.node_pairs:
+            for i in range(self.nodes.dim):
+                yield pair[0].node_inds, i + 1
 
 
 def validate_constraints(bcs):
@@ -180,6 +154,12 @@ def validate_constraints(bcs):
                 for inds, dof in method():
                     groups.append((bc, np.asarray(inds), dof))
         return groups
+
+    def describe(bc):
+        constraint = getattr(bc, "constraint", None)
+        if constraint is not None:
+            return f"{type(bc).__name__}({type(constraint).__name__})"
+        return type(bc).__name__
 
     dep = gather("dependent_dofs")
     if not dep:
@@ -205,7 +185,7 @@ def validate_constraints(bcs):
     if dup.size:
         key = int(dup[0])
         rows = np.where(dep_keys == key)[0]
-        names = sorted({type(dep_owners[dep_oidx[i]]).__name__ for i in rows})
+        names = sorted({describe(dep_owners[dep_oidx[i]]) for i in rows})
         raise ValueError(
             f"over-constrained: node {key // mult} dof {key % mult} is the dependent "
             f"term of more than one *Equation ({', '.join(names)})"
@@ -215,8 +195,8 @@ def validate_constraints(bcs):
     both = np.intersect1d(dep_keys, pre_keys)
     if both.size:
         key = int(both[0])
-        d = type(dep_owners[dep_oidx[np.where(dep_keys == key)[0][0]]]).__name__
-        p = type(pre_owners[pre_oidx[np.where(pre_keys == key)[0][0]]]).__name__
+        d = describe(dep_owners[dep_oidx[np.where(dep_keys == key)[0][0]]])
+        p = describe(pre_owners[pre_oidx[np.where(pre_keys == key)[0][0]]])
         raise ValueError(
             f"over-constrained: node {key // mult} dof {key % mult} is eliminated by an "
             f"*Equation in {d} but also prescribed by a *Boundary in {p}"

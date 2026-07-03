@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 
 from microstructure_ve.backends.abaqus._inp import emit
-from microstructure_ve.boundary import PeriodicBoundaryCondition
+from microstructure_ve.boundary import PeriodicBoundaryConstraint
 from microstructure_ve.constitutive import Elastic
 from microstructure_ve.core import ElementSet, GridElements, GridNodes
 from microstructure_ve.materials import Material
@@ -43,15 +43,15 @@ class ModelValidationTests(unittest.TestCase):
                 elements=elements,
                 materials=materials,
                 bcs=[
-                    PeriodicBoundaryCondition(nodes=nodes),
-                    PeriodicBoundaryCondition(nodes=nodes),
+                    PeriodicBoundaryConstraint(nodes=nodes),
+                    PeriodicBoundaryConstraint(nodes=nodes),
                 ],
             )
 
     def test_valid_model_constructs(self):
         nodes, elements, materials = _small_model_parts()
         Model(nodes=nodes, elements=elements, materials=materials,
-              bcs=[PeriodicBoundaryCondition(nodes=nodes)])
+              bcs=[PeriodicBoundaryConstraint(nodes=nodes)])
 
 
 class SubsectionTextTests(unittest.TestCase):
@@ -77,7 +77,7 @@ class SimulationTests(unittest.TestCase):
     def test_assembles_heading_model_steps_in_order(self):
         nodes, elements, materials = _small_model_parts()
         model = Model(nodes=nodes, elements=elements, materials=materials,
-                      bcs=[PeriodicBoundaryCondition(nodes=nodes)])
+                      bcs=[PeriodicBoundaryConstraint(nodes=nodes)])
         sim = Simulation(heading=Heading("RVE"), model=model,
                          steps=[Step(subsections=[Static()])])
         text = _emit(sim)

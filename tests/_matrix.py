@@ -18,9 +18,10 @@ import numpy as np
 
 from microstructure_ve.backends.abaqus import write_inp
 from microstructure_ve.boundary import (
-    DisplacementBoundaryCondition,
-    FixedBoundaryCondition,
-    PeriodicBoundaryCondition,
+    BoundaryCondition,
+    Fixed,
+    PeriodicBoundaryConstraint,
+    Prescribed,
 )
 from microstructure_ve.constitutive import Elastic, Plastic, TabularViscoelastic
 from microstructure_ve.core import ElementSet, GridElements, GridNodes, NodeSet
@@ -267,7 +268,7 @@ def _macro_corner_bcs_general(nodes, mode, traction):
             else:
                 raise ValueError(f"bad traction {traction!r} for normal mode {mode!r}")
 
-    bcs = [FixedBoundaryCondition(nodes.nsets[k], sorted(d)) for k, d in fixed.items() if d]
+    bcs = [BoundaryCondition(nodes.nsets[k], Fixed(sorted(d))) for k, d in fixed.items() if d]
     drive_specs = [(nodes.nsets[_ref_corner_key(dim, a)], dof) for a, dof in drives]
     return bcs, drive_specs
 
@@ -297,12 +298,12 @@ def _rbm_pins(nodes, a):
     they fix the RBM offset without perturbing the stress field -- only making ``U`` unique.
     """
     transverse = [b for b in _AXES[:nodes.dim] if b != a]
-    pins = [FixedBoundaryCondition(nodes.nsets[_origin_key(nodes.dim)],
-                                   [_normal_dof(b) for b in transverse])]
+    pins = [BoundaryCondition(nodes.nsets[_origin_key(nodes.dim)],
+                              Fixed([_normal_dof(b) for b in transverse]))]
     if nodes.dim == 3:
         b, c = transverse
-        pins.append(FixedBoundaryCondition(nodes.nsets[_ref_corner_key(nodes.dim, b)],
-                                           [_normal_dof(c)]))
+        pins.append(BoundaryCondition(nodes.nsets[_ref_corner_key(nodes.dim, b)],
+                                      Fixed([_normal_dof(c)])))
     return pins
 
 
@@ -324,21 +325,21 @@ def _standard_face_bcs(nodes, mode, traction):
     bcs, drive_specs = [], []
     if mode.startswith("shear"):
         a, ddof = drives[0]
-        bcs.append(FixedBoundaryCondition(face(a, "0"), all_dofs))  # clamped face
+        bcs.append(BoundaryCondition(face(a, "0"), Fixed(all_dofs)))  # clamped face
         other = [d for d in all_dofs if d != ddof]
         if other:
-            bcs.append(FixedBoundaryCondition(face(a, "1"), other))  # no-slip on driven face
+            bcs.append(BoundaryCondition(face(a, "1"), Fixed(other)))  # no-slip on driven face
         drive_specs.append((face(a, "1"), ddof))
     elif mode == "compression":
         for b in axes:
             ndof = _normal_dof(b)
-            bcs.append(FixedBoundaryCondition(face(b, "0"), [ndof]))
+            bcs.append(BoundaryCondition(face(b, "0"), Fixed([ndof])))
             drive_specs.append((face(b, "1"), ndof))
     else:  # single-axis normal mode
         a, ddof = drives[0]
         for b in axes:
             if b == a or traction == "confined_slip":
-                bcs.append(FixedBoundaryCondition(face(b, "0"), [_normal_dof(b)]))
+                bcs.append(BoundaryCondition(face(b, "0"), Fixed([_normal_dof(b)])))
         if traction == "free":
             # the lateral faces are traction-free, leaving rigid-body modes; pin them
             # minimally so the BVP is well-posed (see _rbm_pins)
@@ -463,14 +464,14 @@ def matrix_simulation(mode, traction, bc, dim, test_type="elastic", n=None, scal
 
     if bc == "periodic":
         corner_bcs, drive_specs = _macro_corner_bcs_general(nodes, mode, traction)
-        base_bcs = [PeriodicBoundaryCondition(nodes=nodes)] + corner_bcs
+        base_bcs = [PeriodicBoundaryConstraint(nodes=nodes)] + corner_bcs
         extra_nsets = ()
     else:
         face_bcs, drive_specs, face_nsets = _standard_face_bcs(nodes, mode, traction)
         base_bcs = list(face_bcs)
         extra_nsets = face_nsets
 
-    baselines = [DisplacementBoundaryCondition(ns, d, d, 0.0) for ns, d in drive_specs]
+    baselines = [BoundaryCondition(ns, Prescribed([d], 0.0)) for ns, d in drive_specs]
     model = Model(nodes=nodes, elements=elements, materials=materials,
                   bcs=base_bcs + baselines, nsets=extra_nsets)
 
@@ -488,7 +489,7 @@ def matrix_simulation(mode, traction, bc, dim, test_type="elastic", n=None, scal
     make_step = {"S": static_step, "D": dynamic_step}
     steps = []
     for kind, scale in plan:
-        dr = [DisplacementBoundaryCondition(ns, d, d, value * scale) for ns, d in drive_specs]
+        dr = [BoundaryCondition(ns, Prescribed([d], value * scale)) for ns, d in drive_specs]
         steps.append(make_step[kind](dr))
 
     heading = Heading(f"matrix {dim}d {mode} {traction} {bc} {test_type}")

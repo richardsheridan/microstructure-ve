@@ -14,17 +14,12 @@ from itertools import product
 import numpy as np
 
 from microstructure_ve.boundary import (
-    DisplacementBoundaryCondition,
-    FixedBoundaryCondition,
-    OldPeriodicBoundaryCondition,
-    PeriodicBoundaryCondition,
+    BoundaryCondition,
+    Fixed,
+    PeriodicBoundaryConstraint,
+    Prescribed,
 )
 from microstructure_ve.core import ElementSet, GridElements, GridNodes, NodeSet
-from microstructure_ve.equations import (
-    DriveEquation,
-    EqualityEquation,
-    SequentialDifferenceEquation,
-)
 from microstructure_ve.constitutive import (
     Elastic,
     Plastic,
@@ -132,46 +127,6 @@ def _(obj, f):
         f.write(f"{element:d}\n")
 
 
-@emit.register(SequentialDifferenceEquation)
-def _(obj, f):
-    for node0, node1 in zip(obj.nsets[0].node_inds, obj.nsets[1].node_inds):
-        f.write(
-            f"""\
-*Equation
-4
-{node0}, {obj.dof}, 1.
-{node1}, {obj.dof}, -1.
-{obj.nsets[2]}, {obj.dof}, -1.
-{obj.nsets[3]}, {obj.dof}, 1.
-"""
-        )
-
-
-@emit.register(EqualityEquation)
-def _(obj, f):
-    f.write(
-        f"""\
-*Equation
-2
-{obj.nsets[0]}, {obj.dof}, 1.
-{obj.nsets[1]}, {obj.dof}, -1.
-"""
-    )
-
-
-@emit.register(DriveEquation)
-def _(obj, f):
-    f.write(
-        f"""\
-*Equation
-3
-{obj.nsets[0]}, {obj.dof}, 1.
-{obj.nsets[1]}, {obj.dof}, -1.
-{obj.drive_node}, {obj.dof}, 1.
-"""
-    )
-
-
 def _emit_material_base(material, response, f, elastic_moduli=None):
     """The shared ``*Solid Section`` / ``*Material`` / ``*Elastic`` block.
 
@@ -256,49 +211,69 @@ def _(response, material, f):
         f.write(f"{g:.6e}, {k:.6e}, {t:.6e}\n")
 
 
-@emit.register(FixedBoundaryCondition)
+@emit.register(BoundaryCondition)
 def _(obj, f):
+    # A BoundaryCondition is a container; dispatch the *Boundary block on the type of its
+    # constraint component (has-a, mirroring the Material/response emission).
+    emit_constraint(obj.constraint, obj, f)
+
+
+@singledispatch
+def emit_constraint(constraint, bc, f):
+    """Write the ``*Boundary`` block for ``constraint`` applied to ``bc.target``."""
+    raise NotImplementedError(f"no ABAQUS emitter for constraint {type(constraint).__name__}")
+
+
+@emit_constraint.register(Fixed)
+def _(constraint, bc, f):
     f.write(
         f"""\
 *Boundary
 """
     )
-    for dof in obj.dofs:
+    for dof in constraint.dofs:
         f.write(
             f"""\
-{obj.node}, {dof}, {dof}
+{bc.target}, {dof}, {dof}
 """
         )
 
 
-def _emit_displacement_bc(obj, f):
+@emit_constraint.register(Prescribed)
+def _(constraint, bc, f):
     f.write(
         f"""\
 *Boundary, type=displacement
-{obj.nset}, {obj.first_dof}, {obj.last_dof}, {obj.displacement}
 """
     )
+    for dof in constraint.dofs:
+        f.write(
+            f"""\
+{bc.target}, {dof}, {dof}, {constraint.value}
+"""
+        )
 
 
-@emit.register(DisplacementBoundaryCondition)
+@emit.register(PeriodicBoundaryConstraint)
 def _(obj, f):
-    _emit_displacement_bc(obj, f)
-
-
-@emit.register(PeriodicBoundaryCondition)
-def _(obj, f):
-    for eq in obj.equations:
-        emit(eq, f)
-
-
-@emit.register(OldPeriodicBoundaryCondition)
-def _(obj, f):
-    for node_pair, eq_pair in zip(obj.node_pairs, obj.eq_pairs):
-        emit(node_pair[0], f)
-        emit(node_pair[1], f)
-        emit(eq_pair[0], f)
-        emit(eq_pair[1], f)
-    _emit_displacement_bc(obj, f)
+    # One 4-term *Equation (u_dep - u_img = u_refHi - u_refLo) per boundary node per dof,
+    # pair-major dof-minor -- the order (and bytes) the eagerly-built equation objects
+    # used to emit. The reference corners are named nsets; ABAQUS accepts nset tokens
+    # in *Equation terms. The first-listed (dependent) node is the one ABAQUS eliminates.
+    for dep, img, ref_hi, ref_lo in obj.node_pairs:
+        for i in range(obj.nodes.dim):
+            dof = i + 1
+            for node0, node1 in zip(dep.node_inds, img.node_inds):
+                f.write(
+                    f"""\
+*Equation
+4
+{node0}, {dof}, 1.
+{node1}, {dof}, -1.
+{ref_hi}, {dof}, -1.
+{ref_lo}, {dof}, 1.
+"""
+                )
 
 
 @emit.register(Static)

@@ -6,9 +6,9 @@ guarantee holds for every backend.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Union
 
-from .boundary import BoundaryConditions, validate_constraints
+from .boundary import BoundaryCondition, PeriodicBoundaryConstraint, validate_constraints
 from .core import GridElements, GridNodes, NodeSet
 from .materials import Material
 
@@ -41,7 +41,7 @@ class Step:
 
     ``subsections`` is an ordered iterable of the step's contents -- an analysis type
     (``Static`` / ``Dynamic``) together with the step-level boundary conditions
-    (e.g. the drive ``DisplacementBoundaryCondition``). ``perturbation`` adds the
+    (e.g. the ``Prescribed`` drive ``BoundaryCondition``). ``perturbation`` adds the
     ``,PERTURBATION`` flag (used for the harmonic steady-state sweep).
     """
 
@@ -54,7 +54,7 @@ class Model:
     nodes: GridNodes
     elements: GridElements
     materials: Iterable[Material]
-    bcs: Iterable[BoundaryConditions] = ()
+    bcs: Iterable[Union[BoundaryCondition, PeriodicBoundaryConstraint]] = ()
     nsets: Iterable[NodeSet] = ()
 
     def __post_init__(self):

@@ -1,7 +1,7 @@
 """Direct-Dirichlet solve path for standard (non-periodic) boundary conditions.
 
 Assembles the B-bar stiffness with complex moduli, imposes Dirichlet BCs from the
-simulation's FixedBoundaryConditions (zero) and step DisplacementBoundaryConditions
+simulation's ``Fixed`` boundary conditions (zero) and step ``Prescribed`` drives
 (prescribed displacement), solves with PETSc serial LU, then reports the readODB-style
 row: ``[f, RF_Real..., RF_Imag..., U_Real...]`` where RF and U are summed over the
 primary drive nodeset nodes for each component.
@@ -26,8 +26,9 @@ from dolfinx import fem
 import dolfinx.fem.petsc as fempetsc
 
 from microstructure_ve.boundary import (
-    DisplacementBoundaryCondition,
-    FixedBoundaryCondition,
+    BoundaryCondition,
+    Fixed,
+    Prescribed,
 )
 from microstructure_ve.core import _node_array
 
@@ -85,34 +86,33 @@ def _parse_bcs(sim, space, Vc_spaces, inv_maps):
 
     ``dolfinx_bcs``: list of ``fem.DirichletBC`` for the FE solve.
     ``drive_nodes``: 1-indexed node array of the *primary* drive nodeset (the first
-    ``DisplacementBoundaryCondition`` in the step's subsections), used for RF and U
-    summation.
+    ``Prescribed`` drive in the step's subsections), used for RF and U summation.
 
-    Model-level ``FixedBoundaryCondition``s prescribe zero on their dofs.
-    Baseline ``DisplacementBoundaryCondition``s in ``model.bcs`` (value=0) are skipped --
-    they carry the ABAQUS initial-state convention, and the step drives override them.
-    Step-level ``DisplacementBoundaryCondition``s prescribe the actual drive displacement.
+    Model-level ``Fixed`` boundary conditions prescribe zero on their dofs.
+    Baseline ``Prescribed`` conditions in ``model.bcs`` (value=0) are skipped -- they
+    carry the ABAQUS initial-state convention, and the step drives override them.
+    Step-level ``Prescribed`` drives prescribe the actual drive displacement.
     """
     model = sim.model
     bcs = []
 
     for bc in model.bcs:
-        if isinstance(bc, FixedBoundaryCondition):
-            nodes = np.ravel(_node_array(bc.node))
-            for dof in bc.dofs:
+        if isinstance(bc, BoundaryCondition) and isinstance(bc.constraint, Fixed):
+            nodes = np.ravel(_node_array(bc.target))
+            for dof in bc.constraint.dofs:
                 bcs.append(_make_dirichlet_bc(
                     space, Vc_spaces, inv_maps, nodes, dof - 1, 0.0
                 ))
-        # DisplacementBoundaryCondition in model.bcs are baselines (value=0); skip.
+        # Prescribed conditions in model.bcs are baselines (value=0); skip.
 
     drive_nodes = None
     for s in sim.steps[0].subsections:
-        if isinstance(s, DisplacementBoundaryCondition):
-            nodes = np.ravel(_node_array(s.nset))
+        if isinstance(s, BoundaryCondition) and isinstance(s.constraint, Prescribed):
+            nodes = np.ravel(_node_array(s.target))
             if drive_nodes is None:
                 drive_nodes = nodes  # first drive = primary (for RF/U reporting)
-            disp_value = float(np.real(s.displacement))
-            for dof in range(s.first_dof, s.last_dof + 1):
+            disp_value = float(np.real(s.constraint.value))
+            for dof in s.constraint.dofs:
                 bcs.append(_make_dirichlet_bc(
                     space, Vc_spaces, inv_maps, nodes, dof - 1, disp_value
                 ))
@@ -146,12 +146,12 @@ def build_solver(sim, prob):
     dim = model.nodes.dim
     constrained = set()
     for bc in model.bcs:
-        if isinstance(bc, FixedBoundaryCondition):
-            for dof in bc.dofs:
+        if isinstance(bc, BoundaryCondition) and isinstance(bc.constraint, Fixed):
+            for dof in bc.constraint.dofs:
                 constrained.add(int(dof) - 1)
     for s in sim.steps[0].subsections:
-        if isinstance(s, DisplacementBoundaryCondition):
-            for dof in range(s.first_dof, s.last_dof + 1):
+        if isinstance(s, BoundaryCondition) and isinstance(s.constraint, Prescribed):
+            for dof in s.constraint.dofs:
                 constrained.add(int(dof) - 1)
     if constrained != set(range(dim)):
         free = [i for i in range(dim) if i not in constrained]

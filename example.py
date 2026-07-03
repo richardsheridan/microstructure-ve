@@ -4,9 +4,10 @@ import numpy as np
 
 from microstructure_ve.backends.abaqus import write_inp
 from microstructure_ve.boundary import (
-    DisplacementBoundaryCondition,
-    FixedBoundaryCondition,
-    PeriodicBoundaryCondition,
+    BoundaryCondition,
+    Fixed,
+    PeriodicBoundaryConstraint,
+    Prescribed,
 )
 from microstructure_ve.core import ElementSet, GridElements, GridNodes
 from microstructure_ve.constitutive import Elastic, TabularViscoelastic
@@ -65,13 +66,13 @@ mat_material = Material(
         shift=-6.0,
     ),
 )
-# PeriodicBoundaryCondition ties each face to its opposite through the reference
+# PeriodicBoundaryConstraint ties each face to its opposite through the reference
 # corner nodes, which carry the macroscopic deformation. Driving the RVE means
 # constraining those corners:
 #   X0Y0 - pinned origin (removes rigid-body translation)
 #   X1Y0 - driven in x; its dof 2 is held to suppress macroscopic shear
 #   X0Y1 - dof 1 held to suppress shear; dof 2 is LEFT FREE so the cell can
-#          contract laterally (Poisson). Add dofs=[1, 2] here instead for a
+#          contract laterally (Poisson). Use Fixed(dofs=[1, 2]) here instead for a
 #          laterally-confined (plane-strain-clamped) test.
 origin = nodes.nsets["X0Y0"]
 x_macro = nodes.nsets["X1Y0"]
@@ -81,20 +82,15 @@ model = Model(
     elements=elements,
     materials=[filler_material, intph_material, mat_material],
     bcs=[
-        PeriodicBoundaryCondition(nodes=nodes),
-        FixedBoundaryCondition(origin, dofs=[1, 2]),
-        FixedBoundaryCondition(x_macro, dofs=[2]),
-        FixedBoundaryCondition(y_macro, dofs=[1]),
-        DisplacementBoundaryCondition(x_macro, first_dof=1, last_dof=1, displacement=0.0),
+        PeriodicBoundaryConstraint(nodes=nodes),
+        BoundaryCondition(origin, Fixed(dofs=[1, 2])),
+        BoundaryCondition(x_macro, Fixed(dofs=[2])),
+        BoundaryCondition(y_macro, Fixed(dofs=[1])),
+        BoundaryCondition(x_macro, Prescribed(dofs=[1], value=0.0)),
     ],
 )
 
-disp_bc = DisplacementBoundaryCondition(
-    x_macro,
-    first_dof=1,
-    last_dof=1,
-    displacement=displacement,
-)
+disp_bc = BoundaryCondition(x_macro, Prescribed(dofs=[1], value=displacement))
 dyn = Dynamic(
     f_initial=1e-7,
     f_final=1e5,
