@@ -150,7 +150,7 @@ def _row_header(dim):
 
 
 def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
-        petsc_options=None):
+        petsc_options=None, n_incr=None):
     """Solve ``sim`` over its frequency sweep; one row per frequency, ``(n_freq, 1+3*dim)``.
 
     Everything about the *problem* is read from ``sim`` -- there are no physics kwargs.
@@ -196,11 +196,16 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
              raises on non-convergence). Periodic path only; standard BC uses LU.
     petsc_options: dict of PETSc options overriding the iterative KSP/PC (e.g.
              ``{"pc_type": "bjacobi"}``); ignored for LU.
+    n_incr:  load increments per plastic ``Static`` step (periodic path). Default ``None``
+             keeps the built-in choice: 1 when the macro strain is fully prescribed
+             (monotonic proportional loading is increment-independent for the radial
+             return) and 20 when a free lateral component makes the strain path curved.
+             Ignored for non-plastic sims and the standard-BC plastic path (single ramp).
     """
     dim = sim.model.nodes.dim
 
     if len(list(sim.steps)) > 1 or _has_plastic_static(sim):
-        out = _run_multistep(sim, bbar, cancel, solver, petsc_options)
+        out = _run_multistep(sim, bbar, cancel, solver, petsc_options, n_incr)
         if output_path is not None:
             np.savetxt(output_path, out, fmt="%.8e", delimiter="\t",
                        header="\t".join(_row_header(dim)), comments="")
@@ -254,7 +259,7 @@ def _has_plastic_static(sim):
     return any(any(isinstance(s, Static) for s in step.subsections) for step in sim.steps)
 
 
-def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None):
+def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_incr=None):
     """Sweep a multi-step sim step-by-step, emitting rows in the ABAQUS reader's order (per
     step, then per frame): a ``Static`` step contributes one row (zero loss) at frame value 1.0
     -- elastic (real ``*Elastic`` moduli) or, if a ``Plastic`` response is present, the nonlinear
@@ -295,8 +300,10 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None):
                 # parse this step's own drive (steps may drive different magnitudes -- e.g. a
                 # harmonic step then a plastic load, or a load then a reversal)
                 loading = loadingmod.macro_loading(sim, step=step)
-                n_incr = 1 if not list(loading.free) else 20
-                rows.append(plastic_solver.solve(loading, n_incr))
+                step_incr = n_incr
+                if step_incr is None:
+                    step_incr = 1 if not list(loading.free) else 20
+                rows.append(plastic_solver.solve(loading, step_incr))
             elif has_plastic:
                 rows.append(plastic_solver.solve())            # standard: BCs parsed from sim
             else:
