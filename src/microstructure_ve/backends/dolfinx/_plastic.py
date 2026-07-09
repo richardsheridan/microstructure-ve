@@ -45,6 +45,8 @@ _NEWTON_RTOL = 1e-9       # relative to the first iteration's residual
 _MAX_NEWTON = 50
 _MAX_OUTER = 25           # free-lateral root-find iterations
 _OUTER_TOL = 1e-9         # |sigma-bar| on a free component (relative to a stress scale)
+_MACRO_FD_STEP = 1e-6     # macro-strain perturbation for the Jacobian bootstrap
+_OUTER_FD_RETRY = 8       # outer iterations on a Broyden Jacobian before an FD refresh
 
 # tensor (not engineering) component order used internally: [xx, yy, zz, xy, yz, xz]
 _SHEAR_PAIRS = {2: [(0, 1)], 3: [(0, 1), (1, 2), (0, 2)]}
@@ -243,6 +245,11 @@ class _PlasticSolver:
         self.E_current = np.zeros(self.nv)
         self._shear_pairs = _SHEAR_PAIRS[self.dim]
 
+        # macro Jacobian for the free-lateral root-find, kept across outer iterations,
+        # increments, and steps (Broyden-updated; FD-bootstrapped when absent or stale)
+        self._J_macro = None
+        self._J_free_slots = None
+
         self._fill_coeffs(np.zeros((N, self.nv)), commit=False)  # elastic C_q to allocate A
         self.A = dolfinx_mpc.assemble_matrix(self.a_form, self.mpc, bcs=self.bcs)
         self.A.assemble()
@@ -339,12 +346,15 @@ class _PlasticSolver:
         free_slots = [b for (b, _) in free]
         free_val = np.array([self.E_current[s] for s in free_slots])
         E_start = self.E_current.copy()
+        if free_slots != self._J_free_slots:
+            self._J_macro, self._J_free_slots = None, free_slots
 
         E = target.copy()
         for inc in range(1, n_incr + 1):
             frac = inc / n_incr
             E_drv = E_start + frac * (target - E_start)
-            for _ in range(_MAX_OUTER):
+            prev_val = prev_resid = None  # secant pairs are only valid at a fixed E_drv
+            for it in range(_MAX_OUTER):
                 E = E_drv.copy()
                 for k, s in enumerate(free_slots):
                     E[s] = free_val[k]
@@ -355,7 +365,16 @@ class _PlasticSolver:
                 scale = max(np.abs(target).max() * (self.mu.mean() + self.lam.mean()), 1.0)
                 if np.max(np.abs(resid)) <= _OUTER_TOL * scale:
                     break
-                free_val = free_val - np.linalg.solve(self._macro_jac(E, free_slots), resid)
+                if self._J_macro is not None and prev_val is not None:
+                    dv = free_val - prev_val  # Broyden rank-1 secant update
+                    denom = float(dv @ dv)
+                    if denom > 0.0:
+                        self._J_macro += np.outer(
+                            (resid - prev_resid) - self._J_macro @ dv, dv) / denom
+                if self._J_macro is None or it == _OUTER_FD_RETRY:
+                    self._J_macro = self._macro_jac_fd(E, free_slots, resid)
+                prev_val, prev_resid = free_val.copy(), resid
+                free_val = free_val - np.linalg.solve(self._J_macro, resid)
             self._fill_coeffs(self._total_strain(E), commit=True)
 
         self.E_current = E.copy()
@@ -367,20 +386,18 @@ class _PlasticSolver:
         U[loading.primary_dof - 1] = loading.drive_value
         return [1.0] + list(RF.real) + [0.0] * self.dim + list(U)
 
-    def _macro_jac(self, E, free_slots):
-        """Numerical macroscopic Jacobian d(sigma-bar_free)/d(E_free), perturbing each free
-        component and re-solving the inner Newton (warm-started)."""
+    def _macro_jac_fd(self, E, free_slots, base_r):
+        """FD bootstrap of the macroscopic Jacobian d(sigma-bar_free)/d(E_free): one warm-started
+        inner Newton per free component, against the already-converged residual ``base_r`` at
+        ``E``. No restore solve -- the outer loop's next ``_newton`` re-converges from the
+        perturbed warm start. Called once, then kept fresh by Broyden updates in ``solve``."""
         n = len(free_slots)
-        base = self._newton(E)
-        base_r = np.array([base[s, s] for s in free_slots])
         J = np.empty((n, n))
-        step = 1e-6
         for k, s in enumerate(free_slots):
             Ep = E.copy()
-            Ep[s] += step
+            Ep[s] += _MACRO_FD_STEP
             pert = self._newton(Ep)
-            J[:, k] = (np.array([pert[t, t] for t in free_slots]) - base_r) / step
-        self._newton(E)  # restore the converged inner state at E
+            J[:, k] = (np.array([pert[t, t] for t in free_slots]) - base_r) / _MACRO_FD_STEP
         return J
 
 
