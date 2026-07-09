@@ -189,6 +189,36 @@ def _voigt_stress_tensor(sig_v, dim):
                      [sig_v[5], sig_v[4], sig_v[2]]])
 
 
+def _voigt_vol(ev, dim):
+    """Volumetric part of an engineering-Voigt strain vector (the in-plane trace in 2D,
+    matching the B-bar correction applied to the residual strain in ``_total_strain``)."""
+    t = sum(ev[i] for i in range(dim)) / dim
+    if dim == 2:
+        return ufl.as_vector([t, t, 0])
+    return ufl.as_vector([t, t, t, 0, 0, 0])
+
+
+def _bbar_jacobian_form(V, dim, qd, C_q, C_c):
+    """The B-bar-consistent Jacobian form.
+
+    The residual evaluates stress at the B-bar strain (volumetric part replaced by its cell
+    mean), so its exact derivative acts on ``dev eps(u) + mean_cell(vol eps(u))`` -- not on the
+    raw ``eps(u)``. An inconsistent Jacobian costs Newton its quadratic convergence (observed:
+    linear decay at ~0.34/iter, ~25 iterations per solve). The dev part integrates at the full
+    rule against the quadrature-point tangent ``C_q``; the cell-mean vol part reduces to the
+    1-point (centroid) rule against the cell-averaged tangent ``C_c`` (exact for a cell-constant
+    tangent on the rectangular Q1 grid, where the centroid value equals the cell mean). The
+    form is slightly nonsymmetric (test side stays raw, as in the residual); LU doesn't care.
+    """
+    u_tr, v_te = ufl.TrialFunction(V), ufl.TestFunction(V)
+    dx_q = ufl.dx(metadata={"quadrature_degree": qd, "quadrature_scheme": "default"})
+    dx_1 = ufl.dx(metadata={"quadrature_degree": 1, "quadrature_scheme": "default"})
+    ev_u, ev_v = _eps_voigt(u_tr, dim), _eps_voigt(v_te, dim)
+    vol_u = _voigt_vol(ev_u, dim)
+    return fem.form(ufl.inner(ufl.dot(C_q, ev_u - vol_u), ev_v) * dx_q
+                    + ufl.inner(ufl.dot(C_c, vol_u), ev_v) * dx_1)
+
+
 class _PlasticSolver:
     """Hand-rolled Newton over the periodic MPC + complex LU, with numpy return mapping.
 
@@ -226,17 +256,19 @@ class _PlasticSolver:
         cellname = self.mesh.topology.cell_name()
         Qv = basix.ufl.quadrature_element(cellname, value_shape=(self.nv,), degree=qd)
         Qt = basix.ufl.quadrature_element(cellname, value_shape=(self.nv, self.nv), degree=qd)
+        Qt1 = basix.ufl.quadrature_element(cellname, value_shape=(self.nv, self.nv), degree=1)
         self.sig_q = fem.Function(fem.functionspace(self.mesh, Qv))
         self.C_q = fem.Function(fem.functionspace(self.mesh, Qt))
+        self.C_c = fem.Function(fem.functionspace(self.mesh, Qt1))  # cell-mean tangent
 
         self.u = fem.Function(self.V)  # the periodic fluctuation u~ (persists across steps)
         self.eps_expr = fem.Expression(_eps_voigt(self.u, self.dim), self.points)
         self._cells = np.arange(self.ncells, dtype=np.int32)
 
-        u_tr, v_te = ufl.TrialFunction(self.V), ufl.TestFunction(self.V)
+        v_te = ufl.TestFunction(self.V)
         dx_q = ufl.dx(metadata={"quadrature_degree": qd, "quadrature_scheme": "default"})
-        ev_u, ev_v = _eps_voigt(u_tr, self.dim), _eps_voigt(v_te, self.dim)
-        self.a_form = fem.form(ufl.inner(ufl.dot(self.C_q, ev_u), ev_v) * dx_q)
+        ev_v = _eps_voigt(v_te, self.dim)
+        self.a_form = _bbar_jacobian_form(self.V, self.dim, qd, self.C_q, self.C_c)
         self.L_form = fem.form(ufl.inner(self.sig_q, ev_v) * dx_q)
 
         # committed state (persists across steps)
@@ -249,6 +281,7 @@ class _PlasticSolver:
         # increments, and steps (Broyden-updated; FD-bootstrapped when absent or stale)
         self._J_macro = None
         self._J_free_slots = None
+        self._r_ref = 0.0  # largest initial Newton residual seen (convergence reference)
 
         self._fill_coeffs(np.zeros((N, self.nv)), commit=False)  # elastic C_q to allocate A
         self.A = dolfinx_mpc.assemble_matrix(self.a_form, self.mpc, bcs=self.bcs)
@@ -280,6 +313,10 @@ class _PlasticSolver:
                           self.mat_id, self.materials, self.dim)
         self.sig_q.x.array[:] = sig.reshape(-1)
         self.C_q.x.array[:] = C.reshape(-1)
+        w = self.weights
+        Cc = (C.reshape(self.ncells, self.npts, self.nv, self.nv)
+              * w[None, :, None, None]).sum(axis=1) / w.sum()
+        self.C_c.x.array[:] = Cc.reshape(-1)
         sig_new, eps_p_new, p_new = _return_map(eps_total, self.mu, self.lam, self.eps_p,
                                                 self.p, self.mat_id, self.materials, self.dim)
         if commit:
@@ -309,7 +346,11 @@ class _PlasticSolver:
             rnorm = self.b.norm()
             if r0 is None:
                 r0 = rnorm
-            if rnorm <= _NEWTON_TOL + _NEWTON_RTOL * (r0 or 1.0):
+                # convergence is judged against the largest initial residual seen so far, not
+                # this call's r0: warm-started re-solves (outer root-find, FD bootstrap) begin
+                # essentially converged and must not grind to the absolute floor
+                self._r_ref = max(self._r_ref, r0)
+            if rnorm <= _NEWTON_TOL + _NEWTON_RTOL * (self._r_ref or 1.0):
                 break
 
             self.A.zeroEntries()
@@ -438,17 +479,19 @@ class _StandardPlasticSolver:
         cellname = self.mesh.topology.cell_name()
         Qv = basix.ufl.quadrature_element(cellname, value_shape=(self.nv,), degree=qd)
         Qt = basix.ufl.quadrature_element(cellname, value_shape=(self.nv, self.nv), degree=qd)
+        Qt1 = basix.ufl.quadrature_element(cellname, value_shape=(self.nv, self.nv), degree=1)
         self.sig_q = fem.Function(fem.functionspace(self.mesh, Qv))
         self.C_q = fem.Function(fem.functionspace(self.mesh, Qt))
+        self.C_c = fem.Function(fem.functionspace(self.mesh, Qt1))  # cell-mean tangent
 
         self.u = fem.Function(self.V)  # the FULL displacement
         self.eps_expr = fem.Expression(_eps_voigt(self.u, self.dim), self.points)
         self._cells = np.arange(self.ncells, dtype=np.int32)
 
-        u_tr, v_te = ufl.TrialFunction(self.V), ufl.TestFunction(self.V)
+        v_te = ufl.TestFunction(self.V)
         dx_q = ufl.dx(metadata={"quadrature_degree": qd, "quadrature_scheme": "default"})
-        ev_u, ev_v = _eps_voigt(u_tr, self.dim), _eps_voigt(v_te, self.dim)
-        self.a_form = fem.form(ufl.inner(ufl.dot(self.C_q, ev_u), ev_v) * dx_q)
+        ev_v = _eps_voigt(v_te, self.dim)
+        self.a_form = _bbar_jacobian_form(self.V, self.dim, qd, self.C_q, self.C_c)
         self.L_form = fem.form(ufl.inner(self.sig_q, ev_v) * dx_q)
 
         self.eps_p = np.zeros((N, 6))
@@ -485,6 +528,10 @@ class _StandardPlasticSolver:
                           self.mat_id, self.materials, self.dim)
         self.sig_q.x.array[:] = sig.reshape(-1)
         self.C_q.x.array[:] = C.reshape(-1)
+        w = self.weights
+        Cc = (C.reshape(self.ncells, self.npts, self.nv, self.nv)
+              * w[None, :, None, None]).sum(axis=1) / w.sum()
+        self.C_c.x.array[:] = Cc.reshape(-1)
         if commit:
             _, self.eps_p, self.p = _return_map(eps_total, self.mu, self.lam, self.eps_p,
                                                 self.p, self.mat_id, self.materials, self.dim)
