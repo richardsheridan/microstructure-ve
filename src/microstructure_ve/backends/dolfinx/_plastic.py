@@ -47,6 +47,10 @@ _MAX_OUTER = 25           # free-lateral root-find iterations
 _OUTER_TOL = 1e-9         # |sigma-bar| on a free component (relative to a stress scale)
 _MACRO_FD_STEP = 1e-6     # macro-strain perturbation for the Jacobian bootstrap
 _OUTER_FD_RETRY = 8       # outer iterations on a Broyden Jacobian before an FD refresh
+_FROZEN_RATIO = 0.5       # refresh tangent+factorization when an iteration shrinks the
+                          # residual by less than this (modified Newton: a frozen-tangent
+                          # back-substitution costs ~3% of a refactor, so even a mediocre
+                          # linear rate beats refactoring every iteration)
 
 # tensor (not engineering) component order used internally: [xx, yy, zz, xy, yz, xz]
 _SHEAR_PAIRS = {2: [(0, 1)], 3: [(0, 1), (1, 2), (0, 2)]}
@@ -313,15 +317,21 @@ class _PlasticSolver:
             eps[:, :, k] += corr
         return eps.reshape(-1, self.nv)
 
-    def _fill_coeffs(self, eps_total, commit):
-        C, sig, eps_p_new, p_new = _tangent(eps_total, self.mu, self.lam, self.eps_p, self.p,
-                                            self.mat_id, self.materials, self.dim)
+    def _fill_coeffs(self, eps_total, commit, tangent=True):
+        """Refresh the residual stress ``sig_q`` (always) and, when ``tangent``, the FD
+        algorithmic tangent ``C_q``/``C_c`` (1+nv return maps instead of 1)."""
+        if tangent:
+            C, sig, eps_p_new, p_new = _tangent(eps_total, self.mu, self.lam, self.eps_p,
+                                                self.p, self.mat_id, self.materials, self.dim)
+            self.C_q.x.array[:] = C.reshape(-1)
+            w = self.weights
+            Cc = (C.reshape(self.ncells, self.npts, self.nv, self.nv)
+                  * w[None, :, None, None]).sum(axis=1) / w.sum()
+            self.C_c.x.array[:] = Cc.reshape(-1)
+        else:
+            sig, eps_p_new, p_new = _return_map(eps_total, self.mu, self.lam, self.eps_p,
+                                                self.p, self.mat_id, self.materials, self.dim)
         self.sig_q.x.array[:] = sig.reshape(-1)
-        self.C_q.x.array[:] = C.reshape(-1)
-        w = self.weights
-        Cc = (C.reshape(self.ncells, self.npts, self.nv, self.nv)
-              * w[None, :, None, None]).sum(axis=1) / w.sum()
-        self.C_c.x.array[:] = Cc.reshape(-1)
         if commit:
             self.eps_p, self.p = eps_p_new, p_new
         return self._average(sig)
@@ -335,9 +345,19 @@ class _PlasticSolver:
 
     # -- one Newton solve at a fixed macro strain ----------------------------
     def _newton(self, E_voigt):
-        r0 = None
+        """Modified Newton: the tangent (and its LU factorization) is refreshed on the first
+        correcting iteration and whenever the frozen-tangent residual reduction stalls below
+        ``_FROZEN_RATIO``; in between, iterations reuse the factorization (back-substitution
+        only, ~3% of a refactor). A step that grows the residual is backtracked (halved,
+        residual-only re-check): return-map branch switching can trap an undamped Newton in a
+        two-cycle. The converged answer is set by the residual and tolerance, which are
+        unchanged."""
+        r0 = rprev = None
+        last_du = None
+        halvings = 0
         for _ in range(_MAX_NEWTON):
-            self._fill_coeffs(self._total_strain(E_voigt), commit=False)
+            eps_total = self._total_strain(E_voigt)
+            self._fill_coeffs(eps_total, commit=False, tangent=False)
             with self.b.localForm() as bl:
                 bl.set(0.0)
             dolfinx_mpc.assemble_vector(self.L_form, self.mpc, self.b)
@@ -356,20 +376,31 @@ class _PlasticSolver:
             if rnorm <= _NEWTON_TOL + _NEWTON_RTOL * (self._r_ref or 1.0):
                 break
 
-            if not np.array_equal(self.C_q.x.array, self._C_assembled):
-                self.A.zeroEntries()
-                dolfinx_mpc.assemble_matrix(self.a_form, self.mpc, bcs=self.bcs, A=self.A)
-                self.A.assemble()  # values-only refill; PETSc refactors on the next solve
-                self.ksp.setOperators(self.A)
-                self._C_assembled = self.C_q.x.array.copy()
+            if rprev is not None and rnorm > rprev and last_du is not None and halvings < 8:
+                last_du *= 0.5                      # backtrack: retreat half of the last step
+                self.u.x.array[:] = self.u.x.array + last_du
+                halvings += 1
+                continue
+            halvings = 0
+
+            if rprev is None or rnorm > _FROZEN_RATIO * rprev:
+                self._fill_coeffs(eps_total, commit=False, tangent=True)
+                if not np.array_equal(self.C_q.x.array, self._C_assembled):
+                    self.A.zeroEntries()
+                    dolfinx_mpc.assemble_matrix(self.a_form, self.mpc, bcs=self.bcs, A=self.A)
+                    self.A.assemble()  # values-only refill; PETSc refactors on the next solve
+                    self.ksp.setOperators(self.A)
+                    self._C_assembled = self.C_q.x.array.copy()
             self.ksp.solve(self.b, self.x)            # x = A^{-1} R
             self.x.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
             du = self.du
             fempetsc.assign(self.x, du)
             self.mpc.homogenize(du)
             self.mpc.backsubstitution(du)
-            self.u.x.array[:] = self.u.x.array - du.x.array
-        return self._fill_coeffs(self._total_strain(E_voigt), commit=False)
+            last_du = du.x.array.copy()
+            self.u.x.array[:] = self.u.x.array - last_du
+            rprev = rnorm
+        return self._fill_coeffs(self._total_strain(E_voigt), commit=False, tangent=False)
 
     # -- public entry --------------------------------------------------------
     def _target_voigt(self, loading):
@@ -421,7 +452,7 @@ class _PlasticSolver:
                     self._J_macro = self._macro_jac_fd(E, free_slots, resid)
                 prev_val, prev_resid = free_val.copy(), resid
                 free_val = free_val - np.linalg.solve(self._J_macro, resid)
-            self._fill_coeffs(self._total_strain(E), commit=True)
+            self._fill_coeffs(self._total_strain(E), commit=True, tangent=False)
 
         self.E_current = E.copy()
         sbar = self._average(_return_map(self._total_strain(E), self.mu, self.lam, self.eps_p,
@@ -529,15 +560,19 @@ class _StandardPlasticSolver:
             eps[:, :, k] += corr
         return eps.reshape(-1, self.nv)
 
-    def _fill_coeffs(self, eps_total, commit=False):
-        C, sig, eps_p_new, p_new = _tangent(eps_total, self.mu, self.lam, self.eps_p, self.p,
-                                            self.mat_id, self.materials, self.dim)
+    def _fill_coeffs(self, eps_total, commit=False, tangent=True):
+        if tangent:
+            C, sig, eps_p_new, p_new = _tangent(eps_total, self.mu, self.lam, self.eps_p,
+                                                self.p, self.mat_id, self.materials, self.dim)
+            self.C_q.x.array[:] = C.reshape(-1)
+            w = self.weights
+            Cc = (C.reshape(self.ncells, self.npts, self.nv, self.nv)
+                  * w[None, :, None, None]).sum(axis=1) / w.sum()
+            self.C_c.x.array[:] = Cc.reshape(-1)
+        else:
+            sig, eps_p_new, p_new = _return_map(eps_total, self.mu, self.lam, self.eps_p,
+                                                self.p, self.mat_id, self.materials, self.dim)
         self.sig_q.x.array[:] = sig.reshape(-1)
-        self.C_q.x.array[:] = C.reshape(-1)
-        w = self.weights
-        Cc = (C.reshape(self.ncells, self.npts, self.nv, self.nv)
-              * w[None, :, None, None]).sum(axis=1) / w.sum()
-        self.C_c.x.array[:] = Cc.reshape(-1)
         if commit:
             self.eps_p, self.p = eps_p_new, p_new
 
@@ -550,9 +585,12 @@ class _StandardPlasticSolver:
     def solve(self):
         fempetsc.set_bc(self.u.x.petsc_vec, self.bcs)   # u carries the prescribed face displ.
         self.u.x.scatter_forward()
-        r0 = None
+        r0 = rprev = None
+        last_du = None
+        halvings = 0
         for _ in range(_MAX_NEWTON):
-            self._fill_coeffs(self._strain())
+            eps_total = self._strain()
+            self._fill_coeffs(eps_total, tangent=False)
             r = self._residual()                                 # R(u) = internal force
             fempetsc.set_bc(r, self.bcs, x0=self.u.x.petsc_vec, alpha=-1.0)  # 0 at Dirichlet
             r.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
@@ -562,18 +600,29 @@ class _StandardPlasticSolver:
             if rnorm <= _NEWTON_TOL + _NEWTON_RTOL * (r0 or 1.0):
                 r.destroy()
                 break
-            if not np.array_equal(self.C_q.x.array, self._C_assembled):
-                self.A.zeroEntries()
-                fempetsc.assemble_matrix(self.A, self.a_form, bcs=self.bcs)
-                self.A.assemble()  # values-only refill; PETSc refactors on the next solve
-                self.ksp.setOperators(self.A)
-                self._C_assembled = self.C_q.x.array.copy()
+            if rprev is not None and rnorm > rprev and last_du is not None and halvings < 8:
+                last_du *= 0.5                      # backtrack: retreat half of the last step
+                self.u.x.array[:] = self.u.x.array + last_du
+                halvings += 1
+                r.destroy()
+                continue
+            halvings = 0
+            if rprev is None or rnorm > _FROZEN_RATIO * rprev:  # modified Newton (see _newton)
+                self._fill_coeffs(eps_total, tangent=True)
+                if not np.array_equal(self.C_q.x.array, self._C_assembled):
+                    self.A.zeroEntries()
+                    fempetsc.assemble_matrix(self.A, self.a_form, bcs=self.bcs)
+                    self.A.assemble()  # values-only refill; PETSc refactors on the next solve
+                    self.ksp.setOperators(self.A)
+                    self._C_assembled = self.C_q.x.array.copy()
             self.ksp.solve(r, self.x)            # x = A^{-1} R
             self.x.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
-            self.u.x.array[:] = self.u.x.array - self.x.array
+            last_du = self.x.array.copy()
+            self.u.x.array[:] = self.u.x.array - last_du
             r.destroy()
+            rprev = rnorm
         # commit + reaction = internal force (no BC modification) summed at the drive face
-        self._fill_coeffs(self._strain(), commit=True)
+        self._fill_coeffs(self._strain(), commit=True, tangent=False)
         fint = self._residual()
         f = fint.getArray()
         u = self.u.x.array
