@@ -1,0 +1,90 @@
+{
+  "n": 50,
+  "n_freqs": 20,
+  "results": {
+    "periodic": {
+      "path": "periodic",
+      "n": 50,
+      "n_freqs": 20,
+      "ndof": 5202,
+      "wall_s": 2.9152545714750886,
+      "sections": {
+        "set_moduli": {
+          "total_s": 0.006281563080847263,
+          "call_count": 21,
+          "per_call_ms": 0.2991220514689173,
+          "pct_wall": 0.21547219725887806
+        },
+        "mpc_assemble_matrix": {
+          "total_s": 0.14939051028341055,
+          "call_count": 21,
+          "per_call_ms": 7.11383382301955,
+          "pct_wall": 5.12444133507766
+        },
+        "mpc_assemble_vector": {
+          "total_s": 0.024786729365587234,
+          "call_count": 41,
+          "per_call_ms": 0.6045543747704204,
+          "pct_wall": 0.850242363329711
+        },
+        "ksp_solve": {
+          "total_s": 2.6917334124445915,
+          "call_count": 40,
+          "per_call_ms": 67.29333531111479,
+          "pct_wall": 92.33270530753691
+        },
+        "sbar_assemble": {
+          "total_s": 0.06966425199061632,
+          "call_count": 121,
+          "per_call_ms": 0.5757376197571596,
+          "pct_wall": 2.3896455792321056
+        }
+      },
+      "section_sum_s": 2.941856467165053,
+      "other_s": -0.026601895689964294,
+      "other_pct_wall": -0.9125067824352647
+    },
+    "standard": {
+      "path": "standard",
+      "n": 50,
+      "n_freqs": 20,
+      "ndof": 5202,
+      "wall_s": 1.1293418062850833,
+      "sections": {
+        "set_moduli": {
+          "total_s": 0.006348638795316219,
+          "call_count": 21,
+          "per_call_ms": 0.30231613311029615,
+          "pct_wall": 0.5621538811353993
+        },
+        "std_assemble_A_bc": {
+          "total_s": 0.12830752786248922,
+          "call_count": 20,
+          "per_call_ms": 6.415376393124461,
+          "pct_wall": 11.361266106366044
+        },
+        "rhs_build": {
+          "total_s": 0.01012975163757801,
+          "call_count": 20,
+          "per_call_ms": 0.5064875818789005,
+          "pct_wall": 0.8969606527628116
+        },
+        "ksp_solve": {
+          "total_s": 0.9624813599511981,
+          "call_count": 20,
+          "per_call_ms": 48.124067997559905,
+          "pct_wall": 85.22498278154026
+        },
+        "react_assemble": {
+          "total_s": 0.015257428400218487,
+          "call_count": 20,
+          "per_call_ms": 0.7628714200109243,
+          "pct_wall": 1.351001823832864
+        }
+      },
+      "section_sum_s": 1.1225247066468,
+      "other_s": 0.006817099638283253,
+      "other_pct_wall": 0.6036347543626124
+    }
+  }
+}

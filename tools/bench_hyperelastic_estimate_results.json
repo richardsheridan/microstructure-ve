@@ -1,0 +1,113 @@
+{
+  "scenario": {
+    "microstructures": 5000,
+    "extensions_per_curve": 12,
+    "grid": "50x50",
+    "ndof": 5202,
+    "dim": 2,
+    "macro_strain": 0.02,
+    "repeats": 5,
+    "proxy_band": [
+      1.0,
+      3.0
+    ]
+  },
+  "cost_model": {
+    "predict_lu_seconds_one_solve": 0.14932708723683333,
+    "note": "calibrated single-core LU on 2x Xeon Gold 6148 (tools/bench_solvers.py)"
+  },
+  "variants": {
+    "confined": {
+      "free_lateral": false,
+      "ndof": 5202,
+      "dim": 2,
+      "increments": 12,
+      "cold_s": 3.9440095806494355,
+      "steady_s": 3.864173637703061,
+      "steady_s_all": [
+        3.8770218389108777,
+        3.864173637703061,
+        3.7526069693267345,
+        3.7481710044667125,
+        3.868881435133517
+      ],
+      "linear_solves": 99,
+      "linear_solves_all": [
+        99,
+        99,
+        99,
+        99,
+        99
+      ]
+    },
+    "free_lateral": {
+      "free_lateral": true,
+      "ndof": 5202,
+      "dim": 2,
+      "increments": 12,
+      "cold_s": 13.150055552832782,
+      "steady_s": 12.572330931201577,
+      "steady_s_all": [
+        12.572330931201577,
+        12.937126463279128,
+        12.48978416249156,
+        12.87986888922751,
+        12.515974534675479
+      ],
+      "linear_solves": 281,
+      "linear_solves_all": [
+        281,
+        281,
+        281,
+        281,
+        281
+      ]
+    }
+  },
+  "estimate": {
+    "confined": {
+      "steady_s": 3.864173637703061,
+      "linear_solves": 99,
+      "modeled_s": 14.7833816364465,
+      "cpu_hours_5000": 5.36690783014314,
+      "cpu_hours_5000_band": [
+        5.36690783014314,
+        16.10072349042942
+      ]
+    },
+    "free_lateral": {
+      "steady_s": 12.572330931201577,
+      "linear_solves": 281,
+      "modeled_s": 41.960911513550165,
+      "cpu_hours_5000": 17.46157073777997,
+      "cpu_hours_5000_band": [
+        17.46157073777997,
+        52.38471221333991
+      ]
+    }
+  },
+  "headline_cpu_hours_band": [
+    5.36690783014314,
+    52.38471221333991
+  ],
+  "wallclock_hours": {
+    "confined": {
+      "1": 5.36690783014314,
+      "4": 1.341726957535785,
+      "16": 0.33543173938394627,
+      "80": 0.06708634787678926
+    },
+    "free_lateral": {
+      "1": 17.46157073777997,
+      "4": 4.365392684444992,
+      "16": 1.091348171111248,
+      "80": 0.2182696342222496
+    }
+  },
+  "caveats": [
+    "PROXY: J2 plasticity stands in for hyperelasticity; small-strain, not NLGEOM.",
+    "single mesh size (50x50, 5202 DOF, 2D); 3D would be far heavier.",
+    "single-core timing; FFCx form-compile warmed up (amortized over the batch).",
+    "CPU-hours are parallelism-invariant; wallclock rows assume perfect core scaling."
+  ]
+}
