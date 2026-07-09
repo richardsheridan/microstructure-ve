@@ -41,19 +41,25 @@ class MatrixDolfinxTests(unittest.TestCase):
         # contracts it with the analytic isotropic stiffness from E*(f) -- so normal, shear,
         # and compression cells are all checked without per-mode code.
         from microstructure_ve.backends.dolfinx import _loading
-        from microstructure_ve.constitutive import Plastic
+        from microstructure_ve.constitutive import (
+            ArrudaBoyce,
+            Plastic,
+            Polynomial,
+            ReducedPolynomial,
+        )
 
         dim = cell["dim"]
         arr = np.asarray(rows, dtype=complex)
         self.assertEqual(arr.shape[1], 1 + 3 * dim)
         self.assertTrue(np.all(np.isfinite(arr)))
+        nonlinear = (Plastic, ArrudaBoyce, Polynomial, ReducedPolynomial)
         if (cell["bc"] != "periodic" or len(list(sim.steps)) > 1
-                or any(isinstance(m.response, Plastic) for m in sim.model.materials)):
+                or any(isinstance(m.response, nonlinear) for m in sim.model.materials)):
             # Non-periodic (standard) cells are clamped Dirichlet BVPs, not a uniform-field
             # homogenization; multi-step cells mix Static (real *Elastic) and Dynamic rows in
-            # one table; a plastic cell's response is nonlinear, not the linear C:E. None fit
-            # the single closed-form C:E invariant, so their numerical correctness is pinned
-            # by test_matrix_parity against the ABAQUS oracle.
+            # one table; plastic and hyperelastic (finite-strain) responses are nonlinear,
+            # not the linear C:E. None fit the single closed-form C:E invariant, so their
+            # numerical correctness is pinned by test_matrix_parity against the ABAQUS oracle.
             return
 
         loading = _loading.macro_loading(sim)

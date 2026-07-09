@@ -30,10 +30,15 @@ def read_odb(name, drive_nodeset):
     drive_nset = odb.rootAssembly.instances["PART-1-1"].nodeSets[drive_nodeset.upper()]
     step_results = []
     for step in odb.steps.values():
-        for frame in step.frames:
+        frames = [f for f in step.frames if f.frameValue != 0]
+        # An auto-incremented *STATIC step (e.g. a finite-strain NLGEOM solve that needed
+        # several increments) writes one frame per converged increment; the oracle contract
+        # is ONE row per Static step (the FE side reports only the converged step end), so
+        # keep the final loaded frame. Dynamic steps keep every frame (one per frequency).
+        if frames and step.procedure.upper().startswith("*STATIC"):
+            frames = frames[-1:]
+        for frame in frames:
             frame_value = frame.frameValue
-            if frame_value == 0:
-                continue
 
             U = frame.fieldOutputs["U"].getSubset(region=drive_nset, position=NODAL)
             U_Real = np.zeros_like(U.values[0].data)

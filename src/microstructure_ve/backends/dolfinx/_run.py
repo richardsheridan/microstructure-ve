@@ -204,12 +204,20 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     """
     dim = sim.model.nodes.dim
 
-    if _has_hyperelastic_static(sim):
-        raise NotImplementedError(
-            "hyperelastic responses need the finite-strain solver (not yet implemented)"
-        )
+    if _has_hyperelastic(sim.model):
+        from microstructure_ve.steps import Dynamic
 
-    if len(list(sim.steps)) > 1 or _has_plastic_static(sim):
+        if any(spec.find(step.subsections, Dynamic) is not None for step in sim.steps):
+            raise NotImplementedError(
+                "steady-state dynamics about a hyperelastic (finite-strain) state is "
+                "not supported; hyperelastic sims must be Static-only"
+            )
+        if _has_plastic_static(sim):
+            raise NotImplementedError(
+                "mixing hyperelastic and plastic responses in one model is not supported"
+            )
+
+    if len(list(sim.steps)) > 1 or _has_plastic_static(sim) or _has_hyperelastic_static(sim):
         out = _run_multistep(sim, bbar, cancel, solver, petsc_options, n_incr)
         if output_path is not None:
             np.savetxt(output_path, out, fmt="%.8e", delimiter="\t",
@@ -264,18 +272,24 @@ def _has_plastic_static(sim):
     return any(any(isinstance(s, Static) for s in step.subsections) for step in sim.steps)
 
 
-def _has_hyperelastic_static(sim):
-    """True iff ``sim`` carries a hyperelastic response and a ``Static`` step (numpy-only check).
-
-    Hyperelastic materials (ArrudaBoyce, ReducedPolynomial, Polynomial) require the
-    finite-strain solver, which is not yet implemented."""
+def _has_hyperelastic(model):
+    """True iff ``model`` carries a hyperelastic response (numpy-only check)."""
     from microstructure_ve.constitutive import ArrudaBoyce, Polynomial, ReducedPolynomial
+
+    return any(
+        isinstance(m.response, (ArrudaBoyce, ReducedPolynomial, Polynomial))
+        for m in model.materials
+    )
+
+
+def _has_hyperelastic_static(sim):
+    """True iff ``sim`` carries a hyperelastic response and a ``Static`` step (numpy-only).
+
+    Such a step needs the finite-strain total-Lagrangian solve (``_hyperelastic``) instead
+    of the linear elastic ``solve_one``."""
     from microstructure_ve.steps import Static
 
-    if not any(
-        isinstance(m.response, (ArrudaBoyce, ReducedPolynomial, Polynomial))
-        for m in sim.model.materials
-    ):
+    if not _has_hyperelastic(sim.model):
         return False
     return any(any(isinstance(s, Static) for s in step.subsections) for step in sim.steps)
 
@@ -293,6 +307,7 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
     solve_one, _ = build_solver(sim, bbar, cancel=cancel,
                                 petsc_options=petsc_options, solver=solver)
     has_plastic = any(isinstance(m.response, Plastic) for m in sim.model.materials)
+    has_hyper = _has_hyperelastic(sim.model)
     has_pbc = any(isinstance(bc, PeriodicBoundaryConstraint) for bc in sim.model.bcs)
     plastic_solver = None
     if has_plastic:
@@ -307,6 +322,18 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
             plastic_solver = _plastic.make_solver(prob, sim.model)
         else:
             plastic_solver = _plastic.make_standard_solver(prob, sim.model, sim)
+    hyper_solver = None
+    if has_hyper:
+        from . import _hyperelastic
+        geom = spec.Geometry.from_model(sim.model, sim)
+        prob = _fe_problem(geom, sim.model, bbar)          # cached, populated by build_solver
+        # ONE persistent finite-strain solver: H_current and the fluctuation warm-start
+        # carry across consecutive hyperelastic Static steps (the response itself is
+        # path-independent).
+        if has_pbc:
+            hyper_solver = _hyperelastic.make_solver(prob, sim.model)
+        else:
+            hyper_solver = _hyperelastic.make_standard_solver(prob, sim.model, sim)
 
     rows = []
     for step in sim.steps:
@@ -327,6 +354,17 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
                 rows.append(plastic_solver.solve(loading, step_incr))
             elif has_plastic:
                 rows.append(plastic_solver.solve())            # standard: BCs parsed from sim
+            elif has_hyper and has_pbc:
+                loading = loadingmod.macro_loading(sim, step=step)
+                step_incr = n_incr
+                # a few increments even when fully prescribed: Newton globalization at
+                # ~30-50% strain (the answer is increment-independent -- path-independent
+                # energy -- only the warm-start path changes)
+                if step_incr is None:
+                    step_incr = 5 if not list(loading.free) else 10
+                rows.append(hyper_solver.solve(loading, step_incr))
+            elif has_hyper:
+                rows.append(hyper_solver.solve(n_incr if n_incr is not None else 5))
             else:
                 rows.append(solve_one(1.0, elastic=True))  # frame value 1.0, real *Elastic
     return np.array(rows)

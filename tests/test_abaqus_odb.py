@@ -42,8 +42,9 @@ class _Frame:
 
 
 class _Step:
-    def __init__(self, frames):
+    def __init__(self, frames, procedure="*STEADY STATE DYNAMICS, DIRECT"):
         self.frames = frames
+        self.procedure = procedure
 
 
 def _fake_odb():
@@ -83,6 +84,23 @@ class AbaqusOdbReaderTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)  # the frame-value-0 base frame is skipped
         # [frame_value, RF_Real(2), RF_Imag(2), U_Real(2)]
         np.testing.assert_allclose(rows[0], [10.0, 2.0, -1.0, 3.0, 0.5, 0.5, 0.0])
+
+    def test_static_step_keeps_only_the_final_frame(self):
+        # An auto-incremented NLGEOM *STATIC step writes one frame per converged increment;
+        # the oracle contract is one row per Static step (the FE side reports only the
+        # converged step end), so the reader must keep the final loaded frame only.
+        def static_frame(t, rf1):
+            return _Frame(t, _Field([_Value([t * 0.5, 0.0])]),
+                          _Field([_Value([rf1, 0.0])]))
+
+        self.odb.steps = {"Step-1": _Step(
+            [static_frame(0.0, 0.0), static_frame(0.25, 10.0),
+             static_frame(0.5, 20.0), static_frame(1.0, 42.0)],
+            procedure="*STATIC",
+        )}
+        rows = self.reader.read_odb("job", "x1y0")
+        self.assertEqual(len(rows), 1)
+        np.testing.assert_allclose(rows[0], [1.0, 42.0, 0.0, 0.0, 0.0, 0.5, 0.0])
 
     def test_no_dynamic_frames_raises(self):
         self.odb.steps = {"Step-1": _Step([_Frame(0.0, _Field([_Value([0.0, 0.0])]),

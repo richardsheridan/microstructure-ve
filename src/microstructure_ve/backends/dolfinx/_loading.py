@@ -51,6 +51,15 @@ class MacroLoading:
     drive_value: float        # corner displacement reported as U[primary_dof-1]
     cross_area: float         # area perpendicular to primary_axis
     active: List[Tuple[int, int]] = field(default_factory=list)  # imposed + free components
+    # The NON-symmetric macro displacement gradient the corner drives impose: the corner-
+    # driven PBC constrains u(X + L_a e_a) - u(X) = column a of H (scaled by L_a), so a
+    # corner R_a displaced by ``value`` in dof i gives H[i, a] = value / L_a. All other
+    # H entries backed by a pinned corner dof are 0 (the zeros are implicit -- only driven
+    # entries appear here). Small-strain consumers keep using the symmetrized ``imposed``
+    # (shear E_ab = gamma/2); the finite-strain solver needs the raw H because simple shear
+    # (H[b,a] = gamma, H[a,b] = 0) and pure shear differ at finite strain. ``free`` doubles
+    # as the free DIAGONAL slots of H (a floating lateral corner normal).
+    H_imposed: Dict[Tuple[int, int], float] = field(default_factory=dict)
 
 
 def _axis_lengths(nodes):
@@ -114,6 +123,7 @@ def macro_loading(sim, step=None):
                     pinned.add((int(ind), int(dof)))
 
     imposed = {}
+    H_imposed = {}
     driven_axes = set()
     primary = None
     for d in drives:
@@ -124,6 +134,7 @@ def macro_loading(sim, step=None):
         value = float(np.real(d.constraint.value))
         a = _corner_axis(d.target, dim)
         i = drive_dof - 1  # 0-indexed component
+        H_imposed[(i, a)] = value / L[a]  # raw macro gradient: corner R_a moved in dof i
         if i != a:
             # Off-diagonal (shear) drive: R_a displaced in dof i (= b), imposing H[b,a] = γ.
             # Simple shear: conjugate H[a,b] = 0, so symmetric tensor strain E_{ab} = γ/2.
@@ -159,6 +170,7 @@ def macro_loading(sim, step=None):
         dim=dim, imposed=imposed, free=free, primary_axis=a0, primary_dof=primary_dof,
         drive_value=drive_value, cross_area=cross_area,
         active=list(imposed.keys()) + free,
+        H_imposed=H_imposed,
     )
 
 
@@ -226,18 +238,24 @@ def can_run(sim):
     - *Standard* sims (no ``PeriodicBoundaryConstraint``): validated by
       ``_standard_can_run`` (direct-Dirichlet path, well-posed cells only).
     """
-    # temporary until the finite-strain solver lands
-    from microstructure_ve.constitutive import ArrudaBoyce, Polynomial, ReducedPolynomial
-
-    if any(
-        isinstance(m.response, (ArrudaBoyce, ReducedPolynomial, Polynomial))
-        for m in sim.model.materials
-    ):
-        return False
-
     from microstructure_ve.boundary import PeriodicBoundaryConstraint
-
+    from microstructure_ve.constitutive import ArrudaBoyce, Polynomial, ReducedPolynomial
     from microstructure_ve.steps import Dynamic, Static
+
+    # Hyperelastic (finite-strain) sims: the total-Lagrangian solver handles Static steps
+    # only -- steady-state dynamics about a nonlinear preload is unsupported -- and every
+    # phase must be hyperelastic of the SAME model class (an *Elastic phase under NLGEOM
+    # is hypoelastic in ABAQUS, which the total-Lagrangian energy formulation cannot
+    # reproduce; different classes would need distinct coefficient layouts per cell).
+    hyper = [m.response for m in sim.model.materials
+             if isinstance(m.response, (ArrudaBoyce, ReducedPolynomial, Polynomial))]
+    if hyper:
+        if len(hyper) != len(list(sim.model.materials)):
+            return False
+        if len({type(r) for r in hyper}) != 1:
+            return False
+        if any(spec.find(step.subsections, Dynamic) is not None for step in sim.steps):
+            return False
 
     has_pbc = any(isinstance(bc, PeriodicBoundaryConstraint) for bc in sim.model.bcs)
     if has_pbc:
