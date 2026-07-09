@@ -18,7 +18,15 @@ from .boundary import (
     Prescribed,
     validate_constraints,
 )
-from .constitutive import Elastic, Plastic, PronyViscoelastic, TabularViscoelastic
+from .constitutive import (
+    ArrudaBoyce,
+    Elastic,
+    Plastic,
+    Polynomial,
+    PronyViscoelastic,
+    ReducedPolynomial,
+    TabularViscoelastic,
+)
 from .core import ElementSet, GridElements, GridNodes, NodeSet
 from .materials import Material
 from .steps import Dynamic, Heading, Model, Simulation, Static, Step
@@ -37,6 +45,7 @@ __all__ = [
     "Material",
     # constitutive responses
     "Elastic", "Plastic", "TabularViscoelastic", "PronyViscoelastic",
+    "ReducedPolynomial", "Polynomial", "ArrudaBoyce",
     # boundary
     "BoundaryCondition", "Fixed", "Prescribed",
     "PeriodicBoundaryConstraint", "validate_constraints",

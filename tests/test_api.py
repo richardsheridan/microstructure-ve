@@ -15,6 +15,7 @@ EXPECTED = {
     "NodeSet", "GridNodes", "GridElements", "ElementSet",
     "Material",
     "Elastic", "Plastic", "TabularViscoelastic", "PronyViscoelastic",
+    "ReducedPolynomial", "Polynomial", "ArrudaBoyce",
     "BoundaryCondition", "Fixed", "Prescribed",
     "PeriodicBoundaryConstraint", "validate_constraints",
     "Heading", "Static", "Dynamic", "Step", "Model", "Simulation",

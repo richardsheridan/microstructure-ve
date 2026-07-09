@@ -12,8 +12,11 @@ import unittest
 import numpy as np
 
 from microstructure_ve.constitutive import (
+    ArrudaBoyce,
     Plastic,
+    Polynomial,
     PronyViscoelastic,
+    ReducedPolynomial,
     TabularViscoelastic,
 )
 from microstructure_ve.utils import load_viscoelasticity
@@ -199,6 +202,255 @@ class PronyComplexModulus(unittest.TestCase):
         # no arms -> reduces to Elastic (frequency-flat elastic youngs).
         E = self._mat(G=(), K=(), tau=()).complex_modulus(np.array([1e-3, 1e0, 1e3]))
         np.testing.assert_allclose(E, [self.YOUNGS + 0j] * 3, rtol=1e-12)
+
+
+class HyperelasticMu0AndYoungs(unittest.TestCase):
+    """Small-strain shear modulus mu0 and Young's modulus for the hyperelastic responses.
+
+    mu0 is the linearised (Cauchy) shear modulus at zero strain; it differs between models:
+      ReducedPolynomial: mu0 = 2*C10
+      Polynomial:        mu0 = 2*(C10 + C01)
+      ArrudaBoyce:       mu0 = mu * (1 + 3/(5*lm**2) + 99/(175*lm**4)
+                                       + 513/(875*lm**6) + 42039/(67375*lm**8))
+    The Young's modulus at small strain is youngs = 2*mu0*(1+poisson) (isotropic elasticity).
+    """
+
+    def test_reduced_polynomial_mu0(self):
+        # For ReducedPolynomial with a single term, mu0 == 2*C10.
+        C10 = 1.23
+        rp = ReducedPolynomial(c=[C10], poisson=0.45)
+        self.assertAlmostEqual(rp.mu0, 2 * C10, places=12)
+
+    def test_reduced_polynomial_youngs(self):
+        C10, nu = 1.23, 0.45
+        rp = ReducedPolynomial(c=[C10], poisson=nu)
+        self.assertAlmostEqual(rp.youngs, 2 * (2 * C10) * (1 + nu), places=12)
+
+    def test_polynomial_mu0(self):
+        # For Polynomial (N=1), c == [C10, C01] and mu0 == 2*(C10 + C01).
+        C10, C01 = 0.8, 0.3
+        poly = Polynomial(c=[C10, C01], poisson=0.4)
+        self.assertAlmostEqual(poly.mu0, 2 * (C10 + C01), places=12)
+
+    def test_polynomial_youngs(self):
+        C10, C01, nu = 0.8, 0.3, 0.4
+        poly = Polynomial(c=[C10, C01], poisson=nu)
+        self.assertAlmostEqual(poly.youngs, 2 * (2 * (C10 + C01)) * (1 + nu), places=12)
+
+    def test_arruda_boyce_mu0(self):
+        # mu0 is the linearised shear from the Arruda-Boyce eight-chain model's Taylor series
+        # in 1/lm**2 (lm = chain locking stretch).
+        mu, lm = 2.5, 3.0
+        ab = ArrudaBoyce(mu=mu, lm=lm, poisson=0.49)
+        expected_mu0 = mu * (
+            1
+            + 3 / (5 * lm**2)
+            + 99 / (175 * lm**4)
+            + 513 / (875 * lm**6)
+            + 42039 / (67375 * lm**8)
+        )
+        self.assertAlmostEqual(ab.mu0, expected_mu0, places=12)
+
+    def test_arruda_boyce_youngs(self):
+        mu, lm, nu = 2.5, 3.0, 0.49
+        ab = ArrudaBoyce(mu=mu, lm=lm, poisson=nu)
+        mu0 = mu * (
+            1
+            + 3 / (5 * lm**2)
+            + 99 / (175 * lm**4)
+            + 513 / (875 * lm**6)
+            + 42039 / (67375 * lm**8)
+        )
+        self.assertAlmostEqual(ab.youngs, 2 * mu0 * (1 + nu), places=12)
+
+
+class HyperelasticDCoefficients(unittest.TestCase):
+    """Poisson-ratio-to-D derivation and explicit override.
+
+    When d is not given, compressibility is encoded via the bulk modulus coefficient D1:
+        K0 = 2*mu0*(1+nu) / (3*(1-2*nu))
+        D1 = 2 / K0 = 3*(1-2*nu) / (mu0*(1+nu))
+    For ReducedPolynomial/Polynomial with N>1 the effective list is [D1, 0, ..., 0] (length N).
+    For ArrudaBoyce effective d is [D1] (length 1).
+    The explicit d override uses the user-supplied list verbatim.
+    """
+
+    def _D1(self, mu0, nu):
+        return 3 * (1 - 2 * nu) / (mu0 * (1 + nu))
+
+    def test_reduced_polynomial_n1_derived_d(self):
+        C10, nu = 1.23, 0.40
+        rp = ReducedPolynomial(c=[C10], poisson=nu)
+        mu0 = 2 * C10
+        expected = [self._D1(mu0, nu)]
+        self.assertEqual(rp.d_coeffs, expected)
+
+    def test_reduced_polynomial_n2_derived_d_higher_zero(self):
+        # N=2: d_coeffs is [D1, 0.0] -- higher Di are set to zero.
+        C10, C20, nu = 1.0, 0.5, 0.45
+        rp = ReducedPolynomial(c=[C10, C20], poisson=nu)
+        mu0 = 2 * C10
+        D1 = self._D1(mu0, nu)
+        self.assertEqual(len(rp.d_coeffs), 2)
+        self.assertAlmostEqual(rp.d_coeffs[0], D1, places=12)
+        self.assertAlmostEqual(rp.d_coeffs[1], 0.0, places=12)
+
+    def test_polynomial_n2_derived_d_higher_zero(self):
+        # N=2 Polynomial: mu0 = 2*(C10+C01); d_coeffs is [D1, 0.0].
+        C10, C01, C20, C11, C02 = 0.8, 0.3, 0.1, 0.05, 0.02
+        nu = 0.40
+        poly = Polynomial(c=[C10, C01, C20, C11, C02], poisson=nu)
+        mu0 = 2 * (C10 + C01)
+        D1 = self._D1(mu0, nu)
+        self.assertEqual(len(poly.d_coeffs), 2)
+        self.assertAlmostEqual(poly.d_coeffs[0], D1, places=12)
+        self.assertAlmostEqual(poly.d_coeffs[1], 0.0, places=12)
+
+    def test_arruda_boyce_derived_d(self):
+        mu, lm, nu = 2.5, 3.0, 0.49
+        ab = ArrudaBoyce(mu=mu, lm=lm, poisson=nu)
+        mu0 = mu * (
+            1 + 3 / (5 * lm**2) + 99 / (175 * lm**4)
+            + 513 / (875 * lm**6) + 42039 / (67375 * lm**8)
+        )
+        D1 = self._D1(mu0, nu)
+        self.assertEqual(len(ab.d_coeffs), 1)
+        self.assertAlmostEqual(ab.d_coeffs[0], D1, places=12)
+
+    def test_explicit_d_override_reduced_polynomial(self):
+        # Explicit d of correct length is stored verbatim.
+        rp = ReducedPolynomial(c=[1.0, 0.5], poisson=0.45, d=[0.1, 0.2])
+        self.assertEqual(rp.d_coeffs, [0.1, 0.2])
+
+    def test_explicit_d_override_polynomial(self):
+        poly = Polynomial(c=[0.8, 0.3], poisson=0.4, d=[0.05])
+        self.assertEqual(poly.d_coeffs, [0.05])
+
+    def test_explicit_d_override_arruda_boyce(self):
+        ab = ArrudaBoyce(mu=2.5, lm=3.0, poisson=0.49, d=[0.01])
+        self.assertEqual(ab.d_coeffs, [0.01])
+
+    def test_wrong_d_length_reduced_polynomial_raises(self):
+        # d must match N (number of c terms) for ReducedPolynomial.
+        with self.assertRaises(ValueError):
+            ReducedPolynomial(c=[1.0, 0.5], poisson=0.45, d=[0.1])  # need length 2
+
+    def test_wrong_d_length_polynomial_raises(self):
+        # For Polynomial(N=2), d must have length 2.
+        with self.assertRaises(ValueError):
+            Polynomial(c=[0.8, 0.3, 0.1, 0.05, 0.02], poisson=0.40, d=[0.1, 0.2, 0.3])
+
+    def test_wrong_d_length_arruda_boyce_raises(self):
+        # ArrudaBoyce d must be length 1.
+        with self.assertRaises(ValueError):
+            ArrudaBoyce(mu=2.5, lm=3.0, poisson=0.49, d=[0.01, 0.02])
+
+
+class HyperelasticValidation(unittest.TestCase):
+    """Input validation for all three hyperelastic forms.
+
+    poisson >= 0.5 (fully incompressible) is rejected because fully incompressible
+    materials require hybrid (mixed-formulation) elements, which are out of scope.
+    poisson is required even when d is given because it feeds the duck-typed backend
+    interface (youngs, complex_modulus).
+    Coefficient list length is validated against the allowed polynomial orders.
+    """
+
+    def test_incompressible_poisson_reduced_polynomial(self):
+        with self.assertRaises(ValueError):
+            ReducedPolynomial(c=[1.0], poisson=0.5)
+
+    def test_incompressible_poisson_polynomial(self):
+        with self.assertRaises(ValueError):
+            Polynomial(c=[1.0, 0.0], poisson=0.5)
+
+    def test_incompressible_poisson_arruda_boyce(self):
+        with self.assertRaises(ValueError):
+            ArrudaBoyce(mu=1.0, lm=3.0, poisson=0.5)
+
+    def test_over_incompressible_poisson_raises(self):
+        with self.assertRaises(ValueError):
+            ReducedPolynomial(c=[1.0], poisson=0.6)
+
+    def test_reduced_polynomial_invalid_c_length_zero(self):
+        with self.assertRaises(ValueError):
+            ReducedPolynomial(c=[], poisson=0.4)
+
+    def test_reduced_polynomial_invalid_c_length_too_long(self):
+        with self.assertRaises(ValueError):
+            ReducedPolynomial(c=[1.0] * 7, poisson=0.4)
+
+    def test_polynomial_invalid_c_length(self):
+        # Valid c lengths for Polynomial are N*(N+3)/2 for N=1..6: 2,5,9,14,20,27.
+        # Length 3 is not a valid count.
+        with self.assertRaises(ValueError):
+            Polynomial(c=[1.0, 0.0, 0.5], poisson=0.4)
+
+    def test_polynomial_valid_lengths(self):
+        # N=1: 2 terms, N=2: 5 terms -- smoke-test that construction succeeds.
+        Polynomial(c=[1.0, 0.0], poisson=0.4)
+        Polynomial(c=[1.0, 0.0, 0.5, 0.0, 0.0], poisson=0.4)
+
+    def test_reduced_polynomial_n_property(self):
+        rp = ReducedPolynomial(c=[1.0, 0.5, 0.1], poisson=0.4)
+        self.assertEqual(rp.n, 3)
+
+    def test_polynomial_n_property(self):
+        # N=2 has 5 coefficients (C10,C01,C20,C11,C02).
+        poly = Polynomial(c=[1.0, 0.0, 0.5, 0.0, 0.0], poisson=0.4)
+        self.assertEqual(poly.n, 2)
+
+
+class HyperelasticComplexModulus(unittest.TestCase):
+    """complex_modulus(freqs) is frequency-flat and real == youngs.
+
+    Hyperelastic materials have no frequency-dependent dissipation (the finite-strain
+    elasticity is instantaneous), so the complex modulus is simply ``youngs + 0j``
+    at every frequency -- mirroring the Plastic / Elastic pattern.
+    """
+
+    def test_reduced_polynomial_complex_modulus_flat(self):
+        rp = ReducedPolynomial(c=[1.5], poisson=0.3)
+        E = rp.complex_modulus(np.array([1e0, 1e6]))
+        np.testing.assert_array_equal(E, [rp.youngs + 0j, rp.youngs + 0j])
+
+    def test_polynomial_complex_modulus_flat(self):
+        poly = Polynomial(c=[1.2, 0.4], poisson=0.35)
+        E = poly.complex_modulus(np.array([1e-3, 1e9]))
+        np.testing.assert_array_equal(E, [poly.youngs + 0j, poly.youngs + 0j])
+
+    def test_arruda_boyce_complex_modulus_flat(self):
+        ab = ArrudaBoyce(mu=2.0, lm=4.0, poisson=0.48)
+        E = ab.complex_modulus(np.array([0.1, 1e5]))
+        np.testing.assert_array_equal(E, [ab.youngs + 0j, ab.youngs + 0j])
+
+    def test_complex_modulus_dtype_is_complex(self):
+        rp = ReducedPolynomial(c=[1.0], poisson=0.3)
+        E = rp.complex_modulus(np.array([1.0]))
+        self.assertTrue(np.iscomplexobj(E))
+
+
+class HyperelasticNeoHookeEquivalence(unittest.TestCase):
+    """ReducedPolynomial(N=1) and Polynomial(N=1 with C01=0) are both Neo-Hookean.
+
+    The Neo-Hooke model is the simplest hyperelastic form: W = C10*(I1-3). It is
+    recovered by ReducedPolynomial([C10]) and by Polynomial([C10, 0.0]). Both must
+    produce identical mu0, youngs, and d_coeffs.
+    """
+
+    def test_neo_hooke_youngs_equivalent(self):
+        C10, nu = 0.9, 0.45
+        rp = ReducedPolynomial(c=[C10], poisson=nu)
+        poly = Polynomial(c=[C10, 0.0], poisson=nu)
+        self.assertAlmostEqual(rp.youngs, poly.youngs, places=12)
+
+    def test_neo_hooke_d_coeffs_equivalent(self):
+        C10, nu = 0.9, 0.45
+        rp = ReducedPolynomial(c=[C10], poisson=nu)
+        poly = Polynomial(c=[C10, 0.0], poisson=nu)
+        self.assertEqual(len(rp.d_coeffs), len(poly.d_coeffs))
+        for a, b in zip(rp.d_coeffs, poly.d_coeffs):
+            self.assertAlmostEqual(a, b, places=12)
 
 
 if __name__ == "__main__":

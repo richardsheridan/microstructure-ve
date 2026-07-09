@@ -11,8 +11,30 @@ touches no other backend. The ABAQUS backend also reads the tabular helpers
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
+
+
+# ---------------------------------------------------------------------------
+# Hyperelastic helpers
+# ---------------------------------------------------------------------------
+
+def _d1_from_poisson(mu0: float, nu: float) -> float:
+    """Bulk compressibility coefficient D1 from the small-strain shear modulus and Poisson's ratio.
+
+    The isotropic small-strain bulk modulus is K0 = 2*mu0*(1+nu) / (3*(1-2*nu)); ABAQUS
+    encodes compressibility for hyperelastic models through the coefficient D1 = 2/K0::
+
+        D1 = 3*(1-2*nu) / (mu0*(1+nu))
+
+    Note that the ABAQUS ``*HYPERELASTIC`` keyword's ``POISSON`` parameter is *illegal* when
+    coefficients are given on data lines.  Compressibility must therefore be expressed via the
+    Di data-line entries.  ``poisson`` here is converted to D1 (and Di>1 set to zero) unless
+    the caller supplies ``d`` explicitly.  ``poisson``/``youngs`` also serve the small-strain
+    duck-typed backend interface (DOLFINx / complex_modulus).
+    """
+    return 3.0 * (1.0 - 2.0 * nu) / (mu0 * (1.0 + nu))
 
 
 @dataclass
@@ -192,3 +214,244 @@ class PronyViscoelastic:
         g_star = g_inf + arms @ np.asarray(self.shear_modulus_coefficients, dtype=float)
         k_star = k_inf + arms @ np.asarray(self.bulk_modulus_coefficients, dtype=float)
         return 9 * k_star * g_star / (3 * k_star + g_star)
+
+
+# ---------------------------------------------------------------------------
+# Hyperelastic constitutive responses
+# ---------------------------------------------------------------------------
+
+# Valid coefficient counts for a Polynomial of order N=1..6.
+# The number of distinct Cij with i>=0, j>=0, 1<=i+j<=N is N*(N+3)/2.
+_POLYNOMIAL_VALID_LENGTHS = {N * (N + 3) // 2: N for N in range(1, 7)}
+# {2:1, 5:2, 9:3, 14:4, 20:5, 27:6}
+
+
+@dataclass
+class ReducedPolynomial:
+    """A reduced polynomial (Rivlin) hyperelastic response.
+
+    The strain-energy density is W = sum_{k=1}^{N} C_{k0} * (I1 - 3)**k, where I1 is the
+    first deviatoric strain invariant.  ``c`` holds [C10, C20, ..., CN0]; N is 1..6.
+
+    **Small-strain equivalence:** mu0 = 2*C10; E_small = 2*mu0*(1+poisson).
+
+    **Compressibility:** the ABAQUS ``*HYPERELASTIC`` keyword's ``POISSON`` parameter is
+    *illegal* when coefficients are given on data lines.  Compressibility is therefore encoded
+    through the Di coefficients (ABAQUS data-line column).  When ``d`` is not given, D1 is
+    derived from ``poisson`` via D1 = 3*(1-2*nu) / (mu0*(1+nu)) (equivalently 2/K0 with
+    K0 = 2*mu0*(1+nu) / (3*(1-2*nu))); higher Di (i>1) are set to zero, giving an
+    ``effective d`` of length N = [D1, 0, ..., 0].  When ``d`` is supplied it is used
+    verbatim and must have length N.
+
+    ``poisson`` is required even when ``d`` is given: it feeds the small-strain
+    duck-typed backend interface (``youngs``, ``complex_modulus``).
+
+    ABAQUS keyword: ``*HYPERELASTIC, REDUCED POLYNOMIAL, N=<n>``
+    """
+
+    c: list  # [C10, C20, ..., CN0]; len must be 1..6
+    poisson: float
+    d: Optional[list] = None  # [D1, ..., DN]; if None, derived from poisson
+
+    def __post_init__(self):
+        n = len(self.c)
+        if n < 1 or n > 6:
+            raise ValueError(
+                f"ReducedPolynomial requires 1 <= N <= 6 coefficient(s); got {n}"
+            )
+        if self.poisson >= 0.5:
+            raise ValueError(
+                f"poisson must be < 0.5 (fully incompressible materials require hybrid "
+                f"elements, which are out of scope); got poisson={self.poisson}"
+            )
+        if self.d is not None and len(self.d) != n:
+            raise ValueError(
+                f"d must have length N={n} for ReducedPolynomial(N={n}); "
+                f"got len(d)={len(self.d)}"
+            )
+
+    @property
+    def n(self) -> int:
+        """Polynomial order N (number of Ci0 terms)."""
+        return len(self.c)
+
+    @property
+    def mu0(self) -> float:
+        """Small-strain shear modulus: mu0 = 2*C10."""
+        return 2.0 * self.c[0]
+
+    @property
+    def youngs(self) -> float:
+        """Small-strain Young's modulus: E = 2*mu0*(1+nu)."""
+        return 2.0 * self.mu0 * (1.0 + self.poisson)
+
+    @property
+    def d_coeffs(self) -> list:
+        """Effective compressibility coefficients [D1, ..., DN].
+
+        If ``d`` was supplied at construction it is returned verbatim; otherwise D1 is
+        derived from ``poisson`` and higher Di are zero.
+        """
+        if self.d is not None:
+            return list(self.d)
+        D1 = _d1_from_poisson(self.mu0, self.poisson)
+        return [D1] + [0.0] * (self.n - 1)
+
+    def complex_modulus(self, freqs):
+        """Complex Young's modulus E*(f); frequency-flat, so ``youngs`` everywhere."""
+        return np.full(np.shape(freqs), self.youngs, dtype=complex)
+
+
+@dataclass
+class Polynomial:
+    """A full polynomial (Rivlin) hyperelastic response.
+
+    The strain-energy density is W = sum_{i+j>=1, i+j<=N} Cij*(I1-3)**i*(I2-3)**j, where
+    I1, I2 are the first and second deviatoric strain invariants.  ``c`` holds the
+    coefficients in ABAQUS data-line order: for each k = i+j from 1 to N with i decreasing,
+    e.g. for N=2: [C10, C01, C20, C11, C02].  The total number of coefficients for order N
+    is N*(N+3)/2; valid lengths for N=1..6 are 2, 5, 9, 14, 20, 27.
+
+    **Small-strain equivalence:** mu0 = 2*(C10 + C01); E_small = 2*mu0*(1+poisson).
+
+    **Compressibility:** same convention as ``ReducedPolynomial`` -- the ABAQUS ``POISSON``
+    parameter is illegal with data lines; compressibility is encoded through Di.  When ``d``
+    is not given, D1 = 3*(1-2*nu) / (mu0*(1+nu)) and higher Di are zero (length N).  When
+    ``d`` is supplied it must have length N.
+
+    ``poisson`` is required even when ``d`` is given: it feeds ``youngs``/``complex_modulus``.
+
+    ABAQUS keyword: ``*HYPERELASTIC, POLYNOMIAL, N=<n>``
+    """
+
+    c: list  # ABAQUS data-line order; len must be in {2,5,9,14,20,27}
+    poisson: float
+    d: Optional[list] = None  # [D1, ..., DN]; if None, derived from poisson
+
+    def __post_init__(self):
+        if len(self.c) not in _POLYNOMIAL_VALID_LENGTHS:
+            valid = sorted(_POLYNOMIAL_VALID_LENGTHS)
+            raise ValueError(
+                f"Polynomial c list length must be one of {valid} (= N*(N+3)/2 for N=1..6); "
+                f"got {len(self.c)}"
+            )
+        n = _POLYNOMIAL_VALID_LENGTHS[len(self.c)]
+        if self.poisson >= 0.5:
+            raise ValueError(
+                f"poisson must be < 0.5 (fully incompressible materials require hybrid "
+                f"elements, which are out of scope); got poisson={self.poisson}"
+            )
+        if self.d is not None and len(self.d) != n:
+            raise ValueError(
+                f"d must have length N={n} for Polynomial(N={n}); "
+                f"got len(d)={len(self.d)}"
+            )
+
+    @property
+    def n(self) -> int:
+        """Polynomial order N."""
+        return _POLYNOMIAL_VALID_LENGTHS[len(self.c)]
+
+    @property
+    def mu0(self) -> float:
+        """Small-strain shear modulus: mu0 = 2*(C10 + C01).
+
+        In ABAQUS data-line order the first two entries are always C10 and C01.
+        """
+        return 2.0 * (self.c[0] + self.c[1])
+
+    @property
+    def youngs(self) -> float:
+        """Small-strain Young's modulus: E = 2*mu0*(1+nu)."""
+        return 2.0 * self.mu0 * (1.0 + self.poisson)
+
+    @property
+    def d_coeffs(self) -> list:
+        """Effective compressibility coefficients [D1, ..., DN].
+
+        If ``d`` was supplied at construction it is returned verbatim; otherwise D1 is
+        derived from ``poisson`` and higher Di are zero.
+        """
+        if self.d is not None:
+            return list(self.d)
+        D1 = _d1_from_poisson(self.mu0, self.poisson)
+        return [D1] + [0.0] * (self.n - 1)
+
+    def complex_modulus(self, freqs):
+        """Complex Young's modulus E*(f); frequency-flat, so ``youngs`` everywhere."""
+        return np.full(np.shape(freqs), self.youngs, dtype=complex)
+
+
+@dataclass
+class ArrudaBoyce:
+    """An Arruda-Boyce eight-chain hyperelastic response.
+
+    The Arruda-Boyce model captures the finite extensibility of polymer chains.  ``mu`` is
+    the initial shear modulus parameter (MPa) and ``lm`` is the locking stretch (chain
+    extensibility limit, dimensionless > 0).
+
+    **Small-strain shear modulus** (Taylor expansion of the Langevin-based strain energy in
+    1/lm**2, truncated at the 5th term)::
+
+        mu0 = mu * (1 + 3/(5*lm**2) + 99/(175*lm**4)
+                      + 513/(875*lm**6) + 42039/(67375*lm**8))
+
+    Small-strain Young's modulus: E = 2*mu0*(1+poisson).
+
+    **Compressibility:** the ABAQUS ``POISSON`` parameter is illegal with data lines.
+    When ``d`` is not given, D1 = 3*(1-2*nu) / (mu0*(1+nu)) and the effective d is [D1]
+    (single entry; ArrudaBoyce always has N=1 for the volumetric term).  When ``d`` is
+    supplied it must be a single-element list.
+
+    ``poisson`` is required even when ``d`` is given.
+
+    ABAQUS keyword: ``*HYPERELASTIC, ARRUDA-BOYCE``
+    """
+
+    mu: float    # initial shear modulus parameter, MPa
+    lm: float    # locking stretch (chain extensibility)
+    poisson: float
+    d: Optional[list] = None  # [D1]; if None, derived from poisson
+
+    def __post_init__(self):
+        if self.poisson >= 0.5:
+            raise ValueError(
+                f"poisson must be < 0.5 (fully incompressible materials require hybrid "
+                f"elements, which are out of scope); got poisson={self.poisson}"
+            )
+        if self.d is not None and len(self.d) != 1:
+            raise ValueError(
+                f"ArrudaBoyce d must be a single-element list; got len(d)={len(self.d)}"
+            )
+
+    @property
+    def mu0(self) -> float:
+        """Small-strain shear modulus from the 5-term Langevin expansion in 1/lm**2."""
+        lm2 = self.lm ** 2
+        return self.mu * (
+            1.0
+            + 3.0 / (5.0 * lm2)
+            + 99.0 / (175.0 * lm2**2)
+            + 513.0 / (875.0 * lm2**3)
+            + 42039.0 / (67375.0 * lm2**4)
+        )
+
+    @property
+    def youngs(self) -> float:
+        """Small-strain Young's modulus: E = 2*mu0*(1+nu)."""
+        return 2.0 * self.mu0 * (1.0 + self.poisson)
+
+    @property
+    def d_coeffs(self) -> list:
+        """Effective compressibility coefficient [D1].
+
+        If ``d`` was supplied at construction it is returned verbatim; otherwise D1 is
+        derived from ``poisson``.
+        """
+        if self.d is not None:
+            return list(self.d)
+        return [_d1_from_poisson(self.mu0, self.poisson)]
+
+    def complex_modulus(self, freqs):
+        """Complex Young's modulus E*(f); frequency-flat, so ``youngs`` everywhere."""
+        return np.full(np.shape(freqs), self.youngs, dtype=complex)

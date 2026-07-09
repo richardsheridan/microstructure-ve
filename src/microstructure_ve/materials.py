@@ -11,7 +11,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Union
 
-from .constitutive import Elastic, Plastic, PronyViscoelastic, TabularViscoelastic
+from .constitutive import (
+    ArrudaBoyce,
+    Elastic,
+    Plastic,
+    Polynomial,
+    PronyViscoelastic,
+    ReducedPolynomial,
+    TabularViscoelastic,
+)
 from .core import ElementSet
 
 
@@ -21,11 +29,15 @@ class Material:
 
     ``elset`` is the ElementSet it applies to, ``density`` is in kg/micron^3, and ``response``
     is one of the ``constitutive`` responses (``Elastic``, ``Plastic``, ``TabularViscoelastic``,
-    ``PronyViscoelastic``) carrying the elastic constants and frequency/rate behavior::
+    ``PronyViscoelastic``, ``ReducedPolynomial``, ``Polynomial``, ``ArrudaBoyce``) carrying
+    the elastic constants and frequency/rate behavior::
 
         Material(elset, density=2.65e-15, response=Elastic(poisson=0.3, youngs=5.0))
     """
 
     elset: ElementSet
     density: float  # kg/micron^3
-    response: Union[Elastic, Plastic, TabularViscoelastic, PronyViscoelastic]
+    response: Union[
+        Elastic, Plastic, TabularViscoelastic, PronyViscoelastic,
+        ReducedPolynomial, Polynomial, ArrudaBoyce,
+    ]
