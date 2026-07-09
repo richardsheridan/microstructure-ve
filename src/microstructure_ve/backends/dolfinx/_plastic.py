@@ -157,8 +157,11 @@ def _return_map(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim):
 
 def _tangent(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim):
     """Algorithmic tangent ``dsig/deps`` (N,nv,nv) by finite differences of the return map,
-    plus the base stress. FD gives the *consistent* tangent (incl. hardening/segment effects)."""
-    sig0, _, _ = _return_map(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim)
+    plus the base return-map products ``(C, sig0, eps_p_new, p_new)``. FD gives the
+    *consistent* tangent (incl. hardening/segment effects); the base state is passed through
+    so callers don't re-run the return map for the same strain."""
+    sig0, eps_p_new, p_new = _return_map(eps_v, mu, lam, eps_p_old, p_old,
+                                         mat_id, materials, dim)
     nv = eps_v.shape[1]
     C = np.empty((eps_v.shape[0], nv, nv))
     for j in range(nv):
@@ -166,7 +169,7 @@ def _tangent(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim):
         pert[:, j] += _FD_STEP
         sigj, _, _ = _return_map(pert, mu, lam, eps_p_old, p_old, mat_id, materials, dim)
         C[:, :, j] = (sigj - sig0) / _FD_STEP
-    return C, sig0
+    return C, sig0, eps_p_new, p_new
 
 
 # --------------------------------------------------------------------------- FE driver
@@ -286,8 +289,10 @@ class _PlasticSolver:
         self._fill_coeffs(np.zeros((N, self.nv)), commit=False)  # elastic C_q to allocate A
         self.A = dolfinx_mpc.assemble_matrix(self.a_form, self.mpc, bcs=self.bcs)
         self.A.assemble()
+        self._C_assembled = self.C_q.x.array.copy()  # tangent the assembled A was built from
         self.b = dolfinx_mpc.assemble_vector(self.L_form, self.mpc)
         self.x = self.A.createVecRight()
+        self.du = fem.Function(self.V)
         self.ksp = PETSc.KSP().create(self.mesh.comm)
         self.ksp.setOperators(self.A)
         self.ksp.setType("preonly")
@@ -309,19 +314,17 @@ class _PlasticSolver:
         return eps.reshape(-1, self.nv)
 
     def _fill_coeffs(self, eps_total, commit):
-        C, sig = _tangent(eps_total, self.mu, self.lam, self.eps_p, self.p,
-                          self.mat_id, self.materials, self.dim)
+        C, sig, eps_p_new, p_new = _tangent(eps_total, self.mu, self.lam, self.eps_p, self.p,
+                                            self.mat_id, self.materials, self.dim)
         self.sig_q.x.array[:] = sig.reshape(-1)
         self.C_q.x.array[:] = C.reshape(-1)
         w = self.weights
         Cc = (C.reshape(self.ncells, self.npts, self.nv, self.nv)
               * w[None, :, None, None]).sum(axis=1) / w.sum()
         self.C_c.x.array[:] = Cc.reshape(-1)
-        sig_new, eps_p_new, p_new = _return_map(eps_total, self.mu, self.lam, self.eps_p,
-                                                self.p, self.mat_id, self.materials, self.dim)
         if commit:
             self.eps_p, self.p = eps_p_new, p_new
-        return self._average(sig_new)
+        return self._average(sig)
 
     def _average(self, sig_v):
         """Volume-averaged stress tensor (dim,dim) from a (N,nv) Voigt field (uniform grid)."""
@@ -353,13 +356,15 @@ class _PlasticSolver:
             if rnorm <= _NEWTON_TOL + _NEWTON_RTOL * (self._r_ref or 1.0):
                 break
 
-            self.A.zeroEntries()
-            dolfinx_mpc.assemble_matrix(self.a_form, self.mpc, bcs=self.bcs, A=self.A)
-            self.A.assemble()
-            self.ksp.setOperators(self.A)
+            if not np.array_equal(self.C_q.x.array, self._C_assembled):
+                self.A.zeroEntries()
+                dolfinx_mpc.assemble_matrix(self.a_form, self.mpc, bcs=self.bcs, A=self.A)
+                self.A.assemble()  # values-only refill; PETSc refactors on the next solve
+                self.ksp.setOperators(self.A)
+                self._C_assembled = self.C_q.x.array.copy()
             self.ksp.solve(self.b, self.x)            # x = A^{-1} R
             self.x.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
-            du = fem.Function(self.V)
+            du = self.du
             fempetsc.assign(self.x, du)
             self.mpc.homogenize(du)
             self.mpc.backsubstitution(du)
@@ -506,6 +511,7 @@ class _StandardPlasticSolver:
         self._fill_coeffs(np.zeros((N, self.nv)))  # elastic C_q to allocate A
         self.A = fempetsc.assemble_matrix(self.a_form, bcs=self.bcs)
         self.A.assemble()
+        self._C_assembled = self.C_q.x.array.copy()  # tangent the assembled A was built from
         self.x = self.A.createVecRight()
         self.ksp = PETSc.KSP().create(self.mesh.comm)
         self.ksp.setOperators(self.A)
@@ -524,8 +530,8 @@ class _StandardPlasticSolver:
         return eps.reshape(-1, self.nv)
 
     def _fill_coeffs(self, eps_total, commit=False):
-        C, sig = _tangent(eps_total, self.mu, self.lam, self.eps_p, self.p,
-                          self.mat_id, self.materials, self.dim)
+        C, sig, eps_p_new, p_new = _tangent(eps_total, self.mu, self.lam, self.eps_p, self.p,
+                                            self.mat_id, self.materials, self.dim)
         self.sig_q.x.array[:] = sig.reshape(-1)
         self.C_q.x.array[:] = C.reshape(-1)
         w = self.weights
@@ -533,8 +539,7 @@ class _StandardPlasticSolver:
               * w[None, :, None, None]).sum(axis=1) / w.sum()
         self.C_c.x.array[:] = Cc.reshape(-1)
         if commit:
-            _, self.eps_p, self.p = _return_map(eps_total, self.mu, self.lam, self.eps_p,
-                                                self.p, self.mat_id, self.materials, self.dim)
+            self.eps_p, self.p = eps_p_new, p_new
 
     def _residual(self):
         """Internal-force vector ``R(u) = int sig_q : eps(v)`` (a fresh assembled PETSc vec)."""
@@ -557,10 +562,12 @@ class _StandardPlasticSolver:
             if rnorm <= _NEWTON_TOL + _NEWTON_RTOL * (r0 or 1.0):
                 r.destroy()
                 break
-            self.A.zeroEntries()
-            fempetsc.assemble_matrix(self.A, self.a_form, bcs=self.bcs)
-            self.A.assemble()
-            self.ksp.setOperators(self.A)
+            if not np.array_equal(self.C_q.x.array, self._C_assembled):
+                self.A.zeroEntries()
+                fempetsc.assemble_matrix(self.A, self.a_form, bcs=self.bcs)
+                self.A.assemble()  # values-only refill; PETSc refactors on the next solve
+                self.ksp.setOperators(self.A)
+                self._C_assembled = self.C_q.x.array.copy()
             self.ksp.solve(r, self.x)            # x = A^{-1} R
             self.x.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
             self.u.x.array[:] = self.u.x.array - self.x.array
