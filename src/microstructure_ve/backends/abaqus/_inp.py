@@ -21,9 +21,12 @@ from microstructure_ve.boundary import (
 )
 from microstructure_ve.core import ElementSet, GridElements, GridNodes, NodeSet
 from microstructure_ve.constitutive import (
+    ArrudaBoyce,
     Elastic,
     Plastic,
+    Polynomial,
     PronyViscoelastic,
+    ReducedPolynomial,
     TabularViscoelastic,
 )
 from microstructure_ve.materials import Material
@@ -127,6 +130,25 @@ def _(obj, f):
         f.write(f"{element:d}\n")
 
 
+def _emit_material_header(material, f):
+    """The shared ``*Solid Section`` / ``*Material`` / ``*Density`` header without *Elastic.
+
+    Used by the hyperelastic handlers which replace *Elastic with *Hyperelastic.
+    ``material`` supplies ``elset`` and ``density``.
+    """
+    emit(material.elset, f)
+    mc = material.elset.matl_code
+    f.write(
+        f"""\
+*Solid Section, elset=SET-{mc:d}, material=MAT-{mc:d}
+1.
+*Material, name=MAT-{mc:d}
+*Density
+{material.density:.6e}
+"""
+    )
+
+
 def _emit_material_base(material, response, f, elastic_moduli=None):
     """The shared ``*Solid Section`` / ``*Material`` / ``*Elastic`` block.
 
@@ -135,20 +157,23 @@ def _emit_material_base(material, response, f, elastic_moduli=None):
     whose ``youngs``/``poisson`` are the relaxed moduli); ``None`` emits the plain ``*Elastic``
     used by every other response, byte-for-byte unchanged.
     """
-    emit(material.elset, f)
+    _emit_material_header(material, f)
     mc = material.elset.matl_code
     elastic = "*Elastic" if elastic_moduli is None else f"*Elastic, moduli={elastic_moduli}"
     f.write(
         f"""\
-*Solid Section, elset=SET-{mc:d}, material=MAT-{mc:d}
-1.
-*Material, name=MAT-{mc:d}
-*Density
-{material.density:.6e}
 {elastic}
 {response.youngs:.6e}, {response.poisson:.6e}
 """
     )
+
+
+def _write_data_lines(f, values):
+    """Write ``values`` (a flat list of floats) at 8 per line, ``%.6e`` format, ``', '`` sep."""
+    values = list(values)
+    for start in range(0, len(values), 8):
+        chunk = values[start:start + 8]
+        f.write(", ".join(f"{v:.6e}" for v in chunk) + "\n")
 
 
 @emit.register(Material)
@@ -209,6 +234,27 @@ def _(response, material, f):
     f.write("*Viscoelastic, frequency=PRONY\n")
     for g, k, t in zip(g_ratios, k_ratios, response.relaxation_times):
         f.write(f"{g:.6e}, {k:.6e}, {t:.6e}\n")
+
+
+@emit_response.register(ArrudaBoyce)
+def _(response, material, f):
+    _emit_material_header(material, f)
+    f.write("*Hyperelastic, arruda-boyce\n")
+    _write_data_lines(f, [response.mu, response.lm, response.d_coeffs[0]])
+
+
+@emit_response.register(ReducedPolynomial)
+def _(response, material, f):
+    _emit_material_header(material, f)
+    f.write(f"*Hyperelastic, reduced polynomial, n={response.n}\n")
+    _write_data_lines(f, list(response.c) + response.d_coeffs)
+
+
+@emit_response.register(Polynomial)
+def _(response, material, f):
+    _emit_material_header(material, f)
+    f.write(f"*Hyperelastic, polynomial, n={response.n}\n")
+    _write_data_lines(f, list(response.c) + response.d_coeffs)
 
 
 @emit.register(BoundaryCondition)
@@ -297,18 +343,13 @@ def _(obj, f):
 
 @emit.register(Step)
 def _(obj, f):
-    f.write(
-        f"""\
-*STEP{",PERTURBATION" if obj.perturbation else ""}
-"""
-    )
+    flags = ",PERTURBATION" if obj.perturbation else ""
+    if obj.nlgeom:
+        flags += ", nlgeom=YES"
+    f.write(f"*STEP{flags}\n")
     for n in obj.subsections:
         emit(n, f)
-    f.write(
-        f"""\
-*END STEP
-"""
-    )
+    f.write("*END STEP\n")
 
 
 @emit.register(Model)

@@ -1,12 +1,13 @@
 """Structural ``.inp`` assertions over the full feature matrix (no ABAQUS run needed).
 
-For every matrix case (``matrix_cases()`` -- every cell x {elastic, viscoelastic} plus the
-appended multi-step viscoelastic cases) we build the Simulation (which runs
-``validate_constraints`` at Model construction -- a passing build is itself the over-
-constraint check), emit the ``.inp`` in memory, and assert its structure: the ordered step
-blocks (type + perturbation flag), the drive ``*Boundary, type=displacement`` on the right
-corner/face and dof, the periodic vs standard ``*Equation`` presence, and the
-traction-specific fixed DOFs.
+For every matrix case (``matrix_cases()`` -- every cell x {elastic, viscoelastic,
+hyperelastic_plastic, reduced_polynomial} plus the appended multi-step cases, the
+plastic multistep orderings, and polynomial/arruda_boyce over HYPER_FOCUSED_CELLS) we
+build the Simulation (which runs ``validate_constraints`` at Model construction -- a
+passing build is itself the over-constraint check), emit the ``.inp`` in memory, and
+assert its structure: the ordered step blocks (type + perturbation + nlgeom flags), the
+drive ``*Boundary, type=displacement`` on the right corner/face and dof, the periodic
+vs standard ``*Equation`` presence, and the traction-specific fixed DOFs.
 
 These are parsed assertions, not per-cell byte goldens -- the committed ``synthetic.inp``
 remains the formatting-stability guard.
@@ -14,6 +15,7 @@ remains the formatting-stability guard.
 import unittest
 
 from tests._matrix import (
+    HYPER_FOCUSED_CELLS,
     cell_expectations,
     emit_inp_text,
     matrix_cases,
@@ -31,7 +33,7 @@ class MatrixAbaqusStructureTests(unittest.TestCase):
                 parsed = parse_inp(emit_inp_text(sim))
                 exp = cell_expectations(test_type=test_type, **cell)
 
-                # ordered step blocks: [(step_type, perturbation), ...]
+                # ordered step blocks: [(step_type, perturbation, nlgeom), ...]
                 self.assertEqual(parsed["steps"], exp["steps"])
 
                 # boundary-condition family: periodic emits *Equation, standard doesn't
@@ -64,12 +66,26 @@ class MatrixAbaqusStructureTests(unittest.TestCase):
                             f"{should_be_fixed}; boundaries={parsed['boundary']}",
                     )
 
+                # nlgeom flag: hyperelastic static steps carry nlgeom=YES
+                exp_nlgeom = exp["nlgeom"]
+                for step_tuple in parsed["steps"]:
+                    step_type, perturbation, nlgeom = step_tuple
+                    if step_type == "STATIC":
+                        self.assertEqual(
+                            nlgeom, exp_nlgeom,
+                            msg=f"nlgeom={nlgeom} on static step, expected {exp_nlgeom}",
+                        )
+
     def test_matrix_counts(self):
         # guards the pruning rule: 6 (mode,traction) pairs in 2D, 10 in 3D -> 32 cells
         cells = list(matrix_cells())
         self.assertEqual(sum(c["dim"] == 2 for c in cells), 6 * len(("periodic", "standard")))
         self.assertEqual(sum(c["dim"] == 3 for c in cells), 10 * len(("periodic", "standard")))
         self.assertEqual(len(cells), 32)
+
+    def test_hyper_focused_cells_count(self):
+        # 2 dims x 4 (mode, traction) pairs = 8 focused cells
+        self.assertEqual(len(HYPER_FOCUSED_CELLS), 8)
 
 
 if __name__ == "__main__":

@@ -226,6 +226,15 @@ def can_run(sim):
     - *Standard* sims (no ``PeriodicBoundaryConstraint``): validated by
       ``_standard_can_run`` (direct-Dirichlet path, well-posed cells only).
     """
+    # temporary until the finite-strain solver lands
+    from microstructure_ve.constitutive import ArrudaBoyce, Polynomial, ReducedPolynomial
+
+    if any(
+        isinstance(m.response, (ArrudaBoyce, ReducedPolynomial, Polynomial))
+        for m in sim.model.materials
+    ):
+        return False
+
     from microstructure_ve.boundary import PeriodicBoundaryConstraint
 
     from microstructure_ve.steps import Dynamic, Static

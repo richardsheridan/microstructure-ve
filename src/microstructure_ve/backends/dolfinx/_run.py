@@ -204,6 +204,11 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     """
     dim = sim.model.nodes.dim
 
+    if _has_hyperelastic_static(sim):
+        raise NotImplementedError(
+            "hyperelastic responses need the finite-strain solver (not yet implemented)"
+        )
+
     if len(list(sim.steps)) > 1 or _has_plastic_static(sim):
         out = _run_multistep(sim, bbar, cancel, solver, petsc_options, n_incr)
         if output_path is not None:
@@ -255,6 +260,22 @@ def _has_plastic_static(sim):
     from microstructure_ve.steps import Static
 
     if not any(isinstance(m.response, Plastic) for m in sim.model.materials):
+        return False
+    return any(any(isinstance(s, Static) for s in step.subsections) for step in sim.steps)
+
+
+def _has_hyperelastic_static(sim):
+    """True iff ``sim`` carries a hyperelastic response and a ``Static`` step (numpy-only check).
+
+    Hyperelastic materials (ArrudaBoyce, ReducedPolynomial, Polynomial) require the
+    finite-strain solver, which is not yet implemented."""
+    from microstructure_ve.constitutive import ArrudaBoyce, Polynomial, ReducedPolynomial
+    from microstructure_ve.steps import Static
+
+    if not any(
+        isinstance(m.response, (ArrudaBoyce, ReducedPolynomial, Polynomial))
+        for m in sim.model.materials
+    ):
         return False
     return any(any(isinstance(s, Static) for s in step.subsections) for step in sim.steps)
 

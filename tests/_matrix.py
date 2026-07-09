@@ -23,7 +23,14 @@ from microstructure_ve.boundary import (
     PeriodicBoundaryConstraint,
     Prescribed,
 )
-from microstructure_ve.constitutive import Elastic, Plastic, TabularViscoelastic
+from microstructure_ve.constitutive import (
+    ArrudaBoyce,
+    Elastic,
+    Plastic,
+    Polynomial,
+    ReducedPolynomial,
+    TabularViscoelastic,
+)
 from microstructure_ve.core import ElementSet, GridElements, GridNodes, NodeSet
 from microstructure_ve.materials import Material
 from microstructure_ve.steps import Dynamic, Heading, Model, Simulation, Static, Step
@@ -45,7 +52,10 @@ MODES = (
 )
 TRACTIONS = ("free", "no_slip", "confined_slip")
 BCS = ("periodic", "standard")
-TEST_TYPES = ("elastic", "viscoelastic", "hyperelastic_plastic", "viscoelastic_transient")
+TEST_TYPES = (
+    "elastic", "viscoelastic", "hyperelastic_plastic", "viscoelastic_transient",
+    "reduced_polynomial", "polynomial", "arruda_boyce",
+)
 STUB_TEST_TYPES = ("viscoelastic_transient",)
 DIMS = (2, 3)
 
@@ -83,6 +93,25 @@ PLASTIC_MULTISTEP_PATTERNS = {
     "hyperelastic_plastic_cyclic": (("S", 1.0), ("S", -1.0), ("S", 1.0)),
 }
 
+# Hyperelastic constants.
+HYPER_POISSON = 0.45
+HYPER_C10_BASE = 500.0          # for ReducedPolynomial N=1
+HYPER_POLY2_C = [400.0, 100.0, 20.0, 10.0, 5.0]   # Polynomial N=2
+HYPER_AB_MU = 1000.0
+HYPER_AB_LM = 2.0
+
+# Focused cells for polynomial/arruda_boyce (a representative 8-cell subset).
+HYPER_FOCUSED_CELLS = [
+    {"dim": dim, "mode": mode, "traction": traction, "bc": "periodic"}
+    for dim in (2, 3)
+    for mode, traction in [
+        ("uniaxial_x", "free"),
+        ("uniaxial_x", "confined_slip"),
+        ("shear_xy", "no_slip"),
+        ("compression", "confined_slip"),
+    ]
+]
+
 _AXES = ("x", "y", "z")
 
 
@@ -96,6 +125,11 @@ def _is_plastic(test_type):
     return test_type == "hyperelastic_plastic" or test_type in PLASTIC_MULTISTEP_PATTERNS
 
 
+def _is_hyperelastic(test_type):
+    """True for any pure-hyperelastic test type (no J2 plasticity)."""
+    return test_type in ("reduced_polynomial", "polynomial", "arruda_boyce")
+
+
 def _resolve_displacement(test_type, displacement):
     """Plastic cells use their own (smaller) drive; everything else keeps ``displacement``."""
     if _is_plastic(test_type) and displacement == DISPLACEMENT:
@@ -106,6 +140,8 @@ def _resolve_displacement(test_type, displacement):
 def _step_plan(test_type):
     """Ordered ``[(step_kind, drive_scale)]`` for ``test_type`` ('S'=Static, 'D'=Dynamic)."""
     if test_type in ("elastic", "hyperelastic_plastic"):
+        return [("S", 1.0)]
+    if _is_hyperelastic(test_type):
         return [("S", 1.0)]
     if test_type == "viscoelastic":
         return [("D", 1.0)]
@@ -147,19 +183,23 @@ def matrix_cells():
 
 def matrix_cases():
     """Yield ``(cell, test_type)`` for the whole suite: every cell x {elastic, viscoelastic,
-    hyperelastic_plastic}, plus the appended multi-step viscoelastic cases on ``MULTISTEP_CELL``
-    and the multi-step plastic orderings on ``PLASTIC_MULTISTEP_CELL``.
+    hyperelastic_plastic, reduced_polynomial}, plus the appended multi-step viscoelastic cases on
+    ``MULTISTEP_CELL``, the multi-step plastic orderings on ``PLASTIC_MULTISTEP_CELL``, and
+    polynomial/arruda_boyce over ``HYPER_FOCUSED_CELLS``.
 
     The single enumerator every consumer (abaqus structural / dolfinx red / parity / oracle
     generation) iterates, so the multi-step cases are added in exactly one place.
     """
     for cell in matrix_cells():
-        for test_type in ("elastic", "viscoelastic", "hyperelastic_plastic"):
+        for test_type in ("elastic", "viscoelastic", "hyperelastic_plastic", "reduced_polynomial"):
             yield cell, test_type
     for test_type in MULTISTEP_PATTERNS:
         yield dict(MULTISTEP_CELL), test_type
     for test_type in PLASTIC_MULTISTEP_PATTERNS:
         yield dict(PLASTIC_MULTISTEP_CELL), test_type
+    for cell in HYPER_FOCUSED_CELLS:
+        for test_type in ("arruda_boyce", "polynomial"):
+            yield dict(cell), test_type
 
 
 def _validate_cell(mode, traction, bc, dim):
@@ -400,6 +440,24 @@ def tabular_material(elset, nu):
     )
 
 
+def _hyper_response(test_type, stiff=False):
+    """Build a hyperelastic response object for the given test_type.
+
+    ``stiff=True`` returns the 5x-stiffer phase for a heterogeneous RVE.
+    """
+    nu = HYPER_POISSON
+    if test_type == "reduced_polynomial":
+        c10 = HYPER_C10_BASE * (5 if stiff else 1)
+        return ReducedPolynomial(c=[c10], poisson=nu)
+    if test_type == "polynomial":
+        c = [cv * (5 if stiff else 1) for cv in HYPER_POLY2_C]
+        return Polynomial(c=c, poisson=nu)
+    if test_type == "arruda_boyce":
+        mu = HYPER_AB_MU * (5 if stiff else 1)
+        return ArrudaBoyce(mu=mu, lm=HYPER_AB_LM, poisson=nu)
+    raise ValueError(f"not a hyperelastic test_type: {test_type!r}")
+
+
 def _build_geometry(dim, n, scale, homogeneous, E, nu, test_type):
     """Mesh + materials. ``viscoelastic`` cells use a tabular phase; ``elastic`` use flat
     elastic phases. Heterogeneous cells mix an elastic filler with the second phase."""
@@ -420,6 +478,8 @@ def _build_geometry(dim, n, scale, homogeneous, E, nu, test_type):
             return tabular_material(elset, nu)
         if _is_plastic(test_type):
             return plastic_material(elset, 5.0 * E)
+        if _is_hyperelastic(test_type):
+            return Material(elset, density=DENSITY, response=_hyper_response(test_type, stiff=True))
         return Material(elset, density=DENSITY, response=Elastic(poisson=nu, youngs=5.0 * E))
 
     if homogeneous:
@@ -427,12 +487,24 @@ def _build_geometry(dim, n, scale, homogeneous, E, nu, test_type):
             materials = [tabular_material(sets[0], nu)]
         elif _is_plastic(test_type):
             materials = [plastic_material(sets[0], E)]
+        elif _is_hyperelastic(test_type):
+            materials = [Material(sets[0], density=DENSITY,
+                                  response=_hyper_response(test_type, stiff=False))]
         else:
             materials = [Material(sets[0], density=DENSITY, response=Elastic(poisson=nu, youngs=E))]
     else:
-        # an elastic filler + a second (viscoelastic / plastic / stiffer-elastic) phase
-        materials = [Material(sets[0], density=DENSITY, response=Elastic(poisson=nu, youngs=E)),
-                     second_phase(sets[1])]
+        if _is_hyperelastic(test_type):
+            # both phases are hyperelastic; base + 5x-stiffer
+            materials = [
+                Material(sets[0], density=DENSITY, response=_hyper_response(test_type, stiff=False)),
+                second_phase(sets[1]),
+            ]
+        else:
+            # an elastic filler + a second (viscoelastic / plastic / stiffer-elastic) phase
+            materials = [
+                Material(sets[0], density=DENSITY, response=Elastic(poisson=nu, youngs=E)),
+                second_phase(sets[1]),
+            ]
     return nodes, elements, materials
 
 
@@ -476,7 +548,8 @@ def matrix_simulation(mode, traction, bc, dim, test_type="elastic", n=None, scal
                   bcs=base_bcs + baselines, nsets=extra_nsets)
 
     def static_step(dr):
-        return Step(subsections=[Static()] + dr, perturbation=False)
+        nlgeom = _is_hyperelastic(test_type)
+        return Step(subsections=[Static()] + dr, perturbation=False, nlgeom=nlgeom)
 
     def dynamic_step(dr):
         # sweep exactly on the tabular table nodes (see MATRIX_FREQS) -> interpolation-free
@@ -541,7 +614,12 @@ def cell_expectations(mode, traction, bc, dim, test_type, displacement=DISPLACEM
                 fixed = (b == a0) or (traction == "confined_slip")
                 checks.append((b.upper() + "0ALL", _normal_dof(b), fixed))
 
-    step_of = {"S": ("STATIC", False), "D": ("STEADY STATE DYNAMICS", True)}
+    nlgeom = _is_hyperelastic(test_type)
+    # step tuples: (step_type, perturbation, nlgeom)
+    step_of = {
+        "S": ("STATIC", False, nlgeom),
+        "D": ("STEADY STATE DYNAMICS", True, False),
+    }
     pattern = [kind for kind, _scale in _step_plan(test_type)]
 
     return {
@@ -551,6 +629,7 @@ def cell_expectations(mode, traction, bc, dim, test_type, displacement=DISPLACEM
         "drive_dof": dof0,
         "drive_value": value,
         "fixed_checks": checks,
+        "nlgeom": _is_hyperelastic(test_type),
     }
 
 
@@ -576,7 +655,8 @@ def parse_inp(text):
         elif line.lower().startswith("*boundary"):
             section = "fixed"
         elif line.upper().startswith("*STEP"):
-            steps.append([None, "PERTURBATION" in line.upper()])
+            steps.append([None, "PERTURBATION" in line.upper(),
+                          "NLGEOM" in line.upper()])
             section = None
         elif line.upper().startswith("*STATIC"):
             steps[-1][0] = "STATIC"

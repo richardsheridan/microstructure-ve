@@ -42,11 +42,13 @@ class Step:
     ``subsections`` is an ordered iterable of the step's contents -- an analysis type
     (``Static`` / ``Dynamic``) together with the step-level boundary conditions
     (e.g. the ``Prescribed`` drive ``BoundaryCondition``). ``perturbation`` adds the
-    ``,PERTURBATION`` flag (used for the harmonic steady-state sweep).
+    ``,PERTURBATION`` flag (used for the harmonic steady-state sweep). ``nlgeom`` adds
+    ``nlgeom=YES`` (required for finite-strain / hyperelastic analyses).
     """
 
     subsections: Iterable
     perturbation: bool = False
+    nlgeom: bool = False
 
 
 @dataclass
