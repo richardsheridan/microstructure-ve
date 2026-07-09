@@ -6,11 +6,12 @@ simulation's ``Fixed`` boundary conditions (zero) and step ``Prescribed`` drives
 row: ``[f, RF_Real..., RF_Imag..., U_Real...]`` where RF and U are summed over the
 primary drive nodeset nodes for each component.
 
-Reaction-force computation: after solving for ``u``, assemble the unreduced stiffness
-``K_full`` (no Dirichlet modification) and compute ``f_int = K_full * u``.  The reaction
-at each constrained node is the corresponding entry of ``f_int`` (equilibrium gives zero
-at free nodes; the residual at constrained nodes is the reaction force). Summing over the
-primary drive nodeset per component reproduces the ABAQUS ``readODB`` summation.
+Reaction-force computation: after solving for ``u``, assemble the internal-force vector
+``f_int = K_full * u`` as the *action* of the unreduced bilinear form on the solution
+(one vector assembly -- no second stiffness matrix). The reaction at each constrained
+node is the corresponding entry of ``f_int`` (equilibrium gives zero at free nodes; the
+residual at constrained nodes is the reaction force). Summing over the primary drive
+nodeset per component reproduces the ABAQUS ``readODB`` summation.
 
 No MPC or center-pin -- standard cells are clamped BVPs, not periodic fluctuation
 problems.  The solver kind (LU vs iterative crossover) follows the same prediction as
@@ -179,18 +180,22 @@ def build_solver(sim, prob):
     # across cells of this shape; only the values (this cell's BCs + frequency moduli) are
     # reassembled in solve_one.
     if prob.std_mats is None:
+        import ufl
+
         matfields.set_moduli(1.0)  # placeholder to establish sparsity
         A_bc = fempetsc.assemble_matrix(forms.a_form, bcs=dirichlet_bcs)
         A_bc.assemble()
-        A_full = fempetsc.assemble_matrix(forms.a_form)  # no BC modification
-        A_full.assemble()
+        # reaction = action of the unreduced form on the solution: f_int = K_full * u,
+        # as one vector assembly per frequency instead of a second matrix assembly
+        u_sol = fem.Function(space.V)
+        react_form = fem.form(ufl.action(forms.a_ufl, u_sol))
         ksp = PETSc.KSP().create(space.mesh.comm)
         ksp.setOperators(A_bc)
         ksp.setType("preonly")
         ksp.getPC().setType("lu")
-        prob.std_mats = (A_bc, A_full, A_bc.createVecRight(),
-                         A_bc.createVecRight(), A_full.createVecRight(), ksp)
-    A_bc, A_full, b, x, f_int, ksp = prob.std_mats
+        prob.std_mats = (A_bc, A_bc.createVecRight(), A_bc.createVecRight(),
+                         u_sol, react_form, A_bc.createVecRight(), ksp)
+    A_bc, b, x, u_sol, react_form, f_int, ksp = prob.std_mats
 
     def solve_one(f):
         # Update complex moduli and reassemble (in-place: pass A as first arg to dispatch)
@@ -198,9 +203,6 @@ def build_solver(sim, prob):
         A_bc.zeroEntries()
         fempetsc.assemble_matrix(A_bc, forms.a_form, bcs=dirichlet_bcs)
         A_bc.assemble()
-        A_full.zeroEntries()
-        fempetsc.assemble_matrix(A_full, forms.a_form)
-        A_full.assemble()
 
         # Build RHS: zero body forces + lifting for non-homogeneous Dirichlet
         b.set(0.0)
@@ -216,8 +218,12 @@ def build_solver(sim, prob):
 
         u_arr = x.getArray()
 
-        # Reaction forces: K_full * u at drive nodeset dofs
-        A_full.mult(x, f_int)
+        # Reaction forces: K_full * u at drive nodeset dofs, via the action form
+        u_sol.x.array[:] = u_arr
+        with f_int.localForm() as fl:
+            fl.set(0.0)
+        fempetsc.assemble_vector(f_int, react_form)
+        f_int.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
         f_arr = f_int.getArray()
 
         RF = np.zeros(dim, dtype=complex)

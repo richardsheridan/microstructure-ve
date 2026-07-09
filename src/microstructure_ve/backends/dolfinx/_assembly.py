@@ -149,6 +149,7 @@ class Forms:
     """
 
     a_form: Any
+    a_ufl: Any  # the raw UFL bilinear expression (for action forms, e.g. reactions)
     L_forms: List[Any]
     unit_E: List[Any]
     modes: List[tuple]
@@ -194,5 +195,5 @@ class Forms:
             unit_E.append(Em)
             L_forms.append(fem.form(-ufl.inner(sig(Em), eps(v)) * ufl.dx))
 
-        return cls(a_form=a_form, L_forms=L_forms, unit_E=unit_E, modes=modes,
+        return cls(a_form=a_form, a_ufl=a, L_forms=L_forms, unit_E=unit_E, modes=modes,
                    sig=sig, v=v)
