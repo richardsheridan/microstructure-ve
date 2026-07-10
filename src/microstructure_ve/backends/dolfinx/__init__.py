@@ -7,6 +7,10 @@ Public API::
 ``run`` transparently caches the mesh-only FE setup by mesh shape, so sweeping many
 simulations that share a grid is fast; ``clear_cache`` releases that memory.
 
+All four entry points are thread-safe: concurrent calls from multiple threads serialize
+on one process-wide lock (safe, but no thread parallelism -- see ``_run``'s module
+docstring). Use ``run(workers=N)`` for parallel throughput.
+
 ``run`` / ``build_solver`` are resolved lazily so that importing this package -- and its
 pure-numpy ``_spec`` submodule -- never pulls in dolfinx. The dolfinx-touching modules
 (``_assembly``, ``_constraints``, ``_solver``, ``_homogenize``, ``_run``) import

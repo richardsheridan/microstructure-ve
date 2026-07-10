@@ -5,8 +5,21 @@
 frequencies and optionally writes a readODB-style tsv, optionally fanning the independent
 per-frequency solves across a spawn ProcessPool (``workers``). The macro loading is
 uniaxial along x (coordinate axis 0).
+
+Thread safety (the guarantee): every entry point of this backend -- ``run``,
+``build_solver`` plus the ``solve_one`` closures it returns, and ``clear_cache`` --
+serializes on one process-wide re-entrant lock (``_BACKEND_LOCK``). Calling them
+concurrently from multiple threads is therefore *safe but not parallel*: the cached
+``_FEProblem``s and the dolfinx/PETSc objects inside them are shared mutable state
+(material refill, matrix reassembly, factorization reuse), so calls execute one at a
+time, each seeing a consistent cache. The lock is held for the whole call -- including
+a ``workers>1`` sweep, whose ``os.environ`` juggling is process-global too. For actual
+parallel throughput use ``run(workers=N)``: spawned worker *processes*, each with its
+own private cache and lock.
 """
 from __future__ import annotations
+
+import threading
 
 import numpy as np
 
@@ -41,7 +54,24 @@ class _FEProblem:
         self.std_mats = None                                 # standard matrices/vecs/ksp, lazy
 
 
-_FE_CACHE = {}  # (shape, scale, dim, bbar) -> _FEProblem (process-level; tiny, a few shapes)
+# (shape, scale, dim, bbar) -> _FEProblem. Process-level and tiny (a few shapes), but the
+# _FEProblems it holds are mutated per call (material refill, reassembly, lazy solver swap),
+# so every access -- and every use of a cached problem -- happens under _BACKEND_LOCK.
+_FE_CACHE = {}
+
+# The backend-wide serialization lock behind the thread-safety guarantee (see the module
+# docstring): held for the full duration of run()/build_solver()/solve_one()/clear_cache().
+# Re-entrant because run() calls build_solver() (and solve_one) while already holding it.
+_BACKEND_LOCK = threading.RLock()
+
+
+def _locked(fn):
+    """Wrap ``fn`` so each call runs under ``_BACKEND_LOCK`` (re-entrant, so safe within
+    ``run``'s own locked scope)."""
+    def locked(*args, **kwargs):
+        with _BACKEND_LOCK:
+            return fn(*args, **kwargs)
+    return locked
 
 
 def clear_cache():
@@ -51,10 +81,12 @@ def clear_cache():
     matrix) keyed by ``(shape, scale, dim, bbar)``, so repeated calls on simulations that share
     a mesh shape -- e.g. sweeping many microstructure realizations or loadings on one grid --
     reuse it and skip the dominant build cost. The cache lives for the process; call this to
-    free memory when you move on to different mesh shapes, or to force a clean rebuild. The
-    cache assumes serial use (one ``run`` at a time, the backend's model); the ``workers`` path
-    is unaffected since each spawned process has its own cache."""
-    _FE_CACHE.clear()
+    free memory when you move on to different mesh shapes, or to force a clean rebuild.
+    Thread-safe: takes the same process-wide lock as ``run``/``build_solver`` (see the module
+    docstring); the ``workers`` path is unaffected since each spawned process has its own
+    cache."""
+    with _BACKEND_LOCK:
+        _FE_CACHE.clear()
 
 
 def _fe_problem(geom, model, bbar):
@@ -90,7 +122,18 @@ def build_solver(sim, bbar=True, cancel=None, petsc_options=None, solver="auto")
     ``IterativeSolver`` above it (``select_solver_kind``); ``"lu"``/``"iterative"`` force it.
     ``petsc_options`` overrides the iterative KSP/PC. ``cancel`` is polled per KSP iteration
     by the iterative solver (LU is cancelled only between frequencies, by ``run``).
+
+    Thread safety: both the build and every call of the returned ``solve_one`` serialize
+    on the backend lock (they share the cached, mutable ``_FEProblem`` -- see the module
+    docstring), so handing the closure to another thread is safe; concurrent calls simply
+    run one at a time.
     """
+    with _BACKEND_LOCK:
+        solve_one, dim = _build_solver(sim, bbar, cancel, petsc_options, solver)
+    return _locked(solve_one), dim
+
+
+def _build_solver(sim, bbar, cancel, petsc_options, solver):
     if solver not in ("auto", "lu", "iterative"):
         raise ValueError(f"solver must be 'auto', 'lu' or 'iterative', got {solver!r}")
     model = sim.model
@@ -201,7 +244,20 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
              (monotonic proportional loading is increment-independent for the radial
              return) and 20 when a free lateral component makes the strain path curved.
              Ignored for non-plastic sims and the standard-BC plastic path (single ramp).
+
+    Thread safety: ``run`` may be called concurrently from multiple threads -- calls
+    serialize on a process-wide lock held for the entire call (see the module docstring),
+    so each returns exactly what a serial call would. Threads therefore buy safety, not
+    speed; for parallel throughput use ``workers`` (processes), or one process per sweep.
+    A ``cancel`` callback runs in the calling thread under the lock -- it must not call
+    back into this backend from *another* thread and wait on it (that would deadlock).
     """
+    with _BACKEND_LOCK:
+        return _run_under_lock(sim, output_path, bbar, workers, cancel, solver,
+                               petsc_options, n_incr)
+
+
+def _run_under_lock(sim, output_path, bbar, workers, cancel, solver, petsc_options, n_incr):
     dim = sim.model.nodes.dim
 
     if _has_hyperelastic(sim.model):

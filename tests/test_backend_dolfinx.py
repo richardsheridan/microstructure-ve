@@ -205,6 +205,29 @@ class FrequencyParallelTests(unittest.TestCase):
         parallel = run.run(sim, workers=2)
         np.testing.assert_allclose(parallel, serial, rtol=1e-9, atol=0)
 
+    def test_concurrent_runs_from_threads_match_serial(self):
+        # The runner-level thread-safety guarantee: run() may be called from any number
+        # of threads; calls serialize on the backend lock and each returns exactly what a
+        # serial call would. Same mesh shape on purpose -- every thread contends for the
+        # one cached _FEProblem, whose material refill + reassembly is the shared state
+        # an unlocked race would corrupt (different E per sim makes corruption visible).
+        from concurrent.futures import ThreadPoolExecutor
+
+        from microstructure_ve.backends.dolfinx import _run as run
+
+        sims = [homogeneous_simulation(n=3, dim=2, E=1000.0 * (i + 1), f_count=3)
+                for i in range(4)]
+        run.clear_cache()
+        serial = [run.run(s) for s in sims]
+        run.clear_cache()
+        try:
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                threaded = list(ex.map(run.run, sims))
+        finally:
+            run.clear_cache()  # don't leave racily-built state for later tests
+        for got, want in zip(threaded, serial):
+            np.testing.assert_allclose(got, want, rtol=1e-9, atol=0)
+
     def test_workers_inside_worker_process_raises(self):
         # simulate being a spawned worker that re-ran the driver: parent_process() != None
         from unittest import mock
