@@ -228,6 +228,74 @@ class FrequencyParallelTests(unittest.TestCase):
         for got, want in zip(threaded, serial):
             np.testing.assert_allclose(got, want, rtol=1e-9, atol=0)
 
+    def test_parallel_sweep_does_not_hold_backend_lock(self):
+        # A workers>1 sweep touches no parent-process FE state (workers rebuild the
+        # solver from the pickled sim), so its fan-out must run OUTSIDE _BACKEND_LOCK:
+        # another thread can take the lock (e.g. for its own serial run) while the
+        # sweep is in flight. The cancel callback -- polled in the sweeping thread as
+        # futures complete -- doubles as the "mid-sweep" synchronization point.
+        import threading
+
+        from microstructure_ve.backends.dolfinx import _run as run
+
+        sim = homogeneous_simulation(n=3, dim=2, f_count=3)
+        inside_sweep = threading.Event()
+        probed = threading.Event()
+
+        def cancel():
+            inside_sweep.set()
+            probed.wait(timeout=60)  # hold the sweep open while the main thread probes
+            return False
+
+        result = {}
+
+        def sweep():
+            result["out"] = run.run(sim, workers=2, cancel=cancel)
+
+        t = threading.Thread(target=sweep)
+        t.start()
+        try:
+            self.assertTrue(inside_sweep.wait(timeout=300), "sweep never reached cancel poll")
+            got_lock = run._BACKEND_LOCK.acquire(timeout=15)
+            if got_lock:
+                run._BACKEND_LOCK.release()
+        finally:
+            probed.set()
+            t.join(timeout=300)
+        self.assertFalse(t.is_alive(), "parallel sweep did not finish")
+        self.assertTrue(got_lock, "workers>1 sweep held _BACKEND_LOCK during the fan-out")
+        serial = run.run(sim, workers=1)
+        np.testing.assert_allclose(result["out"], serial, rtol=1e-9, atol=0)
+
+    def test_thread_cap_env_refcounts_across_concurrent_sweeps(self):
+        # The BLAS thread-cap env juggling is what used to force the parallel path under
+        # the backend lock. Refcounted, two overlapping sweeps compose: caps stay at "1"
+        # until the LAST one exits, then the original values come back exactly (a plain
+        # save/set/restore pair would race and could leave the caps stuck at "1").
+        import os
+
+        from microstructure_ve.backends.dolfinx import _run as run
+
+        v0 = run._THREAD_VARS[0]
+        old = os.environ.pop(v0, None)
+        os.environ[v0] = "7"  # a real prior value must round-trip (not just absence)
+        try:
+            before = {v: os.environ.get(v) for v in run._THREAD_VARS}
+            with run._worker_thread_caps():
+                with run._worker_thread_caps():  # a second sweep entering mid-flight
+                    for v in run._THREAD_VARS:
+                        self.assertEqual(os.environ.get(v), "1")
+                # first sweep still alive: caps must hold
+                for v in run._THREAD_VARS:
+                    self.assertEqual(os.environ.get(v), "1")
+            after = {v: os.environ.get(v) for v in run._THREAD_VARS}
+            self.assertEqual(after, before)
+        finally:
+            if old is None:
+                os.environ.pop(v0, None)
+            else:
+                os.environ[v0] = old
+
     def test_workers_inside_worker_process_raises(self):
         # simulate being a spawned worker that re-ran the driver: parent_process() != None
         from unittest import mock

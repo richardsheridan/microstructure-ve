@@ -8,17 +8,22 @@ uniaxial along x (coordinate axis 0).
 
 Thread safety (the guarantee): every entry point of this backend -- ``run``,
 ``build_solver`` plus the ``solve_one`` closures it returns, and ``clear_cache`` --
-serializes on one process-wide re-entrant lock (``_BACKEND_LOCK``). Calling them
-concurrently from multiple threads is therefore *safe but not parallel*: the cached
+is safe to call concurrently from multiple threads. Everything that touches in-process
+FE state (serial and multistep ``run``, ``build_solver``/``solve_one``, ``clear_cache``)
+serializes on one process-wide re-entrant lock (``_BACKEND_LOCK``): the cached
 ``_FEProblem``s and the dolfinx/PETSc objects inside them are shared mutable state
-(material refill, matrix reassembly, factorization reuse), so calls execute one at a
-time, each seeing a consistent cache. The lock is held for the whole call -- including
-a ``workers>1`` sweep, whose ``os.environ`` juggling is process-global too. For actual
-parallel throughput use ``run(workers=N)``: spawned worker *processes*, each with its
-own private cache and lock.
+(material refill, matrix reassembly, factorization reuse), so those calls execute one
+at a time, each seeing a consistent cache -- *safe but not parallel*. The exception is
+a ``workers>1`` frequency sweep: its worker processes rebuild everything from the
+pickled sim and share nothing with this process's cache, so the fan-out runs *outside*
+the lock and parallel sweeps launched from several threads genuinely overlap. The one
+process-global piece of that path -- the BLAS thread-cap ``os.environ`` juggling -- is
+refcounted (``_worker_thread_caps``) so concurrent sweeps compose.
 """
 from __future__ import annotations
 
+import contextlib
+import os
 import threading
 
 import numpy as np
@@ -60,7 +65,9 @@ class _FEProblem:
 _FE_CACHE = {}
 
 # The backend-wide serialization lock behind the thread-safety guarantee (see the module
-# docstring): held for the full duration of run()/build_solver()/solve_one()/clear_cache().
+# docstring): held for the full duration of every call that touches in-process FE state --
+# serial/multistep run(), build_solver(), solve_one(), clear_cache(). The workers>1 fan-out
+# runs outside it (nothing in this process is shared with the spawned workers).
 # Re-entrant because run() calls build_solver() (and solve_one) while already holding it.
 _BACKEND_LOCK = threading.RLock()
 
@@ -168,10 +175,48 @@ _THREAD_VARS = (
 )
 _WORKER = {}  # per-process solver cache, populated by _init_worker in parallel mode
 
+# State for _worker_thread_caps: how many workers>1 sweeps are in flight, and the
+# environment values to restore when the last one exits. Guarded by its own small lock,
+# NOT _BACKEND_LOCK -- this is the one process-global piece of the parallel path, and
+# keeping it self-contained is what lets the fan-out run outside the backend lock.
+_ENV_CAP_LOCK = threading.Lock()
+_env_cap_count = 0
+_env_cap_saved = {}
+
+
+@contextlib.contextmanager
+def _worker_thread_caps():
+    """Cap the BLAS thread env vars to "1" while a worker pool may still be spawning.
+
+    Spawn children inherit ``os.environ`` at process creation -- before they import
+    numpy/dolfinx, whose OpenBLAS sizes its thread pool at library load, too early for
+    the ``setdefault`` inside ``_init_worker`` to bite -- so the caps must be set in this
+    parent around pool creation. Refcounted so overlapping sweeps from multiple threads
+    compose: the first entrant saves the originals and caps, the last one restores (a
+    plain save/set/restore pair would race and could leave the caps stuck at "1")."""
+    global _env_cap_count
+    with _ENV_CAP_LOCK:
+        if _env_cap_count == 0:
+            _env_cap_saved.update((v, os.environ.get(v)) for v in _THREAD_VARS)
+            for v in _THREAD_VARS:
+                os.environ[v] = "1"
+        _env_cap_count += 1
+    try:
+        yield
+    finally:
+        with _ENV_CAP_LOCK:
+            _env_cap_count -= 1
+            if _env_cap_count == 0:
+                for v, old in _env_cap_saved.items():
+                    if old is None:
+                        os.environ.pop(v, None)
+                    else:
+                        os.environ[v] = old
+                _env_cap_saved.clear()
+
 
 def _init_worker(sim, bbar, solver, petsc_options):
     """ProcessPool worker initializer: build the solver once and cache it."""
-    import os
     for v in _THREAD_VARS:
         os.environ.setdefault(v, "1")
     # cancel is None in workers: the parent polls cancel and SIGTERMs live workers
@@ -245,21 +290,19 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
              return) and 20 when a free lateral component makes the strain path curved.
              Ignored for non-plastic sims and the standard-BC plastic path (single ramp).
 
-    Thread safety: ``run`` may be called concurrently from multiple threads -- calls
-    serialize on a process-wide lock held for the entire call (see the module docstring),
-    so each returns exactly what a serial call would. Threads therefore buy safety, not
-    speed; for parallel throughput use ``workers`` (processes), or one process per sweep.
-    A ``cancel`` callback runs in the calling thread under the lock -- it must not call
-    back into this backend from *another* thread and wait on it (that would deadlock).
+    Thread safety: ``run`` may be called concurrently from multiple threads. Serial
+    sweeps and the multistep paths serialize on a process-wide lock held for the whole
+    call (see the module docstring), so each returns exactly what a serial call would --
+    on those paths threads buy safety, not speed. A ``workers>1`` sweep runs its fan-out
+    *outside* that lock (the worker processes share no state with this one), so parallel
+    sweeps launched from several threads genuinely overlap. A ``cancel`` callback always
+    runs in the calling thread; on the locked (serial/multistep) paths it must not call
+    back into this backend from *another* thread and wait on it (that would deadlock) --
+    in a ``workers>1`` sweep the lock is not held, so that caveat does not apply.
     """
-    with _BACKEND_LOCK:
-        return _run_under_lock(sim, output_path, bbar, workers, cancel, solver,
-                               petsc_options, n_incr)
-
-
-def _run_under_lock(sim, output_path, bbar, workers, cancel, solver, petsc_options, n_incr):
     dim = sim.model.nodes.dim
 
+    # Dispatch below reads only the caller's sim (pure numpy checks), so it needs no lock.
     if _has_hyperelastic(sim.model):
         from microstructure_ve.steps import Dynamic
 
@@ -274,37 +317,29 @@ def _run_under_lock(sim, output_path, bbar, workers, cancel, solver, petsc_optio
             )
 
     if len(list(sim.steps)) > 1 or _has_plastic_static(sim) or _has_hyperelastic_static(sim):
-        out = _run_multistep(sim, bbar, cancel, solver, petsc_options, n_incr)
-        if output_path is not None:
-            np.savetxt(output_path, out, fmt="%.8e", delimiter="\t",
-                       header="\t".join(_row_header(dim)), comments="")
-        return out
-
-    freqs = np.asarray(spec.frequencies(sim), dtype=float)
-
-    if workers and workers > 1 and len(freqs) > 1:
-        import multiprocessing
-
-        # If we are already inside a spawned worker, the pool's children re-imported and
-        # re-ran the calling module -- detect that directly (a real parent process exists)
-        # rather than trying to infer whether the caller had an __main__ guard.
-        if multiprocessing.parent_process() is not None:
-            raise RuntimeError(
-                "run(workers>1) was reached inside a multiprocessing worker process: the "
-                "spawned workers re-imported and re-ran the calling module. Invoke "
-                "run(workers>1) from a guarded entry point (under "
-                '`if __name__ == "__main__":`) or set workers=1.'
-            )
-        out = _run_parallel(sim, freqs, bbar, workers, cancel, solver, petsc_options)
+        with _BACKEND_LOCK:
+            out = _run_multistep(sim, bbar, cancel, solver, petsc_options, n_incr)
     else:
-        solve_one, _ = build_solver(sim, bbar, cancel=cancel,
-                                    petsc_options=petsc_options, solver=solver)
-        rows = []
-        for f in freqs:
-            if cancel is not None and cancel():
-                raise Cancelled("cancelled by callback")
-            rows.append(solve_one(f))
-        out = np.array(rows)
+        freqs = np.asarray(spec.frequencies(sim), dtype=float)
+        if workers and workers > 1 and len(freqs) > 1:
+            import multiprocessing
+
+            # If we are already inside a spawned worker, the pool's children re-imported
+            # and re-ran the calling module -- detect that directly (a real parent process
+            # exists) rather than trying to infer whether the caller had an __main__ guard.
+            if multiprocessing.parent_process() is not None:
+                raise RuntimeError(
+                    "run(workers>1) was reached inside a multiprocessing worker process: "
+                    "the spawned workers re-imported and re-ran the calling module. Invoke "
+                    "run(workers>1) from a guarded entry point (under "
+                    '`if __name__ == "__main__":`) or set workers=1.'
+                )
+            # No _BACKEND_LOCK here: the fan-out shares nothing with this process's FE
+            # cache, so parallel sweeps from several threads may overlap (module docstring).
+            out = _run_parallel(sim, freqs, bbar, workers, cancel, solver, petsc_options)
+        else:
+            with _BACKEND_LOCK:
+                out = _run_serial_sweep(sim, freqs, bbar, cancel, solver, petsc_options)
 
     if output_path is not None:
         np.savetxt(
@@ -312,6 +347,17 @@ def _run_under_lock(sim, output_path, bbar, workers, cancel, solver, petsc_optio
             header="\t".join(_row_header(dim)), comments="",
         )
     return out
+
+
+def _run_serial_sweep(sim, freqs, bbar, cancel, solver, petsc_options):
+    solve_one, _ = build_solver(sim, bbar, cancel=cancel,
+                                petsc_options=petsc_options, solver=solver)
+    rows = []
+    for f in freqs:
+        if cancel is not None and cancel():
+            raise Cancelled("cancelled by callback")
+        rows.append(solve_one(f))
+    return np.array(rows)
 
 
 def _has_plastic_static(sim):
@@ -430,7 +476,6 @@ def _kill_workers(ex):
     """SIGTERM every live worker of ``ex``. Uses the private ``_processes`` dict because
     ProcessPoolExecutor exposes no public way to kill in-flight tasks; SIGTERM reaches a
     worker even mid-LU-solve (the C call dies with the process)."""
-    import os
     import signal
 
     for proc in list(getattr(ex, "_processes", {}).values()):
@@ -447,16 +492,12 @@ def _run_parallel(sim, freqs, bbar, workers, cancel=None, solver="auto", petsc_o
     workers are SIGTERMed and ``Cancelled`` is raised. With ``cancel=None`` this keeps the
     plain ``ex.map`` fast path.
     """
-    import os
     import multiprocessing
     from concurrent.futures import ProcessPoolExecutor
 
-    # Spawn children inherit os.environ at interpreter start (before they import numpy),
-    # so set the BLAS thread caps here to keep workers single-threaded; restore after.
-    saved = {v: os.environ.get(v) for v in _THREAD_VARS}
-    for v in _THREAD_VARS:
-        os.environ[v] = "1"
-    try:
+    # _worker_thread_caps keeps workers single-threaded (BLAS caps inherited at spawn)
+    # and refcounts the env mutation so overlapping sweeps from other threads compose.
+    with _worker_thread_caps():
         ctx = multiprocessing.get_context("spawn")
         with ProcessPoolExecutor(
             max_workers=min(int(workers), len(freqs)), mp_context=ctx,
@@ -466,12 +507,6 @@ def _run_parallel(sim, freqs, bbar, workers, cancel=None, solver="auto", petsc_o
                 rows = list(ex.map(_worker_solve, freqs))  # map preserves input order
             else:
                 rows = _map_cancellable(ex, freqs, cancel)
-    finally:
-        for v, old in saved.items():
-            if old is None:
-                os.environ.pop(v, None)
-            else:
-                os.environ[v] = old
     return np.array(rows)
 
 

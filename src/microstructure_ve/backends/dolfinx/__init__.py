@@ -7,9 +7,11 @@ Public API::
 ``run`` transparently caches the mesh-only FE setup by mesh shape, so sweeping many
 simulations that share a grid is fast; ``clear_cache`` releases that memory.
 
-All four entry points are thread-safe: concurrent calls from multiple threads serialize
-on one process-wide lock (safe, but no thread parallelism -- see ``_run``'s module
-docstring). Use ``run(workers=N)`` for parallel throughput.
+All four entry points are thread-safe: calls that touch the in-process cache (serial
+``run``, ``build_solver``, ``clear_cache``) serialize on one process-wide lock -- safe,
+but no thread parallelism -- while a ``run(workers=N)`` sweep fans out to worker
+processes *outside* that lock, so parallel sweeps launched from several threads overlap.
+See ``_run``'s module docstring for the full guarantee.
 
 ``run`` / ``build_solver`` are resolved lazily so that importing this package -- and its
 pure-numpy ``_spec`` submodule -- never pulls in dolfinx. The dolfinx-touching modules
