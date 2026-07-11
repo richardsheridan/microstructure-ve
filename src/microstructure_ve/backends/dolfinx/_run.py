@@ -16,13 +16,13 @@ serializes on one process-wide re-entrant lock (``_BACKEND_LOCK``): the cached
 at a time, each seeing a consistent cache -- *safe but not parallel*. The exception is
 a ``workers>1`` frequency sweep: its worker processes rebuild everything from the
 pickled sim and share nothing with this process's cache, so the fan-out runs *outside*
-the lock and parallel sweeps launched from several threads genuinely overlap. The one
-process-global piece of that path -- the BLAS thread-cap ``os.environ`` juggling -- is
-refcounted (``_worker_thread_caps``) so concurrent sweeps compose.
+the lock and parallel sweeps launched from several threads genuinely overlap. That path
+touches no process-global state either -- each worker caps its own BLAS/OpenMP threads
+in-process (threadpoolctl, in ``_init_worker``), so the parent's ``os.environ`` is never
+mutated.
 """
 from __future__ import annotations
 
-import contextlib
 import os
 import threading
 
@@ -170,55 +170,26 @@ def _build_solver(sim, bbar, cancel, petsc_options, solver):
     return solve_one, prob.space.dim
 
 
-_THREAD_VARS = (
-    "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"
-)
 _WORKER = {}  # per-process solver cache, populated by _init_worker in parallel mode
-
-# State for _worker_thread_caps: how many workers>1 sweeps are in flight, and the
-# environment values to restore when the last one exits. Guarded by its own small lock,
-# NOT _BACKEND_LOCK -- this is the one process-global piece of the parallel path, and
-# keeping it self-contained is what lets the fan-out run outside the backend lock.
-_ENV_CAP_LOCK = threading.Lock()
-_env_cap_count = 0
-_env_cap_saved = {}
-
-
-@contextlib.contextmanager
-def _worker_thread_caps():
-    """Cap the BLAS thread env vars to "1" while a worker pool may still be spawning.
-
-    Spawn children inherit ``os.environ`` at process creation -- before they import
-    numpy/dolfinx, whose OpenBLAS sizes its thread pool at library load, too early for
-    the ``setdefault`` inside ``_init_worker`` to bite -- so the caps must be set in this
-    parent around pool creation. Refcounted so overlapping sweeps from multiple threads
-    compose: the first entrant saves the originals and caps, the last one restores (a
-    plain save/set/restore pair would race and could leave the caps stuck at "1")."""
-    global _env_cap_count
-    with _ENV_CAP_LOCK:
-        if _env_cap_count == 0:
-            _env_cap_saved.update((v, os.environ.get(v)) for v in _THREAD_VARS)
-            for v in _THREAD_VARS:
-                os.environ[v] = "1"
-        _env_cap_count += 1
-    try:
-        yield
-    finally:
-        with _ENV_CAP_LOCK:
-            _env_cap_count -= 1
-            if _env_cap_count == 0:
-                for v, old in _env_cap_saved.items():
-                    if old is None:
-                        os.environ.pop(v, None)
-                    else:
-                        os.environ[v] = old
-                _env_cap_saved.clear()
 
 
 def _init_worker(sim, bbar, solver, petsc_options):
-    """ProcessPool worker initializer: build the solver once and cache it."""
-    for v in _THREAD_VARS:
-        os.environ.setdefault(v, "1")
+    """ProcessPool worker initializer: pin BLAS threads, then build the solver once.
+
+    ``threadpool_limits(1)`` caps this worker's OpenBLAS/OpenMP/MKL pools to a single
+    thread in-process (regardless of when those libraries loaded), so N workers on one
+    box never oversubscribe cores -- and, unlike setting ``os.environ`` in the parent, it
+    leaves the parent's environment untouched. The returned controller is kept alive in
+    ``_WORKER`` so the cap persists for the worker's lifetime."""
+    try:
+        import threadpoolctl
+    except ImportError as e:  # pragma: no cover - env misconfiguration guard
+        raise RuntimeError(
+            "run(workers>1) needs 'threadpoolctl' to cap each worker's BLAS threads, but "
+            "it is not importable in this environment. Install it into the FEniCSx env "
+            "(e.g. `conda install -c conda-forge threadpoolctl`) or use workers=1."
+        ) from e
+    _WORKER["thread_limits"] = threadpoolctl.threadpool_limits(limits=1)
     # cancel is None in workers: the parent polls cancel and SIGTERMs live workers
     _WORKER["solve_one"], _WORKER["dim"] = build_solver(
         sim, bbar, petsc_options=petsc_options, solver=solver)
@@ -488,6 +459,9 @@ def _kill_workers(ex):
 def _run_parallel(sim, freqs, bbar, workers, cancel=None, solver="auto", petsc_options=None):
     """Fan the per-frequency solves across a spawn ProcessPoolExecutor (order preserved).
 
+    Each worker caps its own BLAS/OpenMP threads to one in ``_init_worker`` (threadpoolctl),
+    so the parent's ``os.environ`` is never touched and workers never oversubscribe cores.
+
     ``cancel`` (parent-process predicate) is polled as futures complete; on True the live
     workers are SIGTERMed and ``Cancelled`` is raised. With ``cancel=None`` this keeps the
     plain ``ex.map`` fast path.
@@ -495,18 +469,15 @@ def _run_parallel(sim, freqs, bbar, workers, cancel=None, solver="auto", petsc_o
     import multiprocessing
     from concurrent.futures import ProcessPoolExecutor
 
-    # _worker_thread_caps keeps workers single-threaded (BLAS caps inherited at spawn)
-    # and refcounts the env mutation so overlapping sweeps from other threads compose.
-    with _worker_thread_caps():
-        ctx = multiprocessing.get_context("spawn")
-        with ProcessPoolExecutor(
-            max_workers=min(int(workers), len(freqs)), mp_context=ctx,
-            initializer=_init_worker, initargs=(sim, bbar, solver, petsc_options),
-        ) as ex:
-            if cancel is None:
-                rows = list(ex.map(_worker_solve, freqs))  # map preserves input order
-            else:
-                rows = _map_cancellable(ex, freqs, cancel)
+    ctx = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(
+        max_workers=min(int(workers), len(freqs)), mp_context=ctx,
+        initializer=_init_worker, initargs=(sim, bbar, solver, petsc_options),
+    ) as ex:
+        if cancel is None:
+            rows = list(ex.map(_worker_solve, freqs))  # map preserves input order
+        else:
+            rows = _map_cancellable(ex, freqs, cancel)
     return np.array(rows)
 
 

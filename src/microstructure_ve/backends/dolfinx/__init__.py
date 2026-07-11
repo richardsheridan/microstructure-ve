@@ -11,7 +11,8 @@ All four entry points are thread-safe: calls that touch the in-process cache (se
 ``run``, ``build_solver``, ``clear_cache``) serialize on one process-wide lock -- safe,
 but no thread parallelism -- while a ``run(workers=N)`` sweep fans out to worker
 processes *outside* that lock, so parallel sweeps launched from several threads overlap.
-See ``_run``'s module docstring for the full guarantee.
+The worker path mutates no process-global state (each worker caps its own BLAS threads
+in-process via threadpoolctl). See ``_run``'s module docstring for the full guarantee.
 
 ``run`` / ``build_solver`` are resolved lazily so that importing this package -- and its
 pure-numpy ``_spec`` submodule -- never pulls in dolfinx. The dolfinx-touching modules

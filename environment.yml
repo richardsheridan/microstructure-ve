@@ -1,0 +1,25 @@
+# Full FEniCSx (DOLFINx) backend environment for microstructure-ve.
+#
+#   conda env create -f environment.yml
+#   conda activate fenicsx
+#
+# Provides the finite-element backend: dolfinx + dolfinx_mpc against a COMPLEX-scalar
+# PETSc build (steady-state dynamics needs complex arithmetic). conda-forge ships
+# linux-64, osx-64 and osx-arm64 builds; there is no native Windows build -- on Windows
+# use WSL2 or the dolfinx/dolfinx Docker image (see README "Install").
+name: fenicsx
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12.*
+  - fenics-dolfinx=0.10.*
+  - dolfinx_mpc=0.10.*
+  - petsc=3.25.*=complex*      # the complex-scalar build is required
+  - petsc4py=3.25.*
+  - mpi4py
+  - numpy
+  - scipy
+  - threadpoolctl              # caps each parallel worker's BLAS threads (run(workers=N))
+  - pip
+  - pip:
+      - -e .

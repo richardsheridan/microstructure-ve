@@ -1,0 +1,18 @@
+# Lightweight numpy-only environment for microstructure-ve.
+#
+#   conda env create -f environment-numpy.yml
+#   conda activate msve
+#
+# Runs the ABAQUS .inp / spec paths and the full test suite; the DOLFINx backend is
+# imported lazily, so the package stays importable here and all dolfinx tests self-skip.
+# Works natively on Linux, macOS and Windows (pure numpy/scipy).
+name: msve
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12.*
+  - numpy
+  - scipy
+  - pip
+  - pip:
+      - -e .

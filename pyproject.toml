@@ -11,11 +11,13 @@ requires-python = ">=3.10"
 maintainers = [{ name = "Richard Sheridan", email = "richard.sheridan@duke.edu" }]
 dependencies = ["numpy", "scipy"]
 
-# NOTE: the DOLFINx backend (microstructure_ve.backends._dolfinx) is NOT a pip extra.
+# NOTE: the DOLFINx backend (microstructure_ve.backends.dolfinx) is NOT a pip extra.
 # fenics-dolfinx / dolfinx_mpc / a complex-PETSc build are conda-forge only and not
-# pip-installable in a working complex configuration. Use a separate conda env
+# pip-installable in a working complex configuration. Use the conda env in environment.yml
 # (see docs/dolfinx_backend_design.md). The package imports dolfinx lazily, so it stays
-# importable (numpy-only) without that env.
+# importable (numpy-only) without that env. That conda env also provides threadpoolctl,
+# which run(workers=N) uses to cap each worker's BLAS threads; it is kept out of the pip
+# dependencies here so base installs stay numpy-only.
 
 [tool.setuptools.packages.find]
 where = ["src"]

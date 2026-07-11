@@ -5,13 +5,41 @@ Active Maintainers: [Richard Sheridan](richard.sheridan@duke.edu "Contact Richar
 
 ## Install
 
+The base package (ABAQUS `.inp` emitter + solver-neutral spec) needs only numpy and scipy;
+the optional **DOLFINx** finite-element backend needs the FEniCSx stack, which is provided
+through conda-forge (not pip). The package imports dolfinx lazily, so the base install stays
+importable without it. Two conda env files are provided at the repo root.
+
+**Base only (numpy + scipy) — Linux, macOS, Windows.**
+
 ```sh
-pip install -e .          # numpy + scipy; builds the ABAQUS .inp path and the spec
+pip install -e .                              # into any existing Python ≥ 3.10
+# or an isolated conda env:
+conda env create -f environment-numpy.yml     # creates env "msve"
+conda activate msve
 ```
 
-The optional **DOLFINx** finite-element backend additionally needs the FEniCSx stack
-(`dolfinx`, `dolfinx_mpc`, `basix`, and a complex-scalar `petsc4py`), which is typically
-provided through conda-forge rather than pip — install the package into that environment too.
+**DOLFINx FE backend — Linux & macOS (incl. Apple Silicon).** conda-forge ships `linux-64`,
+`osx-64` and `osx-arm64` builds:
+
+```sh
+conda env create -f environment.yml           # creates env "fenicsx" (dolfinx + complex PETSc)
+conda activate fenicsx
+```
+
+(Modern conda uses the libmamba solver by default, so a separate `mamba` is not needed.)
+
+**DOLFINx FE backend — Windows.** conda-forge has **no native Windows DOLFINx build**. Either
+run the Linux instructions inside **WSL2** (Ubuntu), or use the official Docker image:
+
+```sh
+docker run -ti -v "%cd%":/root/shared -w /root/shared dolfinx/dolfinx:stable
+pip install -e .                              # inside the container
+```
+
+The two interpreters map to the two env files (`fenicsx` for the FE suite, `msve` for the
+numpy-only suite). Parallel frequency sweeps (`run(workers=N)`) additionally use
+`threadpoolctl`, already listed in `environment.yml`.
 
 The package `__init__` is intentionally empty; import the solver-neutral spec dataclasses
 from their submodules (or all at once via `from microstructure_ve.api import *`), and each

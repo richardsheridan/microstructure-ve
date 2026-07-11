@@ -30,6 +30,14 @@ def _lame(E, nu):
     return lam, mu
 
 
+def _worker_threadpool_counts():
+    """Run inside a spawned worker (top-level so it pickles): the per-pool thread counts
+    threadpoolctl reports after ``_init_worker`` has applied its cap."""
+    import threadpoolctl
+
+    return [pool["num_threads"] for pool in threadpoolctl.threadpool_info()]
+
+
 @needs_dolfinx
 class AssemblyTests(unittest.TestCase):
     def test_mesh_total_measure_exact(self):
@@ -267,34 +275,61 @@ class FrequencyParallelTests(unittest.TestCase):
         serial = run.run(sim, workers=1)
         np.testing.assert_allclose(result["out"], serial, rtol=1e-9, atol=0)
 
-    def test_thread_cap_env_refcounts_across_concurrent_sweeps(self):
-        # The BLAS thread-cap env juggling is what used to force the parallel path under
-        # the backend lock. Refcounted, two overlapping sweeps compose: caps stay at "1"
-        # until the LAST one exits, then the original values come back exactly (a plain
-        # save/set/restore pair would race and could leave the caps stuck at "1").
+    def test_parent_env_untouched_during_parallel_sweep(self):
+        # Workers cap their OWN BLAS/OpenMP threads in-process (threadpoolctl); the parent's
+        # os.environ must never be mutated. A watcher thread samples the BLAS env vars while
+        # the sweep runs -- every sample must equal the pre-sweep snapshot. This is red for
+        # any parent-side env juggling: the old whole-sweep cap held "1" for the entire
+        # sweep, and the warmup variant set "1" during spawn -- both are caught here. When
+        # the env is never touched (the guarantee) green is exact: no sample can differ.
         import os
+        import threading
+        import time
 
         from microstructure_ve.backends.dolfinx import _run as run
 
-        v0 = run._THREAD_VARS[0]
-        old = os.environ.pop(v0, None)
-        os.environ[v0] = "7"  # a real prior value must round-trip (not just absence)
+        blas_vars = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+                     "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS")
+        before = {v: os.environ.get(v) for v in blas_vars}
+        samples = []
+        stop = threading.Event()
+
+        def watch():
+            while not stop.is_set():
+                samples.append({v: os.environ.get(v) for v in blas_vars})
+                time.sleep(0.001)
+
+        # enough workers + solves that spawn and the solve phase span many 1 ms samples
+        sim = homogeneous_simulation(n=4, dim=2, f_count=8)
+        w = threading.Thread(target=watch)
+        w.start()
         try:
-            before = {v: os.environ.get(v) for v in run._THREAD_VARS}
-            with run._worker_thread_caps():
-                with run._worker_thread_caps():  # a second sweep entering mid-flight
-                    for v in run._THREAD_VARS:
-                        self.assertEqual(os.environ.get(v), "1")
-                # first sweep still alive: caps must hold
-                for v in run._THREAD_VARS:
-                    self.assertEqual(os.environ.get(v), "1")
-            after = {v: os.environ.get(v) for v in run._THREAD_VARS}
-            self.assertEqual(after, before)
+            run.run(sim, workers=2)
         finally:
-            if old is None:
-                os.environ.pop(v0, None)
-            else:
-                os.environ[v0] = old
+            stop.set()
+            w.join()
+        mutated = [s for s in samples if s != before]
+        self.assertEqual(samples and mutated, [],
+                         f"parent BLAS env was mutated during the sweep: {mutated[:3]}")
+        self.assertEqual({v: os.environ.get(v) for v in blas_vars}, before)
+
+    def test_workers_run_single_threaded(self):
+        # The cap must actually take effect in the worker: a task reporting the worker's
+        # own threadpool_info() shows every native pool pinned to one thread.
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor
+
+        from microstructure_ve.backends.dolfinx import _run as run
+
+        sim = homogeneous_simulation(n=3, dim=2, f_count=2)
+        ctx = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(
+            max_workers=1, mp_context=ctx, initializer=run._init_worker,
+            initargs=(sim, True, "auto", None),
+        ) as ex:
+            counts = ex.submit(_worker_threadpool_counts).result(timeout=120)
+        self.assertTrue(counts, "no native thread pools reported")
+        self.assertTrue(all(n == 1 for n in counts), f"workers not single-threaded: {counts}")
 
     def test_workers_inside_worker_process_raises(self):
         # simulate being a spawned worker that re-ran the driver: parent_process() != None
