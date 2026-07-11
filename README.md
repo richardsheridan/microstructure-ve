@@ -1,8 +1,6 @@
 # microstructure-ve
 A repository for FEA code developed by members of the Brinson Group at Duke University. Packages specialized for the analysis of polymer nanoparticle composites (PNCs).
 
-Active Maintainers: [Richard Sheridan](richard.sheridan@duke.edu "Contact Richard")†, [Anqi (Claire) Lin](anqi.lin@duke.edu "Contact Claire")†, [Nicholas Finan](nicholas.finan@duke.edu "Contact Nicholas")† 
-
 ## Install
 
 The base package (ABAQUS `.inp` emitter + solver-neutral spec) needs only numpy and scipy;
@@ -27,19 +25,8 @@ conda env create -f environment.yml           # creates env "fenicsx" (dolfinx +
 conda activate fenicsx
 ```
 
-(Modern conda uses the libmamba solver by default, so a separate `mamba` is not needed.)
-
-**DOLFINx FE backend — Windows.** conda-forge has **no native Windows DOLFINx build**. Either
-run the Linux instructions inside **WSL2** (Ubuntu), or use the official Docker image:
-
-```sh
-docker run -ti -v "%cd%":/root/shared -w /root/shared dolfinx/dolfinx:stable
-pip install -e .                              # inside the container
-```
-
-The two interpreters map to the two env files (`fenicsx` for the FE suite, `msve` for the
-numpy-only suite). Parallel frequency sweeps (`run(workers=N)`) additionally use
-`threadpoolctl`, already listed in `environment.yml`.
+**DOLFINx FE backend — Windows.** conda-forge has **no native Windows DOLFINx build**.
+Run the Linux instructions inside **WSL2** (Ubuntu).
 
 The package `__init__` is intentionally empty; import the solver-neutral spec dataclasses
 from their submodules (or all at once via `from microstructure_ve.api import *`), and each
@@ -82,8 +69,11 @@ model = Model(nodes=nodes, elements=elements, materials=materials, bcs=[
 ])
 dyn_step = Step(subsections=[
     Dynamic(f_initial=1e-7, f_final=1e5, f_count=30, bias=1),
-    BoundaryCondition(x_drive, Prescribed(dofs=[1], value=0.005)),  # harmonic macro drive (perturbation)
-], perturbation=True)
+    BoundaryCondition(
+        x_drive,
+        Prescribed(dofs=[1], value=0.005),
+    ),
+], perturbation=True)  # harmonic macro drive (perturbation)
 # a general (nonlinear) static step that loads the matrix past yield into the softening branch
 static_step = Step(subsections=[
     Static(),
@@ -94,7 +84,7 @@ sim = Simulation(heading=Heading("quick start"), model=model, steps=[dyn_step, s
 write_inp(sim, "rve.inp")          # -> ABAQUS input deck
 ```
 
-Solve the same `sim` license-free with the DOLFINx backend (needs the FEniCSx env):
+Solve the same `sim` with the DOLFINx backend (needs the FEniCSx env):
 
 ```python
 from microstructure_ve.backends.dolfinx import run
@@ -106,13 +96,7 @@ result = run(sim)                      # ndarray (n_freqs + 1, 1 + 3*dim)
 # linear-elastic -- the *Plastic table is honored only by the ABAQUS deck above.
 ```
 
-There are no physics kwargs: everything about the problem is read from `sim`. Whether the
-lateral macro strains float (free, apparent uniaxial modulus) or are held at zero (confined)
-is inferred from the corner BCs — the quickstart above pins the drive face against shear and
-drives x only, i.e. confined. Pass `workers=N` to fan the independent per-frequency solves
+Pass `workers=N` to fan the independent per-frequency solves
 across processes (guard the call under `if __name__ == "__main__":`).
 
 ## Documentation
-
-## Attributions
-†Duke University, Brinson Group
