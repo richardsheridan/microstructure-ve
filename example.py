@@ -38,6 +38,9 @@ youngs_plat = youngs_cplx[0].real
 heading = Heading("Example RVE simulation")
 nodes = GridNodes.from_matl_img(intph_img, scale)
 elements = GridElements(nodes, type="CPE4R")
+# from_matl_img returns one ElementSet per distinct pixel value, sorted ascending;
+# this 3-way unpack matches the single interphase layer built above (filler=0,
+# interphase, matrix). A different `layers` list changes the count -- adjust to match.
 filler_elset, intph_elset, mat_elset = ElementSet.from_matl_img(intph_img)
 
 filler_material = Material(filler_elset, density=2.65e-15,

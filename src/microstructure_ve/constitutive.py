@@ -111,8 +111,15 @@ class TabularViscoelastic:
         left and right refer to frequencies below and above tand peak"""
         freq = np.log10(self.freq) - self.shift
 
-        # shift relative to tand peak
-        i = np.argmax(self.youngs_cplx.imag / self.youngs_cplx.real)
+        # shift relative to tand peak; guard the division so a zero storage modulus
+        # can't inject nan/inf and silently pin the "peak" at index 0
+        tan_delta = np.divide(
+            self.youngs_cplx.imag,
+            self.youngs_cplx.real,
+            out=np.zeros_like(self.youngs_cplx.real),
+            where=self.youngs_cplx.real != 0,
+        )
+        i = int(np.argmax(tan_delta))
         f = freq[i]
 
         freq[:i] = self.left_broadening * (freq[:i] - f) + f

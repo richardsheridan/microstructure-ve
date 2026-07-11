@@ -24,7 +24,8 @@ def read_odb(name, drive_nodeset):
     One row per loaded frame across every step (the zero base frame -- a perturbation base
     state, or the unloaded static initial frame -- is skipped); the reaction force and
     displacement are summed over the nodes of the drive node set. Raises RuntimeError if
-    every frame is at frame value 0 (no loaded frames).
+    every frame is at frame value 0 (no loaded frames), or if the drive node set yields
+    no U/RF values (misnamed set or instance mismatch).
     """
     odb = openOdb(name + ".odb", readOnly=True)
     drive_nset = odb.rootAssembly.instances["PART-1-1"].nodeSets[drive_nodeset.upper()]
@@ -41,11 +42,15 @@ def read_odb(name, drive_nodeset):
             frame_value = frame.frameValue
 
             U = frame.fieldOutputs["U"].getSubset(region=drive_nset, position=NODAL)
+            RF = frame.fieldOutputs["RF"].getSubset(region=drive_nset, position=NODAL)
+            if not U.values or not RF.values:
+                raise RuntimeError(
+                    "drive node set '" + drive_nodeset + "' resolved to no U/RF values"
+                    " (misnamed set or instance mismatch?)")
             U_Real = np.zeros_like(U.values[0].data)
             for v in U.values:
                 U_Real += v.data
 
-            RF = frame.fieldOutputs["RF"].getSubset(region=drive_nset, position=NODAL)
             RF_Real = np.zeros_like(RF.values[0].data)
             RF_Imag = RF_Real.copy()
             for v in RF.values:

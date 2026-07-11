@@ -108,6 +108,14 @@ class AbaqusOdbReaderTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.reader.read_odb("job", "x1y0")
 
+    def test_empty_drive_region_raises_naming_the_nodeset(self):
+        # An empty RF/U subset (drive node set resolves to no values) must raise a clear
+        # RuntimeError naming the node set, not an opaque IndexError on values[0].
+        self.odb.steps = {"Step-1": _Step([_Frame(10.0, _Field([]), _Field([]))])}
+        with self.assertRaises(RuntimeError) as cm:
+            self.reader.read_odb("job", "x1y0")
+        self.assertIn("x1y0", str(cm.exception))
+
     def test_write_tsv_header_and_rows(self):
         rows = [np.array([10.0, 2.0, -1.0, 3.0, 0.5, 0.5, 0.0])]
         with tempfile.TemporaryDirectory() as d:
