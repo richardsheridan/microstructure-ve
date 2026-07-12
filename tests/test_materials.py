@@ -13,6 +13,7 @@ import numpy as np
 
 from microstructure_ve.constitutive import (
     ArrudaBoyce,
+    NeoHookean,
     Plastic,
     Polynomial,
     PronyViscoelastic,
@@ -451,6 +452,34 @@ class HyperelasticNeoHookeEquivalence(unittest.TestCase):
         self.assertEqual(len(rp.d_coeffs), len(poly.d_coeffs))
         for a, b in zip(rp.d_coeffs, poly.d_coeffs):
             self.assertAlmostEqual(a, b, places=12)
+
+
+class NeoHookeanTests(unittest.TestCase):
+    """The coupled compressible Neo-Hookean response (Mechanical-MNIST / FEniCS-demo form).
+
+    psi = mu/2*(I1 - 3) - mu*ln(J) + lam/2*((J**2 - 1)/2 - ln(J)) with the FULL first
+    invariant I1 = tr(F^T F) -- not ABAQUS's isochoric I1bar. The class carries the
+    small-strain constants directly: mu0 and lam are the classical Lame parameters of
+    (youngs, poisson), which the coupled form linearizes to exactly.
+    """
+
+    def test_mu0_is_lame_mu(self):
+        nh = NeoHookean(poisson=0.3, youngs=100.0)
+        self.assertAlmostEqual(nh.mu0, 100.0 / (2 * 1.3), places=12)
+
+    def test_lam_is_lame_lambda(self):
+        nh = NeoHookean(poisson=0.3, youngs=100.0)
+        self.assertAlmostEqual(nh.lam, 100.0 * 0.3 / (1.3 * 0.4), places=12)
+
+    def test_complex_modulus_flat(self):
+        nh = NeoHookean(poisson=0.3, youngs=42.0)
+        E = nh.complex_modulus(np.array([1e-2, 1e4]))
+        np.testing.assert_array_equal(E, [42.0 + 0j, 42.0 + 0j])
+        self.assertTrue(np.iscomplexobj(E))
+
+    def test_incompressible_poisson_raises(self):
+        with self.assertRaises(ValueError):
+            NeoHookean(poisson=0.5, youngs=1.0)
 
 
 if __name__ == "__main__":

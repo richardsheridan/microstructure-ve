@@ -14,6 +14,7 @@ from typing import Union
 from .constitutive import (
     ArrudaBoyce,
     Elastic,
+    NeoHookean,
     Plastic,
     Polynomial,
     PronyViscoelastic,
@@ -29,8 +30,8 @@ class Material:
 
     ``elset`` is the ElementSet it applies to, ``density`` is in kg/micron^3, and ``response``
     is one of the ``constitutive`` responses (``Elastic``, ``Plastic``, ``TabularViscoelastic``,
-    ``PronyViscoelastic``, ``ReducedPolynomial``, ``Polynomial``, ``ArrudaBoyce``) carrying
-    the elastic constants and frequency/rate behavior::
+    ``PronyViscoelastic``, ``ReducedPolynomial``, ``Polynomial``, ``ArrudaBoyce``,
+    ``NeoHookean``) carrying the elastic constants and frequency/rate behavior::
 
         Material(elset, density=2.65e-15, response=Elastic(poisson=0.3, youngs=5.0))
     """
@@ -39,5 +40,5 @@ class Material:
     density: float  # kg/micron^3
     response: Union[
         Elastic, Plastic, TabularViscoelastic, PronyViscoelastic,
-        ReducedPolynomial, Polynomial, ArrudaBoyce,
+        ReducedPolynomial, Polynomial, ArrudaBoyce, NeoHookean,
     ]

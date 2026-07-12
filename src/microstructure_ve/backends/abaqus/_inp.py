@@ -21,8 +21,10 @@ from microstructure_ve.boundary import (
 )
 from microstructure_ve.core import ElementSet, GridElements, GridNodes, NodeSet
 from microstructure_ve.constitutive import (
+    _d1_from_poisson,
     ArrudaBoyce,
     Elastic,
+    NeoHookean,
     Plastic,
     Polynomial,
     PronyViscoelastic,
@@ -255,6 +257,22 @@ def _(response, material, f):
     _emit_material_header(material, f)
     f.write(f"*Hyperelastic, polynomial, n={response.n}\n")
     _write_data_lines(f, list(response.c) + response.d_coeffs)
+
+
+@emit_response.register(NeoHookean)
+def _(response, material, f):
+    # The coupled compressible form has no exact *HYPERELASTIC representation; emit the
+    # isochoric neo-Hooke with matched small-strain moduli (C10 = mu0/2, D1 = 2/K0) and
+    # say so in the deck. Exact at small strain, model-approximate at finite strain.
+    _emit_material_header(material, f)
+    f.write(
+        "** NeoHookean is the coupled compressible form (no exact ABAQUS equivalent);\n"
+        "** this block is the moduli-matched isochoric neo-Hooke approximation.\n"
+        "*Hyperelastic, neo hooke\n"
+    )
+    _write_data_lines(
+        f, [response.mu0 / 2.0, _d1_from_poisson(response.mu0, response.poisson)]
+    )
 
 
 @emit.register(BoundaryCondition)

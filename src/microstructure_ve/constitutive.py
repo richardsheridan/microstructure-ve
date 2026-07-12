@@ -462,3 +462,51 @@ class ArrudaBoyce:
     def complex_modulus(self, freqs):
         """Complex Young's modulus E*(f); frequency-flat, so ``youngs`` everywhere."""
         return np.full(np.shape(freqs), self.youngs, dtype=complex)
+
+
+@dataclass
+class NeoHookean:
+    """The coupled (non-isochoric) compressible Neo-Hookean response.
+
+    Strain energy density (the classical FEniCS-demo / Mechanical-MNIST form)::
+
+        psi = mu/2*(I1 - 3) - mu*ln(J) + lam/2*((J**2 - 1)/2 - ln(J))
+
+    with the FULL first invariant I1 = tr(F^T F) (F embedded 3x3, F33 = 1 in plane
+    strain) -- unlike the ABAQUS-convention classes above, whose deviatoric parts use
+    the isochoric I1bar = J**(-2/3)*I1. ``mu0`` and ``lam`` are the classical Lame
+    parameters of (``youngs``, ``poisson``); the coupled form linearizes to exactly
+    that small-strain isotropic elasticity.
+
+    **ABAQUS:** this form has no exact ``*HYPERELASTIC`` representation. The emitter
+    writes the moduli-matched isochoric neo-Hooke instead (C10 = mu0/2, D1 = 2/K0 --
+    equivalent to ``ReducedPolynomial(c=[mu0/2], poisson=poisson)``): identical
+    small-strain E, nu and initial bulk modulus, diverging only at finite strain.
+    The DOLFINx backend solves the coupled form exactly.
+    """
+
+    poisson: float
+    youngs: float  # MPa, small-strain Young's modulus
+
+    def __post_init__(self):
+        if self.poisson >= 0.5:
+            raise ValueError(
+                f"poisson must be < 0.5 (fully incompressible materials require hybrid "
+                f"elements, which are out of scope); got poisson={self.poisson}"
+            )
+
+    @property
+    def mu0(self) -> float:
+        """Small-strain (Lame) shear modulus: mu = E / (2*(1+nu))."""
+        return self.youngs / (2.0 * (1.0 + self.poisson))
+
+    @property
+    def lam(self) -> float:
+        """Lame first parameter: lambda = E*nu / ((1+nu)*(1-2*nu))."""
+        return self.youngs * self.poisson / (
+            (1.0 + self.poisson) * (1.0 - 2.0 * self.poisson)
+        )
+
+    def complex_modulus(self, freqs):
+        """Complex Young's modulus E*(f); frequency-flat, so ``youngs`` everywhere."""
+        return np.full(np.shape(freqs), self.youngs, dtype=complex)

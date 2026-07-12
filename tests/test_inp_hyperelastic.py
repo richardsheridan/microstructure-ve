@@ -10,7 +10,12 @@ import unittest
 import numpy as np
 
 from microstructure_ve.backends.abaqus._inp import emit
-from microstructure_ve.constitutive import ArrudaBoyce, Polynomial, ReducedPolynomial
+from microstructure_ve.constitutive import (
+    ArrudaBoyce,
+    NeoHookean,
+    Polynomial,
+    ReducedPolynomial,
+)
 from microstructure_ve.core import ElementSet
 from microstructure_ve.materials import Material
 from microstructure_ve.steps import Static, Step
@@ -102,6 +107,46 @@ class ReducedPolynomialN1EmissionTests(unittest.TestCase):
         r = self.response
         c10 = r.c[0]
         d1 = r.d_coeffs[0]
+        expected = f"{c10:.6e}, {d1:.6e}"
+        self.assertIn(expected, self.text)
+
+
+class NeoHookeanEmissionTests(unittest.TestCase):
+    """NeoHookean (the coupled compressible form) has no exact ABAQUS representation.
+
+    The emitter writes the moduli-matched isochoric ``*Hyperelastic, neo hooke`` instead
+    (C10 = mu0/2, D1 = 2/K0 -- identical small-strain E, nu and initial bulk modulus,
+    diverging only at finite strain), flagged by a ``**`` comment in the deck.
+    """
+
+    def setUp(self):
+        self.response = NeoHookean(poisson=0.3, youngs=100.0)
+        self.text = _emit_mat(self.response)
+        self.lines = self.text.splitlines()
+
+    def test_hyperelastic_keyword_present(self):
+        self.assertIn("*Hyperelastic, neo hooke", self.text)
+
+    def test_approximation_comment_present(self):
+        # the deck must announce that this block is a finite-strain approximation
+        comment_lines = [l for l in self.lines if l.startswith("**")]
+        self.assertTrue(any("moduli-matched" in l for l in comment_lines),
+                        msg=f"no approximation comment in:\n{self.text}")
+
+    def test_no_elastic_keyword(self):
+        self.assertNotIn("*Elastic", self.text)
+
+    def test_no_poisson_in_keyword_lines(self):
+        for line in self.lines:
+            if line.startswith("*") and not line.startswith("**"):
+                self.assertNotIn("POISSON", line.upper(),
+                                 msg=f"POISSON found on keyword line: {line!r}")
+
+    def test_data_line_c10_d1(self):
+        """One data line: C10 = mu0/2, D1 = 3*(1-2nu)/(mu0*(1+nu)) in %.6e format."""
+        r = self.response
+        c10 = r.mu0 / 2.0
+        d1 = 3.0 * (1.0 - 2.0 * r.poisson) / (r.mu0 * (1.0 + r.poisson))
         expected = f"{c10:.6e}, {d1:.6e}"
         self.assertIn(expected, self.text)
 

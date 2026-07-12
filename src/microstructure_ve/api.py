@@ -21,6 +21,7 @@ from .boundary import (
 from .constitutive import (
     ArrudaBoyce,
     Elastic,
+    NeoHookean,
     Plastic,
     Polynomial,
     PronyViscoelastic,
@@ -45,7 +46,7 @@ __all__ = [
     "Material",
     # constitutive responses
     "Elastic", "Plastic", "TabularViscoelastic", "PronyViscoelastic",
-    "ReducedPolynomial", "Polynomial", "ArrudaBoyce",
+    "ReducedPolynomial", "Polynomial", "ArrudaBoyce", "NeoHookean",
     # boundary
     "BoundaryCondition", "Fixed", "Prescribed",
     "PeriodicBoundaryConstraint", "validate_constraints",
