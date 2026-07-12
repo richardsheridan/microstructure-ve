@@ -347,10 +347,12 @@ def _has_plastic_static(sim):
 
 def _has_hyperelastic(model):
     """True iff ``model`` carries a hyperelastic response (numpy-only check)."""
-    from microstructure_ve.constitutive import ArrudaBoyce, Polynomial, ReducedPolynomial
+    from microstructure_ve.constitutive import (
+        ArrudaBoyce, NeoHookean, Polynomial, ReducedPolynomial,
+    )
 
     return any(
-        isinstance(m.response, (ArrudaBoyce, ReducedPolynomial, Polynomial))
+        isinstance(m.response, (ArrudaBoyce, ReducedPolynomial, Polynomial, NeoHookean))
         for m in model.materials
     )
 

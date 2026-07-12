@@ -239,7 +239,9 @@ def can_run(sim):
       ``_standard_can_run`` (direct-Dirichlet path, well-posed cells only).
     """
     from microstructure_ve.boundary import PeriodicBoundaryConstraint
-    from microstructure_ve.constitutive import ArrudaBoyce, Polynomial, ReducedPolynomial
+    from microstructure_ve.constitutive import (
+        ArrudaBoyce, NeoHookean, Polynomial, ReducedPolynomial,
+    )
     from microstructure_ve.steps import Dynamic, Static
 
     # Hyperelastic (finite-strain) sims: the total-Lagrangian solver handles Static steps
@@ -248,7 +250,8 @@ def can_run(sim):
     # is hypoelastic in ABAQUS, which the total-Lagrangian energy formulation cannot
     # reproduce; different classes would need distinct coefficient layouts per cell).
     hyper = [m.response for m in sim.model.materials
-             if isinstance(m.response, (ArrudaBoyce, ReducedPolynomial, Polynomial))]
+             if isinstance(m.response, (ArrudaBoyce, ReducedPolynomial, Polynomial,
+                                        NeoHookean))]
     if hyper:
         if len(hyper) != len(list(sim.model.materials)):
             return False

@@ -49,7 +49,12 @@ from dolfinx import fem
 import dolfinx.fem.petsc as fempetsc
 import dolfinx_mpc
 
-from microstructure_ve.constitutive import ArrudaBoyce, Polynomial, ReducedPolynomial
+from microstructure_ve.constitutive import (
+    ArrudaBoyce,
+    NeoHookean,
+    Polynomial,
+    ReducedPolynomial,
+)
 
 _NEWTON_TOL = 1e-10       # absolute floor on the residual norm
 _NEWTON_RTOL = 1e-9       # relative to the largest initial residual seen
@@ -64,7 +69,7 @@ _FROZEN_RATIO = 0.5       # refresh Jacobian+factorization when an iteration shr
 # Arruda-Boyce Langevin-expansion coefficients C_i, i = 1..5
 _AB_C = (0.5, 1.0 / 20.0, 11.0 / 1050.0, 19.0 / 7000.0, 519.0 / 673750.0)
 
-HYPER_TYPES = (ArrudaBoyce, ReducedPolynomial, Polynomial)
+HYPER_TYPES = (ArrudaBoyce, ReducedPolynomial, Polynomial, NeoHookean)
 
 
 def _poly_pairs(n):
@@ -87,6 +92,12 @@ def _coefficient_table(responses):
     if any(type(r) is not kind for r in responses):
         raise NotImplementedError("all hyperelastic phases must share one model class")
 
+    if kind is NeoHookean:
+        # the coupled form's "volumetric" column is lambda ITSELF (the third slot is
+        # lambda per material, not 1/Di -- there is no D-series in this model)
+        dev = np.array([[r.mu0] for r in responses])
+        lam = np.array([[r.lam] for r in responses])
+        return kind, dev, lam
     if kind is ArrudaBoyce:
         dev = np.array([[r.mu * _AB_C[i] / r.lm ** (2 * i) for i in range(5)]
                         for r in responses])
@@ -163,6 +174,14 @@ def _energy(kind, dev_fns, invd_fns, F):
     I2 = (I1 ** 2 - ufl.tr(C * C)) / 2
     I1b = J ** (-2.0 / 3.0) * I1
     I2b = J ** (-4.0 / 3.0) * I2
+
+    if kind is NeoHookean:
+        # coupled compressible form: FULL I1 (not I1b) plus the -mu*ln(J) coupling; the
+        # "invd" slot carries lambda directly (see _coefficient_table)
+        mu, lam = dev_fns[0], invd_fns[0]
+        psi_dev = mu / 2 * (I1 - 3) - mu * ufl.ln(J)
+        psi_vol = lam / 2 * ((J * J - 1) / 2 - ufl.ln(J))
+        return psi_dev, psi_vol
 
     if kind is ArrudaBoyce:
         psi_dev = sum(a * (I1b ** (i + 1) - 3 ** (i + 1))
