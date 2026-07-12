@@ -145,5 +145,36 @@ class NeoHookeanSolverTests(unittest.TestCase):
             run.run(lin, return_energy=True)
 
 
+@needs_dolfinx
+class MechanicalMnistParityTests(unittest.TestCase):
+    """Solved strain energies vs the benchmark's committed rows (refine=1, ~1 s each).
+
+    The tolerance is empirical, set by tools/mechanical_mnist_parity.py's convergence
+    study: at refine=1 (one Q1 element per pixel) the d >= 0.1 steps agree with the
+    unstructured-P2 reference to <= ~1.4e-2, halving-ish per refinement step (see
+    tests/data/mechanical_mnist/README.md). rtol carries a 2x margin; atol floors the
+    small-d steps at the summary files' fixed-point quantization (their d=0.001 column
+    rounds to exactly 0).
+    """
+
+    RTOL = 3e-2
+    ATOL = 1e-5
+
+    def _check(self, name, ref_row):
+        from microstructure_ve.backends.dolfinx import _run as run
+
+        sim = mm_simulation(load_bitmap(name), refine=1)
+        _, psi = run.run(sim, return_energy=True, n_incr=2)
+        dpsi = psi - psi[0]
+        np.testing.assert_allclose(dpsi, ref_row, rtol=self.RTOL, atol=self.ATOL,
+                                   err_msg=f"{name} strain-energy parity")
+
+    def test_first_test_bitmap(self):
+        self._check("test_data_0", load_psi("test")[0])
+
+    def test_first_train_bitmap(self):
+        self._check("train_data_0", load_psi("train")[0])
+
+
 if __name__ == "__main__":
     unittest.main()

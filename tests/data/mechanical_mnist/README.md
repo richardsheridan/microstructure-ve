@@ -18,3 +18,23 @@ Pairing assumption: sample bitmap ``i`` corresponds to summary row ``i``. This c
 be proven from the text files alone, but the parity run itself is the empirical check --
 a wrong pairing produces O(1) disagreement, not the observed mesh-convergence-level
 agreement (see ``tools/mechanical_mnist_parity.py``).
+
+## Parity results (tools/mechanical_mnist_parity.py, all 20 bitmaps)
+
+Max/median relative error of the DOLFINx NeoHookean strain energies vs the committed
+rows over the d >= 0.1 steps, by ``refine`` (Q1 elements per pixel edge):
+
+| refine | mesh    | max rel | median rel | ~s/bitmap |
+|--------|---------|---------|------------|-----------|
+| 1      | 28x28   | 1.5e-2  | 1.0e-2     | 0.5       |
+| 2      | 56x56   | 4.7e-3  | 2.5e-3     | 2.5       |
+| 3      | 84x84   | 1.8e-3  | 5e-4       | 9         |
+| 5      | 140x140 | 2.4e-3  | 1e-3       | 30-170    |
+
+Convergence is ~O(h^2) through refine=3 and plateaus at ~1e-3: the benchmark's own
+mref=5 unstructured-P2 reference and its nodal degree-1 E field carry comparable
+discretization error, so closer agreement is not expected. The d = 0.001 and 0.01
+columns are limited by the summaries' 5-decimal fixed-point output (absolute
+quantization 1e-5; our absolute deviations there are below that). Orientation
+cross-check: flipped vs unflipped bitmaps agree to ~1e-9 (the clamped top/bottom BCs
+make the energy mirror-invariant).
