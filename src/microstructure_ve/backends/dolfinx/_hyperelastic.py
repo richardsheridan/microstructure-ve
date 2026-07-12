@@ -444,7 +444,12 @@ class _StandardHyperelasticSolver(_FormsMixin):
     increments by scaling the Dirichlet values. The reaction is the assembled nonlinear
     residual (internal nominal force) summed at the drive face -- the finite-strain analogue
     of ``_StandardPlasticSolver``'s internal force. Standard cells are fully confined
-    (``_standard_can_run``), so there is no free-lateral root-find."""
+    (``_standard_can_run``), so there is no free-lateral root-find.
+
+    Persistent across a sim's Static steps: ``set_step`` re-parses each step's drives and
+    the next ``solve`` ramps from the committed (previous converged) boundary values to the
+    new targets, warm-starting Newton from the previous state -- the response itself is
+    path-independent, so multistep and single-step land on the same converged states."""
 
     def __init__(self, prob, model, sim):
         from . import _standard
@@ -462,15 +467,9 @@ class _StandardHyperelasticSolver(_FormsMixin):
 
         if prob.vc_spaces is None:
             prob.vc_spaces, prob.inv_maps = _standard._build_dof_maps(space)
-        self.bcs, drive_nodes = _standard._parse_bcs(sim, space, prob.vc_spaces, prob.inv_maps)
-        bs = self.V.dofmap.index_map_bs
-        self._drive_flat = [space.block_of_node[drive_nodes] * bs + c for c in range(self.dim)]
-
-        # full drive values per bc, so each increment can rescale the bc Functions in place
-        # (the drive is applied through Newton's lifting, not by pre-setting face dofs --
-        # a directly-imposed face jump against a lagging interior inverts the first element
-        # row, J < 0, and the fractional powers of J go onto the complex branch)
-        self._bc_gs = [(bc, bc.g.x.array.real.copy()) for bc in self.bcs]
+        self._prob = prob
+        self._sim = sim
+        self.set_step(sim.steps[0])
 
         self.A = fempetsc.assemble_matrix(self.jac_form, bcs=self.bcs)
         self.A.assemble()
@@ -479,6 +478,33 @@ class _StandardHyperelasticSolver(_FormsMixin):
         self.ksp.setOperators(self.A)
         self.ksp.setType("preonly")
         self.ksp.getPC().setType("lu")
+
+    def set_step(self, step):
+        """Re-parse ``step``'s BCs; the next ``solve`` ramps from the committed state.
+
+        The ramp start for each bc is read off the current converged displacement at that
+        bc's dofs (the converged u IS the previous step's committed boundary value, since
+        the drive is applied through Newton's lifting -- see ``solve``), so no cross-step
+        value bookkeeping is needed."""
+        from . import _standard
+
+        entries, drive_nodes = _standard._parse_bcs_ex(
+            self._sim, self.space, self._prob.vc_spaces, self._prob.inv_maps, step)
+        self.bcs = [bc for bc, _, _ in entries]
+        bs = self.V.dofmap.index_map_bs
+        self._drive_flat = [self.space.block_of_node[drive_nodes] * bs + c
+                            for c in range(self.dim)]
+        # (bc, g_start, g_target) per bc: each increment interpolates the bc Function in
+        # place between the committed value and this step's target (the drive is applied
+        # through Newton's lifting, not by pre-setting face dofs -- a directly-imposed
+        # face jump against a lagging interior inverts the first element row, J < 0, and
+        # the fractional powers of J go onto the complex branch)
+        u = self.disp.x.array.real
+        self._bc_gs = []
+        for bc, flat_dofs, vc_dofs in entries:
+            g_start = np.zeros_like(bc.g.x.array.real)
+            g_start[vc_dofs] = u[flat_dofs]
+            self._bc_gs.append((bc, g_start, bc.g.x.array.real.copy()))
 
     def _residual(self):
         """Assembled internal (nominal) force vector ``R(u)`` -- a fresh PETSc vec."""
@@ -491,8 +517,8 @@ class _StandardHyperelasticSolver(_FormsMixin):
         r_ref = 0.0
         for inc in range(1, n_incr + 1):
             frac = inc / n_incr
-            for bc, g_full in self._bc_gs:
-                bc.g.x.array[:] = frac * g_full
+            for bc, g_start, g_target in self._bc_gs:
+                bc.g.x.array[:] = g_start + frac * (g_target - g_start)
             r0 = rprev = None
             last_du = None
             halvings = 0
@@ -555,5 +581,8 @@ def make_solver(prob, model):
 
 
 def make_standard_solver(prob, model, sim):
-    """Build a standard (non-periodic) finite-strain solver for a single Static step."""
+    """Build a persistent standard (non-periodic) finite-strain solver.
+
+    Reused across a sim's Static steps: call ``set_step`` before each ``solve`` so the
+    ramp runs from the committed state to that step's prescribed values."""
     return _StandardHyperelasticSolver(prob, model, sim)

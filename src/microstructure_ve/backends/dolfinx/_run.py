@@ -468,6 +468,8 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
                 rows.append(hyper_solver.solve(loading, step_incr))
                 energies.append(hyper_solver.strain_energy())
             elif has_hyper:
+                # re-parse this step's own drives; the ramp runs from the committed state
+                hyper_solver.set_step(step)
                 rows.append(hyper_solver.solve(n_incr if n_incr is not None else 5))
                 energies.append(hyper_solver.strain_energy())
             else:

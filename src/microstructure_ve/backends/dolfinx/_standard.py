@@ -82,10 +82,14 @@ def _make_dirichlet_bc(space, Vc_spaces, inv_maps, nodes_1indexed, comp, value):
     return fem.dirichletbc(fbc, [flat_dofs, vc_dofs], V.sub(comp))
 
 
-def _parse_bcs(sim, space, Vc_spaces, inv_maps):
-    """Parse the simulation's BCs into (dolfinx_bcs, drive_nodes).
+def _parse_bcs_ex(sim, space, Vc_spaces, inv_maps, step=None):
+    """Parse the BCs of ``step`` (default ``sim.steps[0]``) into detailed entries.
 
-    ``dolfinx_bcs``: list of ``fem.DirichletBC`` for the FE solve.
+    Returns ``(entries, drive_nodes)`` where each entry is ``(bc, flat_dofs, vc_dofs)`` --
+    the ``fem.DirichletBC`` plus the flat-V and collapsed-subspace dof indices it
+    constrains (what a caller needs to read the *current* displacement at those dofs,
+    e.g. to warm-start a multistep ramp from the committed state).
+
     ``drive_nodes``: 1-indexed node array of the *primary* drive nodeset (the first
     ``Prescribed`` drive in the step's subsections), used for RF and U summation.
 
@@ -95,30 +99,40 @@ def _parse_bcs(sim, space, Vc_spaces, inv_maps):
     Step-level ``Prescribed`` drives prescribe the actual drive displacement.
     """
     model = sim.model
-    bcs = []
+    step = sim.steps[0] if step is None else step
+    entries = []
+
+    def add(nodes, comp, value):
+        bc = _make_dirichlet_bc(space, Vc_spaces, inv_maps, nodes, comp, value)
+        bs = space.V.dofmap.index_map_bs
+        blocks = space.block_of_node[np.asarray(nodes)].astype(np.int32)
+        flat_dofs = (blocks * bs + comp).astype(np.int32)
+        entries.append((bc, flat_dofs, inv_maps[comp][flat_dofs].astype(np.int32)))
 
     for bc in model.bcs:
         if isinstance(bc, BoundaryCondition) and isinstance(bc.constraint, Fixed):
             nodes = np.ravel(_node_array(bc.target))
             for dof in bc.constraint.dofs:
-                bcs.append(_make_dirichlet_bc(
-                    space, Vc_spaces, inv_maps, nodes, dof - 1, 0.0
-                ))
+                add(nodes, dof - 1, 0.0)
         # Prescribed conditions in model.bcs are baselines (value=0); skip.
 
     drive_nodes = None
-    for s in sim.steps[0].subsections:
+    for s in step.subsections:
         if isinstance(s, BoundaryCondition) and isinstance(s.constraint, Prescribed):
             nodes = np.ravel(_node_array(s.target))
             if drive_nodes is None:
                 drive_nodes = nodes  # first drive = primary (for RF/U reporting)
             disp_value = float(np.real(s.constraint.value))
             for dof in s.constraint.dofs:
-                bcs.append(_make_dirichlet_bc(
-                    space, Vc_spaces, inv_maps, nodes, dof - 1, disp_value
-                ))
+                add(nodes, dof - 1, disp_value)
 
-    return bcs, drive_nodes
+    return entries, drive_nodes
+
+
+def _parse_bcs(sim, space, Vc_spaces, inv_maps, step=None):
+    """Parse the step's BCs into (dolfinx_bcs, drive_nodes); see ``_parse_bcs_ex``."""
+    entries, drive_nodes = _parse_bcs_ex(sim, space, Vc_spaces, inv_maps, step)
+    return [bc for bc, _, _ in entries], drive_nodes
 
 
 def build_solver(sim, prob):

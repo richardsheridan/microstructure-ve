@@ -178,8 +178,12 @@ def _standard_can_run(sim):
     """True iff ``sim`` is a well-posed standard (non-periodic, direct-Dirichlet) problem.
 
     Requirements:
-    - Exactly one step with at least one ``Prescribed`` drive.
-    - Frequencies resolve (Static or Dynamic subsection present).
+    - Exactly one step with at least one ``Prescribed`` drive -- OR several such steps
+      when every material is hyperelastic (the persistent finite-strain solver re-parses
+      each Static step's drives and warm-starts from the committed state); the other
+      standard paths are single-step.
+    - Frequencies resolve (Static or Dynamic subsection present); for a hyperelastic
+      multistep every step must carry a ``Static``.
     - Every spatial component (x, y[, z]) has at least one Dirichlet constraint (either
       a ``Fixed`` boundary condition or a step drive) so the stiffness matrix is
       non-singular.  Modes with a free lateral direction (no constraint on a transverse
@@ -189,40 +193,49 @@ def _standard_can_run(sim):
 
     Pure numpy; no dolfinx import.
     """
-    model = sim.model
-    if len(list(sim.steps)) != 1:
-        return False
-    step = sim.steps[0]
-
-    # Check frequencies resolve
-    try:
-        spec.frequencies(sim)
-    except (NotImplementedError, ValueError):
-        return False
-
-    # Need at least one step drive
-    has_drive = any(
-        isinstance(s, BoundaryCondition) and isinstance(s.constraint, Prescribed)
-        for s in step.subsections
+    from microstructure_ve.constitutive import (
+        ArrudaBoyce, NeoHookean, Polynomial, ReducedPolynomial,
     )
-    if not has_drive:
-        return False
+    from microstructure_ve.steps import Static
 
-    # Collect constrained components (0-indexed) from model BCs and step drives
+    model = sim.model
+    steps = list(sim.steps)
+    if len(steps) != 1:
+        all_hyper = all(
+            isinstance(m.response, (ArrudaBoyce, ReducedPolynomial, Polynomial,
+                                    NeoHookean))
+            for m in model.materials
+        ) and len(list(model.materials)) > 0
+        if not all_hyper:
+            return False
+        if any(spec.find(step.subsections, Static) is None for step in steps):
+            return False
+    else:
+        # Check frequencies resolve (single-step: Static or Dynamic)
+        try:
+            spec.frequencies(sim)
+        except (NotImplementedError, ValueError):
+            return False
+
     dim = model.nodes.dim
-    constrained = set()
+    model_fixed = set()
     for bc in model.bcs:
         if isinstance(bc, BoundaryCondition) and isinstance(bc.constraint, Fixed):
             for dof in bc.constraint.dofs:
-                constrained.add(int(dof) - 1)
-    for s in step.subsections:
-        if isinstance(s, BoundaryCondition) and isinstance(s.constraint, Prescribed):
-            for dof in s.constraint.dofs:
-                constrained.add(int(dof) - 1)
+                model_fixed.add(int(dof) - 1)
 
-    # Reject if any component is unconstrained (rigid-body translation mode)
-    if constrained != set(range(dim)):
-        return False
+    for step in steps:
+        # Every step needs at least one drive, and (with the model Fixed BCs) must leave
+        # no component unconstrained (rigid-body translation mode)
+        constrained = set(model_fixed)
+        has_drive = False
+        for s in step.subsections:
+            if isinstance(s, BoundaryCondition) and isinstance(s.constraint, Prescribed):
+                has_drive = True
+                for dof in s.constraint.dofs:
+                    constrained.add(int(dof) - 1)
+        if not has_drive or constrained != set(range(dim)):
+            return False
 
     return True
 

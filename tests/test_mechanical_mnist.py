@@ -84,6 +84,23 @@ class NeoHookeanSolverTests(unittest.TestCase):
         self.assertEqual(psi.shape, (1,))
         np.testing.assert_allclose(psi[0], 0.5 * rows[0, 2] * d, rtol=1e-3)
 
+    def test_multistep_warm_started_equals_single_step(self):
+        # Hyperelasticity is path-independent: a 3-step warm-started ramp must land on
+        # the same converged state (row and energy) as one step straight to the final d.
+        from microstructure_ve.backends.dolfinx import _run as run
+
+        bitmap = np.zeros((28, 28))
+        bitmap[10:18, 10:18] = 255  # a stiff block so the fields are heterogeneous
+        multi = mm_simulation(bitmap, disp_vals=[2.0, 5.0, 8.0])
+        single = mm_simulation(bitmap, disp_vals=[8.0])
+        rows_m, psi_m = run.run(multi, return_energy=True, n_incr=2)
+        rows_s, psi_s = run.run(single, return_energy=True)
+        self.assertEqual(rows_m.shape[0], 3)
+        np.testing.assert_allclose(rows_m[-1], rows_s[0], rtol=1e-6, atol=1e-10)
+        np.testing.assert_allclose(psi_m[-1], psi_s[0], rtol=1e-6)
+        # and the intermediate steps must actually differ (each drives its own value)
+        self.assertGreater(abs(psi_m[1] - psi_m[0]), 1e-6)
+
     def test_return_energy_rejects_non_hyperelastic(self):
         from microstructure_ve.backends.dolfinx import _run as run
 
