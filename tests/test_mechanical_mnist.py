@@ -73,6 +73,29 @@ class NeoHookeanSolverTests(unittest.TestCase):
                            msg=f"NH reaction {fe[0, 2]:.6e} vs linear {ref[0, 2]:.6e} -- "
                                "finite-strain solver not engaged?")
 
+    def test_return_energy_clapeyron(self):
+        # In the linear regime the stored energy of the converged state is half the work
+        # of the (linearly grown) top-edge reaction: psi = RF_y * d / 2 (Clapeyron).
+        from microstructure_ve.backends.dolfinx import _run as run
+
+        d = 28.0 * 1e-4
+        sim = mm_simulation(_homogeneous_bitmap(), disp_vals=[d])
+        rows, psi = run.run(sim, return_energy=True)
+        self.assertEqual(psi.shape, (1,))
+        np.testing.assert_allclose(psi[0], 0.5 * rows[0, 2] * d, rtol=1e-3)
+
+    def test_return_energy_rejects_non_hyperelastic(self):
+        from microstructure_ve.backends.dolfinx import _run as run
+
+        d = 28.0 * 1e-4
+        lin = mm_simulation(_homogeneous_bitmap(), disp_vals=[d])
+        for m in lin.model.materials:
+            m.response = Elastic(poisson=POISSON, youngs=E_HIGH)
+        for s in lin.steps:
+            s.nlgeom = False
+        with self.assertRaises(ValueError):
+            run.run(lin, return_energy=True)
+
 
 if __name__ == "__main__":
     unittest.main()

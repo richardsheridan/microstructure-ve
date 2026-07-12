@@ -209,7 +209,7 @@ def _row_header(dim):
 
 
 def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
-        petsc_options=None, n_incr=None):
+        petsc_options=None, n_incr=None, return_energy=False):
     """Solve ``sim`` over its frequency sweep; one row per frequency, ``(n_freq, 1+3*dim)``.
 
     Everything about the *problem* is read from ``sim`` -- there are no physics kwargs.
@@ -255,6 +255,12 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
              raises on non-convergence). Periodic path only; standard BC uses LU.
     petsc_options: dict of PETSc options overriding the iterative KSP/PC (e.g.
              ``{"pc_type": "bjacobi"}``); ignored for LU.
+    return_energy: hyperelastic Static sims only (``ValueError`` otherwise). When True the
+             return value is ``(rows, energies)`` with ``energies[i]`` the total strain
+             energy of row ``i``'s converged state, assembled on the residual's own SRI
+             measures (exactly the potential Newton minimized; zero at the undeformed
+             state, so no baseline subtraction is needed). ``output_path`` still writes
+             the rows only.
     n_incr:  load increments per plastic ``Static`` step (periodic path). Default ``None``
              keeps the built-in choice: 1 when the macro strain is fully prescribed
              (monotonic proportional loading is increment-independent for the radial
@@ -273,6 +279,13 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     """
     dim = sim.model.nodes.dim
 
+    if return_energy and not _has_hyperelastic_static(sim):
+        raise ValueError(
+            "return_energy=True requires a hyperelastic Static sim -- the strain energy "
+            "is assembled by the finite-strain solver (linear/plastic paths do not carry "
+            "an energy form)"
+        )
+
     # Dispatch below reads only the caller's sim (pure numpy checks), so it needs no lock.
     if _has_hyperelastic(sim.model):
         from microstructure_ve.steps import Dynamic
@@ -287,9 +300,13 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
                 "mixing hyperelastic and plastic responses in one model is not supported"
             )
 
+    energies = None
     if len(list(sim.steps)) > 1 or _has_plastic_static(sim) or _has_hyperelastic_static(sim):
         with _BACKEND_LOCK:
-            out = _run_multistep(sim, bbar, cancel, solver, petsc_options, n_incr)
+            out = _run_multistep(sim, bbar, cancel, solver, petsc_options, n_incr,
+                                 collect_energy=return_energy)
+        if return_energy:
+            out, energies = out
     else:
         freqs = np.asarray(spec.frequencies(sim), dtype=float)
         if workers and workers > 1 and len(freqs) > 1:
@@ -317,6 +334,8 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
             output_path, out, fmt="%.8e", delimiter="\t",
             header="\t".join(_row_header(dim)), comments="",
         )
+    if return_energy:
+        return out, energies
     return out
 
 
@@ -369,13 +388,18 @@ def _has_hyperelastic_static(sim):
     return any(any(isinstance(s, Static) for s in step.subsections) for step in sim.steps)
 
 
-def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_incr=None):
+def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_incr=None,
+                   collect_energy=False):
     """Sweep a multi-step sim step-by-step, emitting rows in the ABAQUS reader's order (per
     step, then per frame): a ``Static`` step contributes one row (zero loss) at frame value 1.0
     -- elastic (real ``*Elastic`` moduli) or, if a ``Plastic`` response is present, the nonlinear
     J2 return-mapping solve (``_plastic``) -- and a ``Dynamic`` step one row per swept frequency
     (ascending). The FE problem (mesh/MPC/forms) is built once and reused across steps. The
-    multi-step cells drive the same macro loading each step, so one solver serves all."""
+    multi-step cells drive the same macro loading each step, so one solver serves all.
+
+    ``collect_energy=True`` returns ``(rows, energies)`` with one strain-energy scalar per
+    row -- assembled by the hyperelastic solver after its step converges, ``np.nan`` for
+    rows no hyperelastic solve produced."""
     from microstructure_ve.constitutive import Plastic
     from microstructure_ve.steps import Dynamic, Static
 
@@ -411,6 +435,7 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
             hyper_solver = _hyperelastic.make_standard_solver(prob, sim.model, sim)
 
     rows = []
+    energies = []
     for step in sim.steps:
         if cancel is not None and cancel():
             raise Cancelled("cancelled by callback")
@@ -418,6 +443,7 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
         if dyn is not None:
             freqs = np.logspace(np.log10(dyn.f_initial), np.log10(dyn.f_final), dyn.f_count)
             rows.extend(solve_one(float(f)) for f in freqs)
+            energies.extend([np.nan] * len(freqs))
         elif spec.find(step.subsections, Static) is not None:
             if has_plastic and has_pbc:
                 # parse this step's own drive (steps may drive different magnitudes -- e.g. a
@@ -427,8 +453,10 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
                 if step_incr is None:
                     step_incr = 1 if not list(loading.free) else 20
                 rows.append(plastic_solver.solve(loading, step_incr))
+                energies.append(np.nan)
             elif has_plastic:
                 rows.append(plastic_solver.solve())            # standard: BCs parsed from sim
+                energies.append(np.nan)
             elif has_hyper and has_pbc:
                 loading = loadingmod.macro_loading(sim, step=step)
                 step_incr = n_incr
@@ -438,10 +466,15 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
                 if step_incr is None:
                     step_incr = 5 if not list(loading.free) else 10
                 rows.append(hyper_solver.solve(loading, step_incr))
+                energies.append(hyper_solver.strain_energy())
             elif has_hyper:
                 rows.append(hyper_solver.solve(n_incr if n_incr is not None else 5))
+                energies.append(hyper_solver.strain_energy())
             else:
                 rows.append(solve_one(1.0, elastic=True))  # frame value 1.0, real *Elastic
+                energies.append(np.nan)
+    if collect_energy:
+        return np.array(rows), np.array(energies)
     return np.array(rows)
 
 

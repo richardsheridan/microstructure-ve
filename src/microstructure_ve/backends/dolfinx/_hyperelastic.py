@@ -239,9 +239,18 @@ class _FormsMixin:
         v = ufl.TestFunction(self.V)
         du = ufl.TrialFunction(self.V)
         gv = _grad3(v, dim)
-        R = ufl.inner(P_dev, gv) * dx2 + ufl.inner(P_vol, gv) * dx1
-        self.res_form = fem.form(R)
-        self.jac_form = fem.form(ufl.derivative(R, self.disp, du))
+        R_dev = ufl.inner(P_dev, gv) * dx2
+        R_vol = ufl.inner(P_vol, gv) * dx1
+        # TRAP: a single 1-form combining dx integrals with different quadrature metadata
+        # silently merges to ONE rule in this ffcx version (verified: the combined vector
+        # equals dev@1+vol@1 bit-for-bit, i.e. uniform reduced integration -- no SRI).
+        # 0-forms and 2-forms keep their per-integral rules, so only the residual must be
+        # compiled as two forms and assembled in two passes.
+        self.res_forms = (fem.form(R_dev), fem.form(R_vol))
+        self.jac_form = fem.form(ufl.derivative(R_dev + R_vol, self.disp, du))
+        # total strain energy on the residual's own SRI measures (so the reported energy
+        # is exactly the potential Newton minimized); zero at the undeformed state
+        self.energy_form = fem.form(psi_dev * dx2 + psi_vol * dx1)
         # volume-average PK1 entries (assembled on the residual's own SRI measures, so the
         # reported reaction is exactly conjugate to what Newton converged)
         self.P_forms = [[fem.form(P_dev[i, j] * dx2 + P_vol[i, j] * dx1)
@@ -252,6 +261,10 @@ class _FormsMixin:
         """Volume-average PK1 (dim, dim), real."""
         return np.array([[complex(fem.assemble_scalar(self.P_forms[i][j])).real
                           for j in range(self.dim)] for i in range(self.dim)]) / self.vol0
+
+    def strain_energy(self):
+        """Total strain energy of the current converged state (real scalar)."""
+        return float(complex(fem.assemble_scalar(self.energy_form)).real)
 
 
 class _HyperelasticSolver(_FormsMixin):
@@ -277,7 +290,8 @@ class _HyperelasticSolver(_FormsMixin):
 
         self.A = dolfinx_mpc.assemble_matrix(self.jac_form, self.mpc, bcs=self.bcs)
         self.A.assemble()
-        self.b = dolfinx_mpc.assemble_vector(self.res_form, self.mpc)
+        self.b = dolfinx_mpc.assemble_vector(self.res_forms[0], self.mpc)
+        dolfinx_mpc.assemble_vector(self.res_forms[1], self.mpc, self.b)
         self.x = self.A.createVecRight()
         self.du = fem.Function(self.V)
         self.ksp = PETSc.KSP().create(self.mesh.comm)
@@ -304,7 +318,8 @@ class _HyperelasticSolver(_FormsMixin):
         for _ in range(_MAX_NEWTON):
             with self.b.localForm() as bl:
                 bl.set(0.0)
-            dolfinx_mpc.assemble_vector(self.res_form, self.mpc, self.b)
+            dolfinx_mpc.assemble_vector(self.res_forms[0], self.mpc, self.b)
+            dolfinx_mpc.assemble_vector(self.res_forms[1], self.mpc, self.b)
             dolfinx_mpc.apply_lifting(self.b, [self.jac_form], [self.bcs], self.mpc)
             self.b.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
             fempetsc.set_bc(self.b, self.bcs)
@@ -467,7 +482,8 @@ class _StandardHyperelasticSolver(_FormsMixin):
 
     def _residual(self):
         """Assembled internal (nominal) force vector ``R(u)`` -- a fresh PETSc vec."""
-        r = fempetsc.assemble_vector(self.res_form)
+        r = fempetsc.assemble_vector(self.res_forms[0])
+        fempetsc.assemble_vector(r, self.res_forms[1])
         r.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
         return r
 
