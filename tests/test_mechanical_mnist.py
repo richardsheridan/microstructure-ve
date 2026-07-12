@@ -12,7 +12,9 @@ import numpy as np
 
 from microstructure_ve.constitutive import Elastic
 
-from tests._mechanical_mnist import E_HIGH, POISSON, mm_simulation
+from tests._mechanical_mnist import (
+    DATA_DIR, DISP_VALS, E_HIGH, POISSON, load_bitmap, load_psi, mm_simulation,
+)
 
 try:
     import dolfinx  # noqa: F401
@@ -26,6 +28,35 @@ needs_dolfinx = unittest.skipUnless(HAS_DOLFINX, "needs the fenicsx env (dolfinx
 def _homogeneous_bitmap():
     """All pixels 255 -> a single material with E = E_HIGH."""
     return np.full((28, 28), 255)
+
+
+class DataFilesTests(unittest.TestCase):
+    """The committed Mechanical-MNIST excerpts (numpy-only; runs in both envs)."""
+
+    def test_bitmaps_shape_and_range(self):
+        for which in ("train", "test"):
+            for i in range(10):
+                img = load_bitmap(f"{which}_data_{i}")
+                self.assertEqual(img.shape, (28, 28))
+                self.assertTrue(np.all(img == np.rint(img)))
+                self.assertGreaterEqual(img.min(), 0)
+                self.assertLessEqual(img.max(), 255)
+
+    def test_psi_excerpts_shape_and_baseline(self):
+        for which in ("train", "test"):
+            psi = load_psi(which)
+            self.assertEqual(psi.shape, (10, len(DISP_VALS)))
+            # column 0 is the subtracted d=0 baseline; energies grow monotonically
+            # (the d=0.001 column can round to 0 at the file's output precision, so
+            # strict growth is only asserted from d=0.01 on)
+            np.testing.assert_array_equal(psi[:, 0], 0.0)
+            self.assertTrue(np.all(np.diff(psi, axis=1) >= 0))
+            self.assertTrue(np.all(np.diff(psi[:, 2:], axis=1) > 0))
+
+    def test_readme_carries_attribution(self):
+        text = (DATA_DIR / "README.md").read_text(encoding="utf-8")
+        self.assertIn("MIT license", text)
+        self.assertIn("elejeune11/Mechanical-MNIST", text)
 
 
 @needs_dolfinx
