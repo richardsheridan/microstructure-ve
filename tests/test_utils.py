@@ -11,6 +11,7 @@ from microstructure_ve.utils import (
     load_matlab_microstructure,
     load_viscoelasticity,
     periodic_assign_intph,
+    refine_matl_img,
 )
 
 
@@ -45,6 +46,44 @@ class PeriodicAssignIntphTests(unittest.TestCase):
         self.assertEqual(nonper[5, 3], 2)
         self.assertEqual(per[5, 3], 1)
         self.assertEqual(per.shape, img.shape)
+
+
+class RefineMatlImgTests(unittest.TestCase):
+    def test_2d_blocks_dtype_and_scale(self):
+        img = np.array([[0, 5], [7, 0]])
+        out, scale = refine_matl_img(img, 1.0, 2)
+        self.assertEqual(out.shape, (4, 4))
+        self.assertEqual(out.dtype, img.dtype)
+        self.assertEqual(scale, 0.5)
+        # each pixel becomes a 2x2 block of the same material code
+        np.testing.assert_array_equal(out, np.kron(img, np.ones((2, 2), dtype=int)))
+        np.testing.assert_array_equal(out[0:2, 2:4], 5)
+
+    def test_3d(self):
+        img = np.arange(8).reshape(2, 2, 2)
+        out, scale = refine_matl_img(img, 0.5, 2)
+        self.assertEqual(out.shape, (4, 4, 4))
+        self.assertEqual(scale, 0.25)
+        np.testing.assert_array_equal(out[2:4, 0:2, 2:4], img[1, 0, 1])
+
+    def test_domain_size_invariant(self):
+        img = np.ones((3, 4), dtype=int)
+        for refine in (1, 2, 5):
+            out, scale = refine_matl_img(img, 0.0025, refine)
+            np.testing.assert_allclose(np.array(out.shape) * scale,
+                                       np.array(img.shape) * 0.0025)
+
+    def test_refine_1_is_identity(self):
+        img = np.array([[1, 2]])
+        out, scale = refine_matl_img(img, 0.75, 1)
+        self.assertIs(out, img)
+        self.assertEqual(scale, 0.75)
+
+    def test_bad_refine_raises(self):
+        img = np.ones((2, 2), dtype=int)
+        for bad in (0, -1, 1.5):
+            with self.assertRaises(ValueError):
+                refine_matl_img(img, 1.0, bad)
 
 
 class LoadViscoelasticityTests(unittest.TestCase):

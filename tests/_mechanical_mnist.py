@@ -9,8 +9,8 @@ total strain energy at each step minus the d = 0 step.
 
 Their discretization (unstructured P2 triangles, ~140/side, nodal degree-1 E field) is not
 reproduced -- this builder uses the package's structured Q1 grid with piecewise-constant
-per-pixel E, optionally ``refine``-times finer than the bitmap (``np.kron`` upsampling with
-the pixel size held at 1.0), so agreement is mesh-convergence-limited.
+per-pixel E, optionally ``refine``-times finer than the bitmap (``refine_matl_img``, which
+keeps the domain 28x28 length units), so agreement is mesh-convergence-limited.
 
 ``load_bitmap``/``load_psi`` read the committed data excerpts under
 ``tests/data/mechanical_mnist/`` (see the README there for provenance).
@@ -24,6 +24,7 @@ from microstructure_ve.constitutive import NeoHookean
 from microstructure_ve.core import ElementSet, GridElements, GridNodes, NodeSet
 from microstructure_ve.materials import Material
 from microstructure_ve.steps import Heading, Model, Simulation, Static, Step
+from microstructure_ve.utils import refine_matl_img
 
 # Their loading schedule (absolute top-edge displacement; the domain is 28 units tall, so
 # the last value is 50% nominal strain). The d = 0 first entry is their energy baseline.
@@ -74,10 +75,9 @@ def mm_simulation(bitmap, disp_vals=DISP_VALS, refine=1, flip=True):
     img = np.rint(img).astype(int)
     if flip:
         img = np.flipud(img)
-    if refine > 1:
-        img = np.kron(img, np.ones((refine, refine), dtype=int))
+    img, scale = refine_matl_img(img, 1.0, refine)
 
-    nodes = GridNodes.from_matl_img(img, 1.0 / refine)
+    nodes = GridNodes.from_matl_img(img, scale)
     elements = GridElements(nodes, type="CPE4")
     materials = [
         Material(elset, density=DENSITY,

@@ -84,6 +84,11 @@ sim = Simulation(heading=Heading("quick start"), model=model, steps=[dyn_step, s
 write_inp(sim, "rve.inp")          # -> ABAQUS input deck
 ```
 
+For a mesh finer than one element per pixel (convergence studies), refine the image and
+scale together — `img, scale = refine_matl_img(img, scale, refine=2)` (from
+`microstructure_ve.utils`) keeps the physical domain size; apply it after any
+`assign_intph`/`periodic_assign_intph` so interphase thicknesses stay in original-pixel units.
+
 Solve the same `sim` with the DOLFINx backend (needs the FEniCSx env):
 
 ```python

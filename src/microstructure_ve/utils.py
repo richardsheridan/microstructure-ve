@@ -92,6 +92,40 @@ def periodic_assign_intph(
     return intph
 
 
+def refine_matl_img(matl_img, scale, refine):
+    """Split each pixel into ``refine**ndim`` identical-material pixels, keeping the
+    physical domain size by returning the correspondingly reduced scale.
+
+    Returns ``(refined_img, scale / refine)`` -- always use both together: pairing the
+    upsampled image with the original scale (or vice versa) describes a physically
+    different, refine-times-larger domain, and nothing downstream can detect that.
+
+    Refinement multiplies pixel counts, so pixel-unit image processing is order-
+    sensitive: apply ``assign_intph``/``periodic_assign_intph`` BEFORE refining to keep
+    layer thicknesses in original-pixel units (refining first makes a ``num_layers=n``
+    interphase n/refine original pixels thin).
+
+    >>> import numpy as np
+    >>> from microstructure_ve.utils import refine_matl_img
+    >>> img, scale = refine_matl_img(np.array([[0, 5], [7, 0]]), 1.0, 2)
+    >>> img
+    array([[0, 0, 5, 5],
+           [0, 0, 5, 5],
+           [7, 7, 0, 0],
+           [7, 7, 0, 0]])
+    >>> scale
+    0.5
+    """
+    matl_img = np.asarray(matl_img)
+    if refine != int(refine) or refine < 1:
+        raise ValueError(f"refine must be a positive integer, got {refine!r}")
+    if refine == 1:
+        return matl_img, scale
+    refine = int(refine)
+    refined = np.kron(matl_img, np.ones((refine,) * matl_img.ndim, dtype=matl_img.dtype))
+    return refined, scale / refine
+
+
 def load_viscoelasticity(matrl_name):
     """load VE data from a text file according to ABAQUS requirements
 

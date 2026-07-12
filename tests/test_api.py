@@ -20,7 +20,7 @@ EXPECTED = {
     "PeriodicBoundaryConstraint", "validate_constraints",
     "Heading", "Static", "Dynamic", "Step", "Model", "Simulation",
     "in_sorted", "load_matlab_microstructure", "assign_intph",
-    "periodic_assign_intph", "load_viscoelasticity",
+    "periodic_assign_intph", "refine_matl_img", "load_viscoelasticity",
 }
 
 

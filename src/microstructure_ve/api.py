@@ -37,6 +37,7 @@ from .utils import (
     load_matlab_microstructure,
     load_viscoelasticity,
     periodic_assign_intph,
+    refine_matl_img,
 )
 
 __all__ = [
@@ -54,5 +55,5 @@ __all__ = [
     "Heading", "Static", "Dynamic", "Step", "Model", "Simulation",
     # utils
     "in_sorted", "load_matlab_microstructure", "assign_intph",
-    "periodic_assign_intph", "load_viscoelasticity",
+    "periodic_assign_intph", "refine_matl_img", "load_viscoelasticity",
 ]

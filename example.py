@@ -36,6 +36,9 @@ freq, youngs_cplx = load_viscoelasticity(youngs_path)
 youngs_plat = youngs_cplx[0].real
 
 heading = Heading("Example RVE simulation")
+# For a mesh finer than one element per pixel (convergence studies), refine AFTER the
+# interphase assignment above so layer thicknesses stay in original-pixel units:
+#   intph_img, scale = refine_matl_img(intph_img, scale, refine=2)
 nodes = GridNodes.from_matl_img(intph_img, scale)
 elements = GridElements(nodes, type="CPE4R")
 # from_matl_img returns one ElementSet per distinct pixel value, sorted ascending;
