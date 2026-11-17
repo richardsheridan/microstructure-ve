@@ -28,7 +28,7 @@ def build_solve_one(space, forms, solver, loading):
     active = list(loading.active)              # symmetric components (i<=j): driven + free
     active_idx = [idx_of[c] for c in active]
     a0 = loading.primary_axis
-    imposed, free = loading.imposed, loading.free
+    free = loading.free
 
     # Only the stress components actually read are assembled: the primary-axis column
     # sigma-bar[:, a0] (the reported reaction) and the free-component diagonals (the
@@ -40,9 +40,13 @@ def build_solve_one(space, forms, solver, loading):
         for k in active_idx
     }
 
-    def solve_one(f, elastic=False):
+    def solve_one(f, elastic=False, step_loading=None):
         # elastic=True: a Static step -> real *Elastic moduli (zero loss); else the
-        # frequency-domain complex moduli at f.
+        # frequency-domain complex moduli at f. step_loading: a step's own drive, which must
+        # drive the same components as ``loading``; it sets the amplitudes only.
+        ld = loading if step_loading is None else step_loading
+        assert list(ld.active) == active, "a step drives different components"
+        imposed = ld.imposed
         if elastic:
             solver.reassemble_elastic()
         else:
@@ -69,9 +73,9 @@ def build_solve_one(space, forms, solver, loading):
         sig0 = np.array([
             sum(c[comp] * sbar[idx_of[comp]][(n, a0)] for comp in active) for n in range(dim)
         ])
-        RF = sig0 * loading.cross_area
+        RF = sig0 * ld.cross_area
         U = np.zeros(dim)
-        U[loading.primary_dof - 1] = loading.drive_value
+        U[ld.primary_dof - 1] = ld.drive_value
         return [float(f)] + list(RF.real) + list(RF.imag) + list(U)
 
     return solve_one

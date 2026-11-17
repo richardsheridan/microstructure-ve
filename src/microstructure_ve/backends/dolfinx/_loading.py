@@ -330,6 +330,16 @@ def check_supported(sim):
     has_pbc = any(isinstance(bc, PeriodicBoundaryConstraint) for bc in sim.model.bcs)
     if has_pbc:
         macro_loading(sim)
+        steps = list(sim.steps)
+        if steps and not prescribed_bcs(steps[0].subsections):
+            raise ValueError("the first step has no Prescribed drive to inherit")
+        for i, step in enumerate(steps):
+            if (spec.find(step.subsections, Dynamic) is not None
+                    and not prescribed_bcs(step.subsections)):
+                raise NotImplementedError(
+                    f"Dynamic step {i} has no Prescribed drive of its own; a perturbation "
+                    "step does not inherit a drive"
+                )
         # every step must be a resolvable analysis (Static or Dynamic); the run loop
         # sweeps each step in turn (multi-step = several such steps)
         for i, step in enumerate(sim.steps):
