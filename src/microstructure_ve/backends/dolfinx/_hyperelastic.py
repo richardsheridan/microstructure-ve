@@ -224,8 +224,9 @@ class _FormsMixin:
         mat_of_cell = np.asarray(mf.mat_of_cell).astype(int)
         oci = prob.space.oci
         dev_fns = _dg0_fields(mesh, mat_of_cell, oci, dev_cols)
-        # a zero Lame lambda leaves NeoHookean's volumetric term in the energy, unlike a
-        # zero 1/Di, so its field is built even when every phase has lambda = 0
+        # NeoHookean's energy reads its lambda field unconditionally (its volumetric term is
+        # not one of an optional Di series), so the field is built even when lambda = 0
+        # in every phase
         invd_fns = _dg0_fields(mesh, mat_of_cell, oci, invd_cols,
                                keep_zero=kind is NeoHookean)
         # outer-tolerance stress scale (initial Young's modulus, volume-averaged enough)
