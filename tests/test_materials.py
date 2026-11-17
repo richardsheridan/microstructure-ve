@@ -401,6 +401,35 @@ class HyperelasticValidation(unittest.TestCase):
         poly = Polynomial(c=[1.0, 0.0, 0.5, 0.0, 0.0], poisson=0.4)
         self.assertEqual(poly.n, 2)
 
+    def test_supplied_d1_not_positive_finite_raises(self):
+        """A supplied D1 that is zero, negative, NaN or infinite is refused at construction.
+
+        D1 = 0 is the ABAQUS incompressible limit, which plain CPE4/C3D8 elements cannot carry.
+        """
+        builders = {
+            "reduced_polynomial_n1": lambda d: ReducedPolynomial(c=[500.0], poisson=0.45, d=d),
+            "reduced_polynomial_n2": lambda d: ReducedPolynomial(
+                c=[500.0, 10.0], poisson=0.45, d=d
+            ),
+            "polynomial_n1": lambda d: Polynomial(c=[400.0, 100.0], poisson=0.45, d=d),
+            "arruda_boyce": lambda d: ArrudaBoyce(mu=1000.0, lm=2.0, poisson=0.45, d=d),
+        }
+        n_terms = {"reduced_polynomial_n2": 2}
+        for name, build in builders.items():
+            for d1 in (0.0, -0.0, -0.01, float("nan"), float("inf")):
+                values = [d1] + [0.01] * (n_terms.get(name, 1) - 1)
+                for container in (list, tuple, np.array):
+                    with self.subTest(response=name, d1=d1, container=container.__name__):
+                        with self.assertRaises(ValueError):
+                            build(container(values))
+
+    def test_supplied_zero_higher_d_is_accepted(self):
+        """Only D1 must be positive: a zero D2 drops that volumetric term and constructs."""
+        rp = ReducedPolynomial(c=[500.0, 10.0], poisson=0.45, d=[0.01, 0.0])
+        self.assertEqual(list(rp.d_coeffs), [0.01, 0.0])
+        poly = Polynomial(c=[400.0, 100.0, 20.0, 10.0, 5.0], poisson=0.45, d=[0.01, 0.0])
+        self.assertEqual(list(poly.d_coeffs), [0.01, 0.0])
+
 
 class HyperelasticComplexModulus(unittest.TestCase):
     """complex_modulus(freqs) is frequency-flat and real == youngs.
