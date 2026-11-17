@@ -262,9 +262,8 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
              state, so no baseline subtraction is needed). ``output_path`` still writes
              the rows only.
     n_incr:  load increments per plastic ``Static`` step (periodic path). Default ``None``
-             keeps the built-in choice: 1 when the macro strain is fully prescribed
-             (monotonic proportional loading is increment-independent for the radial
-             return) and 20 when a free lateral component makes the strain path curved.
+             solves each step in one increment, as ABAQUS solves the emitted ``*STATIC``
+             with no increment data line.
              Ignored for non-plastic sims and the standard-BC plastic path (single ramp).
 
     Thread safety: ``run`` may be called concurrently from multiple threads. Serial
@@ -449,9 +448,7 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
                 # parse this step's own drive (steps may drive different magnitudes -- e.g. a
                 # harmonic step then a plastic load, or a load then a reversal)
                 loading = loadingmod.macro_loading(sim, step=step)
-                step_incr = n_incr
-                if step_incr is None:
-                    step_incr = 1 if not list(loading.free) else 20
+                step_incr = 1 if n_incr is None else n_incr
                 rows.append(plastic_solver.solve(loading, step_incr))
                 energies.append(np.nan)
             elif has_plastic:
