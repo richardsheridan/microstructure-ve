@@ -45,8 +45,8 @@ def default_frequencies(sim):
 def frequencies(sim):
     """The points the sweep is evaluated at -- the single entry point used by ``run`` and the
     ``_loading.check_supported`` capability check. Returns the ``Dynamic`` sweep of the first step if present;
-    returns a single nominal frequency ``[1.0]`` for a ``Static``-only (elastic) sim (whose
-    ``complex_modulus`` is frequency-flat so any ``f`` yields the elastic modulus); raises
+    returns ``[1.0]`` for a ``Static``-only sim, the frame value of its one row, which ``run``
+    solves with the real elastic moduli rather than ``complex_modulus`` at 1.0; raises
     ``ValueError`` if neither subsection is present."""
     if find(sim.steps[0].subsections, Dynamic) is not None:
         return default_frequencies(sim)

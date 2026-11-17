@@ -47,6 +47,7 @@ class MatrixDolfinxTests(unittest.TestCase):
             Polynomial,
             ReducedPolynomial,
         )
+        from microstructure_ve.steps import Static
 
         dim = cell["dim"]
         arr = np.asarray(rows, dtype=complex)
@@ -66,9 +67,15 @@ class MatrixDolfinxTests(unittest.TestCase):
         a0 = loading.primary_axis
         (mat,) = sim.model.materials
         nu = mat.response.poisson
+        (step,) = sim.steps
+        is_static = any(isinstance(sub, Static) for sub in step.subsections)
         for row in rows:
             f = row[0]
-            Estar = complex(mat.response.complex_modulus(np.array([f]))[0])
+            if is_static:
+                # a Static step solves with the real *Elastic modulus, never E*(f)
+                Estar = complex(mat.response.youngs)
+            else:
+                Estar = complex(mat.response.complex_modulus(np.array([f]))[0])
             lam, mu = _lame(Estar, nu)
 
             E = np.zeros((dim, dim), dtype=complex)

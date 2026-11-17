@@ -70,6 +70,15 @@ MULTISTEP_PATTERNS = {
 }
 MULTISTEP_CELL = {"mode": "uniaxial_x", "traction": "free", "bc": "periodic", "dim": 2}
 
+# Single-Static viscoelastic test type: the tabular phase under one *STATIC step, which solves
+# with each material's real *Elastic modulus and so reports zero loss. Appended (via
+# matrix_cases) only to the cells below, one periodic and one standard.
+VISCOELASTIC_STATIC = "viscoelastic_static"
+VISCOELASTIC_STATIC_CELLS = (
+    MULTISTEP_CELL,
+    {"mode": "uniaxial_x", "traction": "free", "bc": "standard", "dim": 2},
+)
+
 # J2-plasticity cells: ``hyperelastic_plastic`` is crossed over the whole matrix (every cell),
 # like elastic/viscoelastic, with a *monotonic-hardening* table (yield rises 40->70 MPa). FE and
 # ABAQUS agree when both solve a step in the same number of increments, which is why ``run``
@@ -117,8 +126,9 @@ _AXES = ("x", "y", "z")
 
 
 def _is_viscoelastic(test_type):
-    """True for the frequency-domain (tabular material + Dynamic) test types."""
-    return test_type == "viscoelastic" or test_type in MULTISTEP_PATTERNS
+    """True for the test types whose second phase is the tabular viscoelastic material."""
+    return (test_type in ("viscoelastic", VISCOELASTIC_STATIC)
+            or test_type in MULTISTEP_PATTERNS)
 
 
 def _is_plastic(test_type):
@@ -140,7 +150,7 @@ def _resolve_displacement(test_type, displacement):
 
 def _step_plan(test_type):
     """Ordered ``[(step_kind, drive_scale)]`` for ``test_type`` ('S'=Static, 'D'=Dynamic)."""
-    if test_type in ("elastic", "hyperelastic_plastic"):
+    if test_type in ("elastic", "hyperelastic_plastic", VISCOELASTIC_STATIC):
         return [("S", 1.0)]
     if _is_hyperelastic(test_type):
         return [("S", 1.0)]
@@ -185,7 +195,7 @@ def matrix_cells():
 def matrix_cases():
     """Yield ``(cell, test_type)`` for the whole suite: every cell x {elastic, viscoelastic,
     hyperelastic_plastic, reduced_polynomial}, plus the appended multi-step viscoelastic cases on
-    ``MULTISTEP_CELL``, the multi-step plastic orderings on ``PLASTIC_MULTISTEP_CELL``, and
+    ``MULTISTEP_CELL``, the single-Static viscoelastic case on ``VISCOELASTIC_STATIC_CELLS``, the multi-step plastic orderings on ``PLASTIC_MULTISTEP_CELL``, and
     polynomial/arruda_boyce over ``HYPER_FOCUSED_CELLS``.
 
     The single enumerator every consumer (abaqus structural / dolfinx red / parity / oracle
@@ -196,6 +206,8 @@ def matrix_cases():
             yield cell, test_type
     for test_type in MULTISTEP_PATTERNS:
         yield dict(MULTISTEP_CELL), test_type
+    for cell in VISCOELASTIC_STATIC_CELLS:
+        yield dict(cell), VISCOELASTIC_STATIC
     for test_type in PLASTIC_MULTISTEP_PATTERNS:
         yield dict(PLASTIC_MULTISTEP_CELL), test_type
     for cell in HYPER_FOCUSED_CELLS:
