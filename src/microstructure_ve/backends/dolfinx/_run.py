@@ -36,7 +36,7 @@ from . import (
     _spec as spec,
     _standard as standard,
 )
-from ._solver import Cancelled, IterativeSolver, LuSolver, select_solver_kind
+from ._solver import Cancelled, ConvergenceError, IterativeSolver, LuSolver, select_solver_kind
 
 from microstructure_ve.boundary import PeriodicBoundaryConstraint
 

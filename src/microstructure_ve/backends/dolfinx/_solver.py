@@ -14,6 +14,7 @@ monitor *can* poll the callback (sub-second latency).
 """
 from __future__ import annotations
 
+import numpy as np
 from petsc4py import PETSc
 from dolfinx import fem
 import dolfinx.fem.petsc as fempetsc
@@ -22,6 +23,24 @@ import dolfinx_mpc
 
 class Cancelled(RuntimeError):
     """Raised when a user ``cancel()`` predicate returns True during a sweep or solve."""
+
+
+class ConvergenceError(RuntimeError):
+    """Raised when a solve ends without meeting its convergence test; no result is returned."""
+
+
+def root_step(J, resid):
+    """Newton step ``J^{-1} resid`` of a free-lateral root-find.
+
+    Raises
+    ------
+    ConvergenceError
+        If ``J`` is singular, so the root-find cannot take its step.
+    """
+    try:
+        return np.linalg.solve(J, resid)
+    except np.linalg.LinAlgError as e:
+        raise ConvergenceError(f"free-lateral root-find did not converge: {e}") from e
 
 
 # --- LU cost model -----------------------------------------------------------------
@@ -175,7 +194,7 @@ class IterativeSolver(LuSolver):
         uout = super().solve(j)  # same MPC assemble/solve/back-substitute; iterative KSP
         reason = self.ksp.getConvergedReason()
         if reason < 0:
-            raise RuntimeError(
+            raise ConvergenceError(
                 f"IterativeSolver did not converge (KSP reason {reason}). The complex-"
                 "symmetric system has no AMG preconditioner (GAMG/hypre are real-only), so "
                 "this uses GMRES+ILU, which can stagnate on hard/large 3D meshes. Try a "

@@ -38,6 +38,8 @@ import dolfinx_mpc
 
 from microstructure_ve.constitutive import Plastic
 
+from ._solver import ConvergenceError, root_step
+
 _QUAD_DEGREE = 2          # 2x2(x2) Gauss = ABAQUS CPE4 (4 pts) / C3D8 (8 pts)
 _FD_STEP = 1e-7           # finite-difference step for the (consistent) algorithmic tangent
 _NEWTON_TOL = 1e-10       # absolute floor on the reduced residual norm
@@ -352,10 +354,12 @@ class _PlasticSolver:
         residual-only re-check): return-map branch switching can trap an undamped Newton in a
         two-cycle (the standard shear_xy no_slip plastic cells of ``MatrixParityTests`` cycle
         without it, in ``_StandardPlasticSolver.solve``'s copy of this loop). The converged
-        answer is set by the residual and tolerance, which are unchanged."""
+        answer is set by the residual and tolerance, which are unchanged. Returns the average
+        stress and whether the residual met its tolerance."""
         r0 = rprev = None
         last_du = None
         halvings = 0
+        converged = False
         for _ in range(_MAX_NEWTON):
             eps_total = self._total_strain(E_voigt)
             self._fill_coeffs(eps_total, commit=False, tangent=False)
@@ -375,6 +379,7 @@ class _PlasticSolver:
                 # essentially converged and must not grind to the absolute floor
                 self._r_ref = max(self._r_ref, r0)
             if rnorm <= _NEWTON_TOL + _NEWTON_RTOL * (self._r_ref or 1.0):
+                converged = True
                 break
 
             if rprev is not None and rnorm > rprev and last_du is not None and halvings < 8:
@@ -401,7 +406,8 @@ class _PlasticSolver:
             last_du = du.x.array.copy()
             self.u.x.array[:] = self.u.x.array - last_du
             rprev = rnorm
-        return self._fill_coeffs(self._total_strain(E_voigt), commit=False, tangent=False)
+        sbar = self._fill_coeffs(self._total_strain(E_voigt), commit=False, tangent=False)
+        return sbar, converged
 
     # -- public entry --------------------------------------------------------
     def _target_voigt(self, loading):
@@ -436,7 +442,7 @@ class _PlasticSolver:
                 E = E_drv.copy()
                 for k, s in enumerate(free_slots):
                     E[s] = free_val[k]
-                sbar = self._newton(E)
+                sbar, converged = self._newton(E)
                 if not free:
                     break
                 resid = np.array([sbar[b, b] for (b, _) in free])
@@ -452,7 +458,13 @@ class _PlasticSolver:
                 if self._J_macro is None or it == _OUTER_FD_RETRY:
                     self._J_macro = self._macro_jac_fd(E, free_slots, resid)
                 prev_val, prev_resid = free_val.copy(), resid
-                free_val = free_val - np.linalg.solve(self._J_macro, resid)
+                free_val = free_val - root_step(self._J_macro, resid)
+            else:
+                raise ConvergenceError(
+                    f"free-lateral root-find did not converge in increment {inc}/{n_incr}")
+            if not converged:
+                raise ConvergenceError(
+                    f"Newton solve did not converge in increment {inc}/{n_incr}")
             self._fill_coeffs(self._total_strain(E), commit=True, tangent=False)
 
         self.E_current = E.copy()
@@ -474,7 +486,7 @@ class _PlasticSolver:
         for k, s in enumerate(free_slots):
             Ep = E.copy()
             Ep[s] += _MACRO_FD_STEP
-            pert = self._newton(Ep)
+            pert, _ = self._newton(Ep)
             J[:, k] = (np.array([pert[t, t] for t in free_slots]) - base_r) / _MACRO_FD_STEP
         return J
 
@@ -626,6 +638,8 @@ class _StandardPlasticSolver:
             self.u.x.array[:] = self.u.x.array - last_du
             r.destroy()
             rprev = rnorm
+        else:
+            raise ConvergenceError("Newton solve did not converge")
         # commit + reaction = internal force (no BC modification) summed at the drive face
         self._fill_coeffs(self._strain(), commit=True, tangent=False)
         fint = self._residual()
