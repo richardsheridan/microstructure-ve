@@ -34,7 +34,8 @@ class Prescribed:
 
     ``dofs`` is an iterable of 1-indexed DOFs (1=x, 2=y, 3=z). Used both as the macro
     drive (the applied amplitude, placed in a step's ``subsections``) and, with
-    ``value=0``, as a model-level baseline (the ABAQUS initial-state convention).
+    ``value=0``, in ``Model.bcs``, where it holds those DOFs at zero as ``Fixed`` does and a
+    step drive on the same DOF overrides it (ABAQUS rejects a nonzero model-level value).
     """
 
     dofs: Iterable

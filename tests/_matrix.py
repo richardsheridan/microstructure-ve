@@ -594,6 +594,27 @@ def matrix_simulation(mode, traction, bc, dim, test_type="elastic", n=None, scal
     return Simulation(heading=heading, model=model, steps=steps)
 
 
+def hold_by_prescribed(sim, nset_name, dof, value):
+    """Move ``dof`` of the model-level ``Fixed`` on ``nset_name`` to a model-level
+    ``Prescribed([dof], value)`` on the same node set, keeping its other dofs ``Fixed``.
+
+    With ``value=0`` the sim states the same hold in the form ABAQUS writes as a zero
+    displacement ``*Boundary``. Edits ``sim.model.bcs`` in place and returns ``sim``.
+    """
+    bcs = list(sim.model.bcs)
+    hits = [i for i, b in enumerate(bcs)
+            if isinstance(b, BoundaryCondition) and isinstance(b.constraint, Fixed)
+            and str(b.target) == nset_name and dof in list(b.constraint.dofs)]
+    assert len(hits) == 1, f"expected one Fixed on {nset_name} holding dof {dof}, got {hits}"
+    i = hits[0]
+    target = bcs[i].target
+    rest = [d for d in bcs[i].constraint.dofs if d != dof]
+    bcs[i:i + 1] = ([BoundaryCondition(target, Fixed(rest))] if rest else []) + [
+        BoundaryCondition(target, Prescribed([dof], value))]
+    sim.model.bcs = bcs
+    return sim
+
+
 # ---------------------------------------------------------------------------
 # expected emitted structure (kept beside the builder so they can't drift apart)
 # ---------------------------------------------------------------------------

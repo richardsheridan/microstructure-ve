@@ -20,7 +20,7 @@ import unittest
 
 import numpy as np
 
-from tests._matrix import is_fe_green, matrix_cases, matrix_simulation
+from tests._matrix import hold_by_prescribed, is_fe_green, matrix_cases, matrix_simulation
 
 try:
     import dolfinx  # noqa: F401
@@ -51,13 +51,10 @@ def _oracle_name(cell, tt):
             f"_{cell['bc']}_{tt}.tsv")
 
 
-@needs_dolfinx
-class MatrixParityTests(unittest.TestCase):
-    """One method per FE-supported cell is attached below."""
-
-
-def _make_test(cell, tt, rtol):
-    def test(self):
+class _OracleParity:
+    def assertMatchesOracle(self, sim, cell, tt, rtol):
+        """Solve ``sim`` and hold its rows to the committed ABAQUS oracle of matrix cell
+        ``cell`` under test type ``tt``."""
         from microstructure_ve.backends.dolfinx import _run as run
 
         dim = cell["dim"]
@@ -66,7 +63,7 @@ def _make_test(cell, tt, rtol):
         # Dynamic frame both at 1.0) keep their emission order -- the FE emits rows in the
         # same per-step/per-frame order as the ABAQUS reader, so they stay aligned.
         oracle = oracle[np.argsort(oracle[:, 0], kind="stable")]
-        fe = run.run(matrix_simulation(test_type=tt, **cell))  # the oracle's own sim
+        fe = run.run(sim)
         fe = fe[np.argsort(fe[:, 0], kind="stable")]
         self.assertEqual(fe.shape, oracle.shape)
 
@@ -101,6 +98,17 @@ def _make_test(cell, tt, rtol):
         else:
             np.testing.assert_allclose(fe[:, drive], oracle[:, drive], rtol=1e-6, atol=1e-9)
 
+
+@needs_dolfinx
+class MatrixParityTests(_OracleParity, unittest.TestCase):
+    """One method per FE-supported cell is attached below."""
+
+
+def _make_test(cell, tt, rtol):
+    def test(self):
+        sim = matrix_simulation(test_type=tt, **cell)  # the oracle's own sim
+        self.assertMatchesOracle(sim, cell, tt, rtol)
+
     return test
 
 
@@ -120,6 +128,26 @@ for _cell, _tt in matrix_cases():
 
 assert _attached, "no FE-green matrix cells to check parity for"
 del _cell, _tt
+
+
+@needs_dolfinx
+class ModelPrescribedHoldsTests(_OracleParity, unittest.TestCase):
+    """A model-level zero ``Prescribed`` on a dof no step drives holds that dof, as a
+    model-level ``Fixed`` there does and as ABAQUS does."""
+
+    def test_periodic_lateral_corner_held_by_zero_prescribed(self):
+        """The periodic confined cell with its lateral corner's normal held by a model-level
+        zero ``Prescribed`` returns the confined oracle's rows, not the free-lateral ones."""
+        cell = {"mode": "uniaxial_x", "traction": "confined_slip", "bc": "periodic", "dim": 2}
+        sim = hold_by_prescribed(matrix_simulation(test_type="elastic", **cell), "X0Y1", 2, 0.0)
+        self.assertMatchesOracle(sim, cell, "elastic", RTOL)
+
+    def test_standard_lateral_face_held_by_zero_prescribed(self):
+        """The standard confined cell with its lateral face's normal held by a model-level
+        zero ``Prescribed`` solves and returns the confined oracle's rows."""
+        cell = {"mode": "uniaxial_x", "traction": "confined_slip", "bc": "standard", "dim": 2}
+        sim = hold_by_prescribed(matrix_simulation(test_type="elastic", **cell), "Y0ALL", 2, 0.0)
+        self.assertMatchesOracle(sim, cell, "elastic", RTOL)
 
 
 if __name__ == "__main__":

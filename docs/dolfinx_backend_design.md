@@ -252,7 +252,7 @@ bcs=bcs, petsc_options={"ksp_type": "preonly", "pc_type": "lu"})`; constraint re
 - `FixedBoundaryCondition` / `DisplacementBoundaryCondition` → per-component `dirichletbc` via
   `locate_dofs_geometrical((V.sub(c), Vc), pred)` ✓ (or directly via the node↔dof map). The
   model-level zero baseline + step displacement collapse to one Dirichlet value per frequency
-  sweep (perturbation step semantics: the step value is the harmonic amplitude).
+  sweep (perturbation step semantics: the step value is the harmonic amplitude). On a dof no step drives, a model-level zero displacement holds the dof exactly as a `Fixed` does; a nonzero one is refused, since ABAQUS rejects it.
 - Complex-mode UFL note ✓: `ufl.inner(a, b)` conjugates its second argument itself — do **not**
   add explicit `conj` in forms.
 
