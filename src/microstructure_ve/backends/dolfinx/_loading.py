@@ -27,9 +27,17 @@ from microstructure_ve.boundary import (
     Fixed,
     Prescribed,
 )
+from microstructure_ve.constitutive import (
+    ArrudaBoyce,
+    NeoHookean,
+    Polynomial,
+    ReducedPolynomial,
+)
 from microstructure_ve.core import _node_array
 
 from . import _spec as spec
+
+HYPER_TYPES = (ArrudaBoyce, ReducedPolynomial, Polynomial, NeoHookean)
 
 
 @dataclass
@@ -193,18 +201,13 @@ def _standard_check(sim):
 
     Pure numpy; no dolfinx import.
     """
-    from microstructure_ve.constitutive import (
-        ArrudaBoyce, NeoHookean, Polynomial, ReducedPolynomial,
-    )
     from microstructure_ve.steps import Static
 
     model = sim.model
     steps = list(sim.steps)
     if len(steps) != 1:
         all_hyper = all(
-            isinstance(m.response, (ArrudaBoyce, ReducedPolynomial, Polynomial,
-                                    NeoHookean))
-            for m in model.materials
+            isinstance(m.response, HYPER_TYPES) for m in model.materials
         ) and len(list(model.materials)) > 0
         if not all_hyper:
             raise NotImplementedError(
@@ -265,8 +268,8 @@ def check_supported(sim):
     ValueError
         ``sim`` is malformed (for example no drive, or a step with neither Static nor Dynamic).
 
-    Pure numpy; the test harness's ``is_fe_green`` calls this, so support widens
-    automatically as ``macro_loading`` / the frequency resolution grow.
+    Pure numpy; ``run`` calls this before building a solver and ``can_run`` (hence the test
+    harness's ``is_fe_green``) wraps it, so support widens in both automatically as ``macro_loading`` / the frequency resolution grow.
 
     Handles two cases:
     - *Periodic* sims: validated by ``macro_loading`` (corner-driven PBC path).
@@ -274,9 +277,6 @@ def check_supported(sim):
       ``_standard_check`` (direct-Dirichlet path, well-posed cells only).
     """
     from microstructure_ve.boundary import PeriodicBoundaryConstraint
-    from microstructure_ve.constitutive import (
-        ArrudaBoyce, NeoHookean, Polynomial, ReducedPolynomial,
-    )
     from microstructure_ve.steps import Dynamic, Static
 
     # Hyperelastic (finite-strain) sims: the total-Lagrangian solver handles Static steps
@@ -284,9 +284,7 @@ def check_supported(sim):
     # phase must be hyperelastic of the SAME model class (an *Elastic phase under NLGEOM
     # is hypoelastic in ABAQUS, which the total-Lagrangian energy formulation cannot
     # reproduce; different classes would need distinct coefficient layouts per cell).
-    hyper = [m.response for m in sim.model.materials
-             if isinstance(m.response, (ArrudaBoyce, ReducedPolynomial, Polynomial,
-                                        NeoHookean))]
+    hyper = [m.response for m in sim.model.materials if isinstance(m.response, HYPER_TYPES)]
     if hyper:
         if len(hyper) != len(list(sim.model.materials)):
             raise NotImplementedError(

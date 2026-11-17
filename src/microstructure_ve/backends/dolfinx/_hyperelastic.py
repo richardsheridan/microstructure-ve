@@ -35,7 +35,7 @@ Design notes (mirroring ``_plastic``, the reference for every convention here):
   root-find as ``_plastic._PlasticSolver.solve`` (kept in sync by hand -- the loop is short
   and the residuals differ: average PK1 here, average Cauchy there).
 
-All phases must be hyperelastic of the same model class (``_loading.can_run`` enforces it:
+All phases must be hyperelastic of the same model class (``_loading.check_supported`` enforces it:
 an ``*Elastic`` phase under NLGEOM is hypoelastic in ABAQUS, which this formulation cannot
 reproduce). Reported row mirrors readODB: ``[1.0, RF_Real..., 0..., U...]`` (zero loss).
 """
@@ -68,9 +68,6 @@ _FROZEN_RATIO = 0.5       # refresh Jacobian+factorization when an iteration shr
 
 # Arruda-Boyce Langevin-expansion coefficients C_i, i = 1..5
 _AB_C = (0.5, 1.0 / 20.0, 11.0 / 1050.0, 19.0 / 7000.0, 519.0 / 673750.0)
-
-HYPER_TYPES = (ArrudaBoyce, ReducedPolynomial, Polynomial, NeoHookean)
-
 
 def _poly_pairs(n):
     """ABAQUS data-line (i, j) order for a Polynomial of order ``n``: k = i+j from 1 to n,

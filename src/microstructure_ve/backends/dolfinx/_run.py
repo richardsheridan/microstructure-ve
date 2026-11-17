@@ -266,6 +266,10 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
              with no increment data line (docs/dolfinx_backend_design.md, section 12).
              Ignored for non-plastic sims and the standard-BC plastic path (single ramp).
 
+    Refusal: a sim that ``_loading.check_supported`` rejects raises that check's
+    ``NotImplementedError`` (unsupported feature) or ``ValueError`` (malformed sim) before
+    any solver is built.
+
     Thread safety: ``run`` may be called concurrently from multiple threads. Serial
     sweeps and the multistep paths serialize on a process-wide lock held for the whole
     call (see the module docstring), so each returns exactly what a serial call would --
@@ -354,14 +358,7 @@ def _has_plastic_static(sim):
 
 def _has_hyperelastic(model):
     """True iff ``model`` carries a hyperelastic response (numpy-only check)."""
-    from microstructure_ve.constitutive import (
-        ArrudaBoyce, NeoHookean, Polynomial, ReducedPolynomial,
-    )
-
-    return any(
-        isinstance(m.response, (ArrudaBoyce, ReducedPolynomial, Polynomial, NeoHookean))
-        for m in model.materials
-    )
+    return any(isinstance(m.response, loadingmod.HYPER_TYPES) for m in model.materials)
 
 
 def _has_hyperelastic_static(sim):

@@ -135,17 +135,6 @@ class RunRefusesUnsupportedTests(unittest.TestCase):
             run(sim, **kwargs)
         self.assertTrue(str(cm.exception).strip(), "refusal does not name its reason")
 
-    def test_two_step_standard_plastic_is_refused(self):
-        """A standard-BC plastic sim with a sign-reversed second step is refused, instead of
-        returning every step's row computed from the first step's drive."""
-        sim = matrix_simulation(test_type="hyperelastic_plastic_reversal", n=_N, **_STANDARD)
-        self.assertRefuses(sim, NotImplementedError)
-
-    def test_two_static_step_standard_elastic_is_refused(self):
-        """A standard-BC elastic sim with two Static steps is refused as unsupported, not
-        failed with an error from inside the solver."""
-        self.assertRefuses(_standard_two_static_elastic(), NotImplementedError)
-
     def test_run_refuses_every_sim_can_run_rejects(self):
         """For each kind of sim ``can_run`` rejects, ``run`` raises the refusal for that kind
         and does not solve."""
