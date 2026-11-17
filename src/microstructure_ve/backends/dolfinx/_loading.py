@@ -93,6 +93,15 @@ def _corner_axis(nset, dim):
     )
 
 
+def model_holds(bc):
+    """True iff the model-level ``bc`` holds its dofs at zero: a ``Fixed``, or a ``Prescribed``
+    whose value is zero (ABAQUS's fixed condition written as a displacement)."""
+    if not isinstance(bc, BoundaryCondition):
+        return False
+    c = bc.constraint
+    return isinstance(c, Fixed) or (isinstance(c, Prescribed) and c.value == 0)
+
+
 def macro_loading(sim, step=None):
     """Parse ``sim`` into a ``MacroLoading`` (raises NotImplementedError if unsupported).
 
@@ -122,10 +131,10 @@ def macro_loading(sim, step=None):
     if len(drives) == 0:
         raise ValueError("no Prescribed drive in any step")
 
-    # fixed (node, dof) for the free-lateral inference
+    # held (node, dof) for the free-lateral inference
     pinned = set()
     for bc in model.bcs:
-        if isinstance(bc, BoundaryCondition) and isinstance(bc.constraint, Fixed):
+        if model_holds(bc):
             for ind in np.ravel(_node_array(bc.target)):
                 for dof in bc.constraint.dofs:
                     pinned.add((int(ind), int(dof)))
@@ -225,7 +234,7 @@ def _standard_check(sim):
     dim = model.nodes.dim
     model_fixed = set()
     for bc in model.bcs:
-        if isinstance(bc, BoundaryCondition) and isinstance(bc.constraint, Fixed):
+        if model_holds(bc):
             for dof in bc.constraint.dofs:
                 model_fixed.add(int(dof) - 1)
 
@@ -271,7 +280,8 @@ def check_supported(sim):
     NotImplementedError
         ``sim`` is well formed but uses a feature the backend does not support.
     ValueError
-        ``sim`` is malformed (for example no drive, or a step with neither Static nor Dynamic).
+        ``sim`` is malformed (for example no drive, a step with neither Static nor Dynamic, or
+        a model-level ``Prescribed`` with a nonzero value, which ABAQUS rejects).
 
     Pure numpy; ``run`` calls this before building a solver and ``can_run`` (hence the test
     harness's ``is_fe_green``) wraps it, so support widens in both automatically as ``macro_loading`` / the frequency resolution grow.
@@ -308,6 +318,14 @@ def check_supported(sim):
             raise NotImplementedError(
                 "steady-state dynamics about a hyperelastic (finite-strain) state is not "
                 "supported; hyperelastic sims must be Static-only"
+            )
+
+    for bc in sim.model.bcs:
+        if (isinstance(bc, BoundaryCondition) and isinstance(bc.constraint, Prescribed)
+                and bc.constraint.value != 0):
+            raise ValueError(
+                f"model-level Prescribed value {bc.constraint.value!r} is nonzero; a "
+                "model-level displacement may only hold its dofs at zero"
             )
 
     has_pbc = any(isinstance(bc, PeriodicBoundaryConstraint) for bc in sim.model.bcs)

@@ -28,10 +28,10 @@ import dolfinx.fem.petsc as fempetsc
 
 from microstructure_ve.boundary import (
     BoundaryCondition,
-    Fixed,
     Prescribed,
 )
 from microstructure_ve.core import _node_array
+from microstructure_ve.backends.dolfinx._loading import model_holds
 
 
 def _build_dof_maps(space):
@@ -93,9 +93,8 @@ def _parse_bcs_ex(sim, space, Vc_spaces, inv_maps, step=None):
     ``drive_nodes``: 1-indexed node array of the *primary* drive nodeset (the first
     ``Prescribed`` drive in the step's subsections), used for RF and U summation.
 
-    Model-level ``Fixed`` boundary conditions prescribe zero on their dofs.
-    Baseline ``Prescribed`` conditions in ``model.bcs`` (value=0) are skipped -- they
-    carry the ABAQUS initial-state convention, and the step drives override them.
+    Model-level conditions that ``model_holds`` prescribe zero on their dofs, except on a
+    (node, dof) that a step drive prescribes, where the step's value wins.
     Step-level ``Prescribed`` drives prescribe the actual drive displacement.
     """
     model = sim.model
@@ -109,22 +108,31 @@ def _parse_bcs_ex(sim, space, Vc_spaces, inv_maps, step=None):
         flat_dofs = (blocks * bs + comp).astype(np.int32)
         entries.append((bc, flat_dofs, inv_maps[comp][flat_dofs].astype(np.int32)))
 
+    drives = [s for s in step.subsections
+              if isinstance(s, BoundaryCondition) and isinstance(s.constraint, Prescribed)]
+    driven = {}
+    for s in drives:
+        for dof in s.constraint.dofs:
+            driven.setdefault(int(dof), set()).update(
+                int(n) for n in np.ravel(_node_array(s.target)))
+
     for bc in model.bcs:
-        if isinstance(bc, BoundaryCondition) and isinstance(bc.constraint, Fixed):
+        if model_holds(bc):
             nodes = np.ravel(_node_array(bc.target))
             for dof in bc.constraint.dofs:
-                add(nodes, dof - 1, 0.0)
-        # Prescribed conditions in model.bcs are baselines (value=0); skip.
+                held = np.array([n for n in nodes if int(n) not in driven.get(int(dof), ())],
+                                dtype=nodes.dtype)
+                if held.size:
+                    add(held, dof - 1, 0.0)
 
     drive_nodes = None
-    for s in step.subsections:
-        if isinstance(s, BoundaryCondition) and isinstance(s.constraint, Prescribed):
-            nodes = np.ravel(_node_array(s.target))
-            if drive_nodes is None:
-                drive_nodes = nodes  # first drive = primary (for RF/U reporting)
-            disp_value = float(np.real(s.constraint.value))
-            for dof in s.constraint.dofs:
-                add(nodes, dof - 1, disp_value)
+    for s in drives:
+        nodes = np.ravel(_node_array(s.target))
+        if drive_nodes is None:
+            drive_nodes = nodes  # first drive = primary (for RF/U reporting)
+        disp_value = float(np.real(s.constraint.value))
+        for dof in s.constraint.dofs:
+            add(nodes, dof - 1, disp_value)
 
     return entries, drive_nodes
 
@@ -161,7 +169,7 @@ def build_solver(sim, prob):
     dim = model.nodes.dim
     constrained = set()
     for bc in model.bcs:
-        if isinstance(bc, BoundaryCondition) and isinstance(bc.constraint, Fixed):
+        if model_holds(bc):
             for dof in bc.constraint.dofs:
                 constrained.add(int(dof) - 1)
     for s in sim.steps[0].subsections:
