@@ -263,7 +263,7 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
              the rows only.
     n_incr:  load increments per plastic ``Static`` step (periodic path). Default ``None``
              solves each step in one increment, as ABAQUS solves the emitted ``*STATIC``
-             with no increment data line.
+             with no increment data line (docs/dolfinx_backend_design.md, section 12).
              Ignored for non-plastic sims and the standard-BC plastic path (single ramp).
 
     Thread safety: ``run`` may be called concurrently from multiple threads. Serial

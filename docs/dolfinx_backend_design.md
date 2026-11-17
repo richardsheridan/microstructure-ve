@@ -487,18 +487,33 @@ Design decisions and rationale:
   well-posed by minimal rigid-body pins), so there is no free-lateral root-find.
 - **Free-lateral (periodic) components** are solved by a small outer scalar root-find (driving the
   conjugate volume-averaged stress to zero); confined cells skip it.
+- **One increment per plastic `Static` step by default**, every cell and every step of a multi-step
+  sim alike; `run(n_incr=...)` overrides it. The emitted `*STATIC` has no increment data line, so
+  ABAQUS starts at an increment of 1.0 and solves each matrix step in one. On a heterogeneous cell
+  the free-lateral strain path is not proportional, and the answer depends on the increment count:
+  on the 3D periodic uniaxial free cell the FE reaction moves by about 2e-4 relative between 1 and
+  80 increments. FE and ABAQUS (field tolerances tightened to 1e-8) agree to 2e-8 when both take
+  one increment and to 3e-9 when both take 20, but the FE at 20 against ABAQUS at one differs by
+  about 2e-4 in the reaction, enough to fail a 3D free cell's parity check. The confined
+  and multi-step cells, which already took one, drift further from their oracles as the FE
+  takes more.
 - **Hardening table** `(plastic_strain, yield_stress)` is piecewise-linear with *constant
   extrapolation* past the last point (perfectly plastic there), matching ABAQUS `*Plastic`.
 
 **Parity fidelity / tolerance carve-outs.** Every cell's homogenized reaction matches ABAQUS at the
-standard `RTOL=1e-4`; the periodic cells match to ~1e-8 because the reported volume-averaged stress is
-insensitive to the B-bar detail. The exceptions, documented in `test_matrix_parity.py`, are all
+standard `RTOL=1e-4`. The heterogeneous matrix cells carry a real fluctuation field (one stiff block,
+`_stiff_block` in `tests/_matrix.py`), so the periodic cells test the periodic solve, B-bar and
+tangent as well as the volume average. Their parity errors run from about 1e-8 (3D shear) to
+6e-5 (2D compression), the scale of the noise of ABAQUS's default equilibrium tolerance in the
+committed oracles, which differ from tight-tolerance solves by up to about 5e-5. A 2D residual of about 1e-4 against
+tight-tolerance ABAQUS on the compression cell does not move with increments or tolerance; the
+in-plane mean-dilatation B-bar against CPE4's is the candidate. The exceptions, documented in `test_matrix_parity.py`, are all
 *standard*-BC local quantities where the mean-dilatation plastic B-bar is slightly less faithful than
 ABAQUS's CPE4 selective-reduced-integration B-bar: 2D standard compression/shear storage RF (relaxed
 to 1e-3) and the standard plastic drive column (relaxed to 5e-3 — the *driven* displacement is exact
 to ~1e-7, only the loaded face's solved *transverse slip* drifts, ~0.3% on 3D free cells). A fully
 consistent deviatoric/volumetric-split B-bar would tighten these but is a larger refactor with risk to
-the 20 already-exact periodic cells, so it is deferred.
+the periodic cells, so it is deferred.
 
 ## 13. Finite-strain hyperelasticity (`_hyperelastic.py`)
 

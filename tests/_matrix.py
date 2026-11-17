@@ -71,8 +71,9 @@ MULTISTEP_PATTERNS = {
 MULTISTEP_CELL = {"mode": "uniaxial_x", "traction": "free", "bc": "periodic", "dim": 2}
 
 # J2-plasticity cells: ``hyperelastic_plastic`` is crossed over the whole matrix (every cell),
-# like elastic/viscoelastic. A *monotonic-hardening* table (yield rises 40->70 MPa) is path-
-# independent, so the FE return map matches ABAQUS for the single-step cells. The plastic drive
+# like elastic/viscoelastic, with a *monotonic-hardening* table (yield rises 40->70 MPa). FE and
+# ABAQUS agree when both solve a step in the same number of increments, which is why ``run``
+# defaults to one (docs/dolfinx_backend_design.md, section 12). The plastic drive
 # is much smaller than the elastic cells' DISPLACEMENT (~33% strain) so the equivalent plastic
 # strain lands *inside* the table (not on the perfectly-plastic plateau).
 PLASTIC_YIELD_STRESS = [40.0, 70.0]      # MPa, monotonic hardening

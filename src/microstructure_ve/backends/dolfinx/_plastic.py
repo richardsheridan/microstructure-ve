@@ -647,12 +647,10 @@ def make_standard_solver(prob, model, sim):
     return _StandardPlasticSolver(prob, model, sim)
 
 
-def solve_static_plastic(prob, loading, model, n_incr=None):
+def solve_static_plastic(prob, loading, model, n_incr=1):
     """Solve one standalone plastic ``Static`` step; return its readODB row.
 
-    ``n_incr`` defaults to 1, as ABAQUS solves the emitted ``*STATIC`` with no increment data
-    line. For multi-step sims build one ``make_solver`` and call ``.solve`` per step.
+    ``n_incr`` defaults to one increment, as in ``run``. For multi-step sims build one
+    ``make_solver`` and call ``.solve`` per step.
     """
-    if n_incr is None:
-        n_incr = 1
     return make_solver(prob, model).solve(loading, n_incr)
