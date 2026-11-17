@@ -100,9 +100,7 @@ def _step_drives_reversed(sim, index):
 
 
 def _standard_two_static_elastic():
-    sim = matrix_simulation(test_type="elastic", n=_N, **_STANDARD)
-    sim.steps = [sim.steps[0], copy.deepcopy(sim.steps[0])]
-    return sim
+    return _with_repeated_step(matrix_simulation(test_type="elastic", n=_N, **_STANDARD))
 
 
 def _periodic_hyperelastic_with_elastic_phase():
