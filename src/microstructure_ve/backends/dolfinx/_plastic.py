@@ -447,9 +447,7 @@ class _StandardPlasticSolver(_J2Solver):
 
         super().__init__(prob, model)
         space = self.space
-        if prob.vc_spaces is None:
-            prob.vc_spaces, prob.inv_maps = _standard._build_dof_maps(space)
-        self.bcs, drive_nodes = _standard._parse_bcs(sim, space, prob.vc_spaces, prob.inv_maps)
+        self.bcs, drive_nodes = _standard._parse_bcs(sim, space, *_standard.dof_maps(prob))
         self._drive_flat = _standard.drive_dofs(space, drive_nodes)
 
         self.A = fempetsc.assemble_matrix(self.a_form, bcs=self.bcs)

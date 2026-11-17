@@ -65,6 +65,16 @@ def _build_dof_maps(space):
     return Vc_spaces, inv_maps
 
 
+def dof_maps(prob):
+    """Return ``prob``'s per-component ``(Vc_spaces, inv_maps)``, building them on first use.
+
+    The maps depend only on the mesh shape, so they are kept on the cached FE problem.
+    """
+    if prob.vc_spaces is None:
+        prob.vc_spaces, prob.inv_maps = _build_dof_maps(prob.space)
+    return prob.vc_spaces, prob.inv_maps
+
+
 def _make_dirichlet_bc(space, Vc_spaces, inv_maps, nodes_1indexed, comp, value):
     """Build one ``fem.dirichletbc`` for ``comp`` (0-indexed) on the given 1-indexed nodes.
 
@@ -185,9 +195,7 @@ def build_solver(sim, prob):
         )
 
     space, matfields, forms = prob.space, prob.matfields, prob.forms
-    if prob.vc_spaces is None:  # per-component collapsed spaces + dof maps (shape-only)
-        prob.vc_spaces, prob.inv_maps = _build_dof_maps(space)
-    Vc_spaces, inv_maps = prob.vc_spaces, prob.inv_maps
+    Vc_spaces, inv_maps = dof_maps(prob)
 
     # Parse BCs -- values are real and don't change with frequency
     dirichlet_bcs, drive_nodes = _parse_bcs(sim, space, Vc_spaces, inv_maps)
