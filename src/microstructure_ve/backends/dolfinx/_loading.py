@@ -343,10 +343,10 @@ def check_supported(sim):
         for i, step in enumerate(steps):
             if not prescribed_bcs(step.subsections):
                 continue
-            active = list(macro_loading(sim, step=step).active)
-            if active != list(first.active):
+            active = macro_loading(sim, step=step).active
+            if active != first.active:
                 raise NotImplementedError(
-                    f"step {i} drives components {active}, not the {list(first.active)} of the "
+                    f"step {i} drives components {active}, not the {first.active} of the "
                     "first drive step; every step must drive the same components in the same order"
                 )
         if steps and not prescribed_bcs(steps[0].subsections):

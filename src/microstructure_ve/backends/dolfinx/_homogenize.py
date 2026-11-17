@@ -21,7 +21,8 @@ def build_solve_one(space, forms, solver, loading):
     """Return ``solve_one(f) -> [freq, RF_Real..., RF_Imag..., U...]`` for one frequency.
 
     ``solve_one(f, elastic=False, step_loading=None)``: ``step_loading``, a step's own
-    ``MacroLoading``, replaces the amplitudes of ``loading`` and must drive the same components.
+    ``MacroLoading``, replaces the amplitudes of ``loading`` and must drive the same components
+    (``_loading.check_supported``).
     """
     dim = space.dim
     area = space.area
