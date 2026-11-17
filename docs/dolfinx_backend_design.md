@@ -542,7 +542,16 @@ The rule: a form with exactly one test function and no trial function that mixes
 quadrature degrees is compiled as one `fem.form` per measure and assembled in as many
 passes (`res_forms` in `_hyperelastic.py`). This applies to any new selective-reduced or
 B-bar residual in `_hyperelastic.py`, `_plastic.py` or `_assembly.py`. The regression
-check is `test_return_energy_clapeyron` in `tests/test_mechanical_mnist.py`.
+check is `test_return_energy_clapeyron` in `tests/test_mechanical_mnist.py`, which runs the standard path only; the periodic path builds the same forms in `_FormsMixin` but has no check of its own.
+
+### Vector assembly into one target
+
+The passes cannot share one vector on the periodic path. `dolfinx_mpc.assemble_vector`
+zeroes the vector it is given before assembling, unlike `dolfinx.fem.petsc.assemble_vector`,
+which adds into it. Two forms assembled into one vector through `dolfinx_mpc` keep only the
+second, and nothing warns: with the deviatoric residual dropped, Newton converged against the
+volumetric part alone and the periodic hyperelastic cells missed their ABAQUS oracles.
+Assemble each form into its own vector and add them (`_HyperelasticSolver._newton`).
 
 ### Standard-BC drive through lifting
 
@@ -556,12 +565,23 @@ both paths and triggers backtracking.
 
 ### Parity fidelity
 
-Every periodic hyperelastic cell matches its ABAQUS oracle at the standard `RTOL=1e-4`
-(observed 1e-9 to 8e-5 over 33 cells). The 16 standard cells differ by 0.4% to 2.4% and
-are relaxed through `_STANDARD_HYPER_RTOL` in `tests/test_matrix_parity.py`, where the
-cause (ABAQUS's F-bar against this backend's selective reduced integration) is explained.
+Every hyperelastic cell, periodic and standard, is held to `_HYPER_RTOL` in
+`tests/test_matrix_parity.py`, where the cause of the gap (ABAQUS's F-bar against this
+backend's selective reduced integration) is explained. The two formulations agree wherever
+`J` is constant within each element and differ where it varies. The 16 standard cells
+differ by 0.4% to 2.4%; their 2D uniaxial gap halves from n=6 to n=12. The periodic cells
+show the same gap since the matrix image became one stiff block (`_stiff_block` in
+`tests/_matrix.py`), which gives them a fluctuation field. The earlier checkerboard had none,
+so `F` was uniform and the periodic cells matched at 1e-9 to 8e-5.
+
+Across the 32 periodic cells the gap runs from about 5e-4 to 2.2e-2 (3D compression,
+`polynomial`). It is a discretization difference, not a disagreement in the answer: upsampling
+the image of the 2D periodic `reduced_polynomial` stiff-block cell to halve the mesh twice,
+the FE-ABAQUS gap falls from 9.1e-3 to 2.9e-3 to 1.0e-3 (uniaxial_x free) and from 2.6e-3
+to 1.1e-3 to 3.8e-4 (shear_xy no_slip).
+
 Closing the gap means reproducing ABAQUS's in-plane F-bar pairing, which needs
-per-iteration DG0 `Jbar`/`pbar` coefficient fields.
+per-iteration DG0 `Jbar`/`pbar` coefficient fields (the TODO in `_FormsMixin._build_forms`).
 
 ### One oracle row per Static step
 

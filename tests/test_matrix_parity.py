@@ -6,8 +6,8 @@ require the homogenized reaction-force response (storage ``RF_Real``, loss ``RF_
 the drive displacement ``U`` to match the oracle.
 
 The matrix oracles are generated so this comparison is both interpolation-free (the sweep
-lands exactly on the tabular table nodes) and inertia-free (tiny density), so agreement is
-tight -- observed ~1e-7, asserted at rtol 1e-4. As FE features land and ``is_fe_green``
+lands exactly on the tabular table nodes) and inertia-free (tiny density), so what remains is the discretization gap, held to ``RTOL`` or to
+a relaxation documented below. As FE features land and ``is_fe_green``
 widens, the corresponding cells join this parity check automatically; a green cell that
 disagrees with ABAQUS fails loudly here.
 
@@ -30,7 +30,7 @@ except ImportError:
 
 needs_dolfinx = unittest.skipUnless(HAS_DOLFINX, "needs the fenicsx env (dolfinx)")
 DATA = pathlib.Path(__file__).resolve().parent / "data"
-RTOL = 1e-4  # generous vs the ~1e-7 observed; robust to ABAQUS .dat frequency rounding
+RTOL = 1e-4  # robust to ABAQUS .dat frequency rounding
 
 # Per-case relaxations. A couple of 2D *standard* (direct-Dirichlet) multi-axial plastic cells
 # land just above 1e-4: the plastic mean-dilatation B-bar (applied to the constitutive strain)
@@ -42,19 +42,15 @@ _RTOL_OVERRIDES = {
     "test_2d_shear_xy_no_slip_standard_hyperelastic_plastic": 1e-3,
 }
 
-# The finite-strain (hyperelastic) responses on *standard* cells: same B-bar-formulation
-# mechanism as above, but amplified by the ~33-50% strain. ABAQUS CPE4/C3D8 use the F-bar
-# average-dilatation modification F_bar = F*(Jbar/J)^(1/n) with n = the ELEMENT dimension --
-# in 2D plane strain the scaling is in-plane-only, which changes the deviatoric invariants,
-# while the backend's selective reduced integration (volumetric energy at the centroid)
-# leaves them at the raw F. The two discretizations agree wherever J is near-constant per
-# element (every periodic cell matches at ~1e-7) and converge to each other under mesh
-# refinement (verified: the 2D standard uniaxial gap halves from n=6 to n=12), but on the
-# strongly inhomogeneous clamped standard fields they differ by up to ~2% (2D) / ~2% (3D
-# compression) at the coarse test grid. Relaxed here rather than reproducing ABAQUS's exact
-# in-plane F-bar/B-bar virtual-work pairing (a known, scoped follow-up).
-_STANDARD_HYPER_TYPES = ("reduced_polynomial", "polynomial", "arruda_boyce")
-_STANDARD_HYPER_RTOL = 3e-2
+# The finite-strain (hyperelastic) responses, periodic and standard cells alike. ABAQUS
+# CPE4/C3D8 use the F-bar average-dilatation modification F_bar = F*(Jbar/J)^(1/n) with n the
+# element dimension (in 2D plane strain an in-plane-only scaling, which changes the deviatoric
+# invariants), while the backend's selective reduced integration (volumetric energy at the
+# centroid) leaves them at the raw F. The two differ wherever J varies within an element and
+# converge to each other under mesh refinement (docs/dolfinx_backend_design.md#parity-fidelity).
+# The TODO in _FormsMixin._build_forms would close the gap by reproducing the F-bar pairing.
+_HYPER_TYPES = ("reduced_polynomial", "polynomial", "arruda_boyce")
+_HYPER_RTOL = 3e-2
 
 
 def _oracle_name(cell, tt):
@@ -101,14 +97,14 @@ def _make_test(cell, tt, rtol):
             dscale = float(np.max(np.abs(oracle[:, drive])))
             np.testing.assert_allclose(fe[:, drive], oracle[:, drive],
                                        rtol=5e-3, atol=dscale * 5e-3)
-        elif cell["bc"] == "standard" and tt in _STANDARD_HYPER_TYPES:
+        elif cell["bc"] == "standard" and tt in _HYPER_TYPES:
             # finite-strain transverse slip: same discretization sensitivity, amplified by
-            # the ~33-50% strain (see _STANDARD_HYPER_RTOL above); the driven component
+            # the ~33-50% strain (see _HYPER_RTOL above); the driven component
             # itself still reproduces exactly
             dscale = float(np.max(np.abs(oracle[:, drive])))
             np.testing.assert_allclose(fe[:, drive], oracle[:, drive],
-                                       rtol=_STANDARD_HYPER_RTOL,
-                                       atol=dscale * _STANDARD_HYPER_RTOL)
+                                       rtol=_HYPER_RTOL,
+                                       atol=dscale * _HYPER_RTOL)
         else:
             np.testing.assert_allclose(fe[:, drive], oracle[:, drive], rtol=1e-6, atol=1e-9)
 
@@ -120,11 +116,10 @@ for _cell, _tt in matrix_cases():
     if is_fe_green(_cell, _tt):
         _name = (f"test_{_cell['dim']}d_{_cell['mode']}_{_cell['traction']}"
                  f"_{_cell['bc']}_{_tt}")
-        if _tt in _STANDARD_HYPER_TYPES:
-            # F-bar vs SRI formulation gap on standard and periodic cells alike (see note
-            # above and docs/dolfinx_backend_design.md#parity-fidelity); a periodic drive
-            # column stays at its exact check
-            _rtol = _STANDARD_HYPER_RTOL
+        if _tt in _HYPER_TYPES:
+            # F-bar vs SRI formulation gap (see _HYPER_RTOL); a periodic drive column stays
+            # at its exact check
+            _rtol = _HYPER_RTOL
         else:
             _rtol = _RTOL_OVERRIDES.get(_name, RTOL)
         setattr(MatrixParityTests, _name, _make_test(_cell, _tt, _rtol))
