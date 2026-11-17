@@ -56,6 +56,8 @@ from microstructure_ve.constitutive import (
     ReducedPolynomial,
 )
 
+from ._solver import ConvergenceError, root_step
+
 _NEWTON_TOL = 1e-10       # absolute floor on the residual norm
 _NEWTON_RTOL = 1e-9       # relative to the largest initial residual seen
 _MAX_NEWTON = 50
@@ -311,7 +313,8 @@ class _HyperelasticSolver(_FormsMixin):
     def _newton(self):
         """Modified Newton with step-halving backtracking, mirroring ``_plastic._newton``
         (same constants, same ``_r_ref`` warm-start reference). The tangent refresh is a UFL
-        Jacobian assembly instead of a return-map coefficient fill."""
+        Jacobian assembly instead of a return-map coefficient fill. Returns whether the
+        residual met its tolerance."""
         r0 = rprev = None
         last_du = None
         halvings = 0
@@ -337,7 +340,7 @@ class _HyperelasticSolver(_FormsMixin):
                     r0 = rnorm
                     self._r_ref = max(self._r_ref, r0)
                 if rnorm <= _NEWTON_TOL + _NEWTON_RTOL * (self._r_ref or 1.0):
-                    break
+                    return True
 
             grew = rprev is not None and rnorm > rprev
             if (inverted or grew) and last_du is not None and halvings < 8:
@@ -362,6 +365,7 @@ class _HyperelasticSolver(_FormsMixin):
             # keep w real: fractional powers of det(F) must see a real-positive J
             self.disp.x.array[:] = self.disp.x.array.real - last_du
             rprev = rnorm
+        return False
 
     # -- public entry ----------------------------------------------------------
     def _target_H(self, loading):
@@ -394,7 +398,7 @@ class _HyperelasticSolver(_FormsMixin):
                 for k, b in enumerate(free_slots):
                     Hc[b, b] = free_val[k]
                 self._set_H(Hc)
-                self._newton()
+                converged = self._newton()
                 if not free_slots:
                     break
                 Pbar = self._avg_P()
@@ -411,7 +415,13 @@ class _HyperelasticSolver(_FormsMixin):
                 if self._J_macro is None or it == _OUTER_FD_RETRY:
                     self._J_macro = self._macro_jac_fd(Hc, free_slots, resid)
                 prev_val, prev_resid = free_val.copy(), resid
-                free_val = free_val - np.linalg.solve(self._J_macro, resid)
+                free_val = free_val - root_step(self._J_macro, resid)
+            else:
+                raise ConvergenceError(
+                    f"free-lateral root-find did not converge in increment {inc}/{n_incr}")
+            if not converged:
+                raise ConvergenceError(
+                    f"Newton solve did not converge in increment {inc}/{n_incr}")
 
         self.H_current = Hc.copy()
         Pbar = self._avg_P()
@@ -567,6 +577,9 @@ class _StandardHyperelasticSolver(_FormsMixin):
                 self.disp.x.array[:] = self.disp.x.array.real - last_du
                 r.destroy()
                 rprev = rnorm
+            else:
+                raise ConvergenceError(
+                    f"Newton solve did not converge in increment {inc}/{n_incr}")
         # reaction = internal force (no BC masking) summed at the drive face
         fint = self._residual()
         f = fint.getArray()
