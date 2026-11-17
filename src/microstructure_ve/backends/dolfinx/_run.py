@@ -285,19 +285,8 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
             "an energy form)"
         )
 
-    # Dispatch below reads only the caller's sim (pure numpy checks), so it needs no lock.
-    if _has_hyperelastic(sim.model):
-        from microstructure_ve.steps import Dynamic
-
-        if any(spec.find(step.subsections, Dynamic) is not None for step in sim.steps):
-            raise NotImplementedError(
-                "steady-state dynamics about a hyperelastic (finite-strain) state is "
-                "not supported; hyperelastic sims must be Static-only"
-            )
-        if _has_plastic_static(sim):
-            raise NotImplementedError(
-                "mixing hyperelastic and plastic responses in one model is not supported"
-            )
+    # The check reads only the caller's sim (pure numpy), so it needs no lock.
+    loadingmod.check_supported(sim)
 
     energies = None
     if len(list(sim.steps)) > 1 or _has_plastic_static(sim) or _has_hyperelastic_static(sim):

@@ -449,7 +449,7 @@ class _StandardHyperelasticSolver(_FormsMixin):
     increments by scaling the Dirichlet values. The reaction is the assembled nonlinear
     residual (internal nominal force) summed at the drive face -- the finite-strain analogue
     of ``_StandardPlasticSolver``'s internal force. Standard cells are fully confined
-    (``_standard_can_run``), so there is no free-lateral root-find.
+    (``_loading._standard_check``), so there is no free-lateral root-find.
 
     Persistent across a sim's Static steps: ``set_step`` re-parses each step's drives and
     the next ``solve`` ramps from the committed (previous converged) boundary values to the
