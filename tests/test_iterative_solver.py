@@ -71,6 +71,16 @@ class IterativeSolverTests(unittest.TestCase):
             run(sim, solver="iterative", petsc_options={"ksp_max_it": 1, "ksp_rtol": 1e-14})
         self.assertIn("did not converge", str(cm.exception))
 
+    def test_nonconvergence_raises_convergence_error(self):
+        """A linear sweep whose Krylov solve does not converge raises the same
+        ``ConvergenceError`` as a non-converged nonlinear step."""
+        from microstructure_ve.backends.dolfinx import ConvergenceError, run
+
+        sim = matrix_simulation(test_type="viscoelastic", homogeneous=False, **_CELL)
+        with self.assertRaises(ConvergenceError) as cm:
+            run(sim, solver="iterative", petsc_options={"ksp_max_it": 1, "ksp_rtol": 1e-14})
+        self.assertIn("did not converge", str(cm.exception))
+
     def test_auto_solver_kind_is_lu_in_2d_iterative_for_big_3d(self):
         # benchmarking: 2D LU completes to >500k ndof while GMRES+ILU diverges there, so auto
         # must stay LU in 2D; 3D LU fill explodes, so auto switches to iterative above budget.
