@@ -13,16 +13,17 @@ Design constraints (docs/dolfinx_backend_design.md, section 12):
   back as Quadrature-space coefficients: the stress ``sig_q`` (residual) and algorithmic tangent
   ``C_q`` (Jacobian). Assembled complex matrices/vectors carry real values.
 * **Hand-rolled Newton** (``_nonlinear.modified_newton``) over the ``dolfinx_mpc`` assemble +
-  complex-LU path; ``dolfinx_mpc.NonlinearProblem``/SNES is skipped in complex builds and
-  would not let us refresh the return-map coefficients between iterations.
+  complex-LU path; ``dolfinx_mpc.NonlinearProblem``/SNES is skipped in complex builds and would not
+  let us refresh the return-map coefficients between iterations.
 * **B-bar** (mean-dilatation) on the strain removes Q1/Q1-hex volumetric locking from J2's
   near-isochoric plastic flow, matching the elastic path's selective reduced integration.
 * Quadrature degree 2 -> 4 Gauss points on a quad (CPE4) / 8 on a hex (C3D8).
 
 The macro strain ``E`` enters through the *total* strain ``eps(E.x + u~) = E + eps(u~)`` (the
-fluctuation formulation the linear path also uses); driven components are imposed and any
-``free`` lateral components are found by the outer root-find of ``_nonlinear.FreeLateralRamp`` so their volume-averaged stress
-vanishes. Reported row mirrors the readODB columns: ``[1.0, RF_Real..., 0..., U...]`` (zero loss).
+fluctuation formulation the linear path also uses); driven components are imposed and any ``free``
+lateral components are found by the outer root-find of ``_nonlinear.FreeLateralRamp`` so their
+volume-averaged stress vanishes. Reported row mirrors the readODB columns:
+``[1.0, RF_Real..., 0..., U...]`` (zero loss).
 """
 from __future__ import annotations
 
@@ -222,14 +223,14 @@ def _voigt_vol(ev, dim):
 def _bbar_jacobian_form(V, dim, qd, C_q, C_c):
     """The B-bar-consistent Jacobian form.
 
-    The residual evaluates stress at the B-bar strain (volumetric part replaced by its cell
-    mean), so its exact derivative acts on ``dev eps(u) + mean_cell(vol eps(u))`` -- not on the
-    raw ``eps(u)``. An inconsistent Jacobian costs Newton its quadratic convergence
-    (tools/profile_plastic.py). The dev part integrates at the full
-    rule against the quadrature-point tangent ``C_q``; the cell-mean vol part reduces to the
-    1-point (centroid) rule against the cell-averaged tangent ``C_c`` (exact for a cell-constant
-    tangent on the rectangular Q1 grid, where the centroid value equals the cell mean). The
-    form is slightly nonsymmetric (test side stays raw, as in the residual); LU doesn't care.
+    The residual evaluates stress at the B-bar strain (volumetric part replaced by its cell mean),
+    so its exact derivative acts on ``dev eps(u) + mean_cell(vol eps(u))`` -- not on the raw
+    ``eps(u)``. An inconsistent Jacobian costs Newton its quadratic convergence
+    (tools/profile_plastic.py). The dev part integrates at the full rule against the
+    quadrature-point tangent ``C_q``; the cell-mean vol part reduces to the 1-point (centroid) rule
+    against the cell-averaged tangent ``C_c`` (exact for a cell-constant tangent on the rectangular
+    Q1 grid, where the centroid value equals the cell mean). The form is slightly nonsymmetric (test
+    side stays raw, as in the residual); LU doesn't care.
     """
     u_tr, v_te = ufl.TrialFunction(V), ufl.TestFunction(V)
     dx_q = ufl.dx(metadata={"quadrature_degree": qd, "quadrature_scheme": "default"})
@@ -243,10 +244,9 @@ def _bbar_jacobian_form(V, dim, qd, C_q, C_c):
 class _J2Solver:
     """The setup and Newton plumbing the periodic and standard plastic solvers share.
 
-    Builds the quadrature, the per-point moduli and committed plastic state, the
-    Quadrature-space coefficients ``sig_q``/``C_q``/``C_c`` and the residual and B-bar Jacobian
-    forms over ``self.u``. A subclass assembles ``self.A`` and implements
-    ``_assemble_jacobian``."""
+    Builds the quadrature, the per-point moduli and committed plastic state, the Quadrature-space
+    coefficients ``sig_q``/``C_q``/``C_c`` and the residual and B-bar Jacobian forms over
+    ``self.u``. A subclass assembles ``self.A`` and implements ``_assemble_jacobian``."""
 
     def __init__(self, prob, model):
         space = prob.space
@@ -318,9 +318,8 @@ class _J2Solver:
         return eps.reshape(-1, self.nv)
 
     def _fill_coeffs(self, eps_total, commit, tangent=True):
-        """Refresh the residual stress ``sig_q`` (always) and, when ``tangent``, the FD
-        algorithmic tangent ``C_q``/``C_c`` (1+nv return maps instead of 1). Returns the
-        stress (N,nv)."""
+        """Refresh the residual stress ``sig_q`` (always) and, when ``tangent``, the FD algorithmic
+        tangent ``C_q``/``C_c`` (1+nv return maps instead of 1). Returns the stress (N,nv)."""
         if tangent:
             C, sig, eps_p_new, p_new = _tangent(eps_total, self.mu, self.lam, self.eps_p,
                                                 self.p, self.mat_id, self.materials, self.dim)
@@ -388,9 +387,9 @@ class _PlasticSolver(_J2Solver):
 
     # -- one Newton solve at a fixed macro strain ----------------------------
     def _newton(self, E_voigt):
-        """Equilibrate the fluctuation at macro strain ``E_voigt`` by ``modified_newton``,
-        judged against the largest initial residual this solver has seen. Returns whether the
-        residual met its tolerance."""
+        """Equilibrate the fluctuation at macro strain ``E_voigt`` by ``modified_newton``, judged
+        against the largest initial residual this solver has seen. Returns whether the residual met
+        its tolerance."""
         def residual():
             self._eps_total = self._total_strain(E_voigt)
             self._fill_coeffs(self._eps_total, commit=False, tangent=False)
@@ -440,8 +439,8 @@ class _StandardPlasticSolver(_J2Solver):
 
     Macro loading enters through the prescribed face displacements (so the total strain is just
     ``eps(u)``, no fluctuation/E split); the reaction is the internal force ``int sig:eps(v)``
-    summed at the drive face -- the nonlinear analogue of the linear path's ``K_full * u``.
-    Standard cells are fully confined (single Static step), so there is no free root-find."""
+    summed at the drive face -- the nonlinear analogue of the linear path's ``K_full * u``. Standard
+    cells are fully confined (single Static step), so there is no free root-find."""
 
     def __init__(self, prob, model, sim):
         from . import _standard
@@ -471,8 +470,8 @@ class _StandardPlasticSolver(_J2Solver):
         return self.r
 
     def solve(self):
-        """Solve the single Static step, commit the plastic state, and return the readODB
-        row: the internal force and displacement summed at the drive face.
+        """Solve the single Static step, commit the plastic state, and return the readODB row: the
+        internal force and displacement summed at the drive face.
 
         Raises
         ------

@@ -11,6 +11,6 @@ solver-neutral spec dataclasses from their submodules and the backends from thei
     >>> from microstructure_ve.steps import Model, Simulation, Step, Dynamic, Heading
     >>> from microstructure_ve.backends.abaqus import write_inp   # ABAQUS .inp emission
 
-Keeping ``__init__`` empty also keeps the top-level import numpy-only; the DOLFINx
-backend pulls in dolfinx lazily, only when its ``run`` is used.
+Keeping ``__init__`` empty also keeps the top-level import numpy-only; the DOLFINx backend pulls in
+dolfinx lazily, only when its ``run`` is used.
 """

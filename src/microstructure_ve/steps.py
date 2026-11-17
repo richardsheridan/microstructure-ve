@@ -1,7 +1,7 @@
 """Analysis steps and the top-level model / simulation containers (pure data).
 
-``Model`` runs ``validate_constraints`` at construction so the over-constraint
-guarantee holds for every backend.
+``Model`` runs ``validate_constraints`` at construction so the over-constraint guarantee holds for
+every backend.
 """
 from __future__ import annotations
 
@@ -60,9 +60,8 @@ class Step:
     Parameters
     ----------
     subsections : iterable
-        The step's contents in order: an analysis type (``Static`` / ``Dynamic``) together
-        with the step-level boundary conditions (e.g. the ``Prescribed`` drive
-        ``BoundaryCondition``).
+        The step's contents in order: an analysis type (``Static`` / ``Dynamic``) together with the
+        step-level boundary conditions (e.g. the ``Prescribed`` drive ``BoundaryCondition``).
     perturbation : bool
         Add the ``,PERTURBATION`` flag (used for the harmonic steady-state sweep).
     nlgeom : bool

@@ -34,10 +34,9 @@ class Fixed:
 class Prescribed:
     """Prescribe displacement ``value`` on the given DOFs of the target.
 
-    Used both as the macro drive (the applied amplitude, placed in a step's
-    ``subsections``) and, with ``value=0``, in ``Model.bcs``, where it holds those DOFs at
-    zero as ``Fixed`` does and a step drive on the same DOF overrides it (ABAQUS rejects a
-    nonzero model-level value).
+    Used both as the macro drive (the applied amplitude, placed in a step's ``subsections``) and,
+    with ``value=0``, in ``Model.bcs``, where it holds those DOFs at zero as ``Fixed`` does and a
+    step drive on the same DOF overrides it (ABAQUS rejects a nonzero model-level value).
 
     Parameters
     ----------
@@ -55,8 +54,7 @@ class Prescribed:
 class BoundaryCondition:
     """A ``constraint`` (``Fixed`` / ``Prescribed``) applied to a set of nodes.
 
-    The physics of the constraint lives on ``constraint`` (has-a, like
-    ``Material.response``)::
+    The physics of the constraint lives on ``constraint`` (has-a, like ``Material.response``)::
 
         BoundaryCondition(origin, Fixed(dofs=[1, 2]))
         BoundaryCondition(drive_corner, Prescribed(dofs=[1], value=0.005))
@@ -167,8 +165,8 @@ class PeriodicBoundaryConstraint:
     def dependent_dofs(self):
         """Yield ``(node_inds, dof)`` for each DOF the constraint eliminates.
 
-        The first-listed nset of each pair is the dependent (eliminated) term of the
-        emitted *Equation, one group per dof (pair-major, dof-minor).
+        The first-listed nset of each pair is the dependent (eliminated) term of the emitted
+        *Equation, one group per dof (pair-major, dof-minor).
         """
         for pair in self.node_pairs:
             for i in range(self.nodes.dim):
@@ -178,18 +176,17 @@ class PeriodicBoundaryConstraint:
 def validate_constraints(bcs):
     """Raise ValueError if a dependent (eliminated) DOF is over-constrained.
 
-    ABAQUS eliminates the first-listed (node, dof) of every *Equation. That dependent
-    DOF must not also be (a) the dependent term of another *Equation, nor (b) prescribed
-    by a *Boundary -- either is an over-constraint ABAQUS rejects. Double-*Boundary on a
-    DOF is tolerated (a model-level baseline plus a step displacement is normal) and is
-    not flagged. ``Model`` calls this at construction, so the error surfaces there instead
-    of at solve time.
+    ABAQUS eliminates the first-listed (node, dof) of every *Equation. That dependent DOF must not
+    also be (a) the dependent term of another *Equation, nor (b) prescribed by a *Boundary -- either
+    is an over-constraint ABAQUS rejects. Double-*Boundary on a DOF is tolerated (a model-level
+    baseline plus a step displacement is normal) and is not flagged. ``Model`` calls this at
+    construction, so the error surfaces there instead of at solve time.
 
     Parameters
     ----------
     bcs : iterable
-        Constraints; those with a ``dependent_dofs`` or ``prescribed_dofs`` method take
-        part, the rest are ignored.
+        Constraints; those with a ``dependent_dofs`` or ``prescribed_dofs`` method take part, the
+        rest are ignored.
 
     Raises
     ------

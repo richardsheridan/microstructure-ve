@@ -220,9 +220,9 @@ def matrix_cells():
 def matrix_cases():
     """Yield ``(cell, test_type)`` for the whole suite: every cell x {elastic, viscoelastic,
     hyperelastic_plastic, reduced_polynomial}, plus the appended multi-step viscoelastic cases on
-    ``MULTISTEP_CELL``, the single-Static viscoelastic case on ``VISCOELASTIC_STATIC_CELLS``, the multi-step plastic orderings on ``PLASTIC_MULTISTEP_CELL``, and
-    polynomial/arruda_boyce over ``HYPER_FOCUSED_CELLS``, and ``PURE_SHEAR_TEST_TYPES`` over
-    ``PURE_SHEAR_CELLS``.
+    ``MULTISTEP_CELL``, the single-Static viscoelastic case on ``VISCOELASTIC_STATIC_CELLS``, the
+    multi-step plastic orderings on ``PLASTIC_MULTISTEP_CELL``, and polynomial/arruda_boyce over
+    ``HYPER_FOCUSED_CELLS``, and ``PURE_SHEAR_TEST_TYPES`` over ``PURE_SHEAR_CELLS``.
 
     The single enumerator every consumer (abaqus structural / dolfinx red / parity / oracle
     generation) iterates, so the multi-step cases are added in exactly one place.
@@ -278,10 +278,9 @@ def is_fe_green(cell, test_type):
 def _drive_specs(mode, dim):
     """Ordered ``[(axis_letter, drive_dof)]``; the first entry is the primary drive.
 
-    Normal mode along axis ``a`` -> drive ``R_a`` in dof ``a``. Shear in plane ``(a, b)``
-    -> drive ``R_a`` in dof ``b`` (engineering simple shear). Pure shear in plane ``(a, b)``
-    -> drive ``R_a`` in dof ``b`` and ``R_b`` in dof ``a``. Compression -> drive every
-    ``R_a`` in dof ``a``.
+    Normal mode along axis ``a`` -> drive ``R_a`` in dof ``a``. Shear in plane ``(a, b)`` -> drive
+    ``R_a`` in dof ``b`` (engineering simple shear). Pure shear in plane ``(a, b)`` -> drive ``R_a``
+    in dof ``b`` and ``R_b`` in dof ``a``. Compression -> drive every ``R_a`` in dof ``a``.
     """
     table = {
         "uniaxial_x": [("x", 1)],
@@ -320,10 +319,10 @@ def _normal_dof(axis_letter):
 def _macro_corner_bcs_general(nodes, mode, traction):
     """Corner BCs imposing ``mode`` under ``traction`` for a periodic model.
 
-    Origin pinned. A normal mode drives ``R_a`` in dof ``a`` with its transverse dofs
-    pinned; lateral reference corners are fully pinned (``confined_slip``) or have their
-    normal dof floating (``free``). A shear mode drives each driven ``R_a`` in its shear dof
-    and pins everything else (no-slip simple or pure shear). Returns ``(bcs, [(drive_nset, drive_dof)])``.
+    Origin pinned. A normal mode drives ``R_a`` in dof ``a`` with its transverse dofs pinned;
+    lateral reference corners are fully pinned (``confined_slip``) or have their normal dof floating
+    (``free``). A shear mode drives each driven ``R_a`` in its shear dof and pins everything else
+    (no-slip simple or pure shear). Returns ``(bcs, [(drive_nset, drive_dof)])``.
     """
     dim = nodes.dim
     axes = _AXES[:dim]

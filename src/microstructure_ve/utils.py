@@ -70,11 +70,11 @@ def assign_intph(microstructure: np.ndarray, num_layers_list: List[int]) -> np.n
     Parameters
     ----------
     microstructure : ndarray
-        The microstructure array. Particles must be zero, matrix must be nonzero, and at
-        least one pixel must be zero.
+        The microstructure array. Particles must be zero, matrix must be nonzero, and at least one
+        pixel must be zero.
     num_layers_list : list of int
-        The interphase thicknesses in pixels, as distances from the particles. They are
-        sorted, so the order given does not matter.
+        The interphase thicknesses in pixels, as distances from the particles. They are sorted, so
+        the order given does not matter.
 
     Returns
     -------
@@ -96,8 +96,8 @@ def periodic_assign_intph(
 ) -> np.ndarray:
     """Generate interphase layers around the particles with periodic BC.
 
-    Distances are measured across the periodic boundary: the image is tiled 3 times per
-    axis, layered with ``assign_intph``, and the central tile is returned.
+    Distances are measured across the periodic boundary: the image is tiled 3 times per axis,
+    layered with ``assign_intph``, and the central tile is returned.
 
     Parameters
     ----------
@@ -125,9 +125,9 @@ def refine_matl_img(matl_img, scale, refine):
     physical domain size by returning the correspondingly reduced scale.
 
     Refinement multiplies pixel counts, so pixel-unit image processing is order-
-    sensitive: apply ``assign_intph``/``periodic_assign_intph`` before refining to keep
-    layer thicknesses in original-pixel units (refining first makes a ``num_layers=n``
-    interphase n/refine original pixels thin).
+    sensitive: apply ``assign_intph``/``periodic_assign_intph`` before refining to keep layer
+    thicknesses in original-pixel units (refining first makes a ``num_layers=n`` interphase n/refine
+    original pixels thin).
 
     Parameters
     ----------
@@ -143,9 +143,9 @@ def refine_matl_img(matl_img, scale, refine):
     refined_img : ndarray
         ``matl_img`` itself (as an array) when ``refine == 1``.
     refined_scale : float
-        ``scale / refine``. Always use it together with ``refined_img``: pairing the
-        upsampled image with the original scale (or vice versa) describes a physically
-        different, refine-times-larger domain, and nothing downstream can detect that.
+        ``scale / refine``. Always use it together with ``refined_img``: pairing the upsampled image
+        with the original scale (or vice versa) describes a physically different,
+        refine-times-larger domain, and nothing downstream can detect that.
 
     Raises
     ------
@@ -178,8 +178,8 @@ def refine_matl_img(matl_img, scale, refine):
 def load_viscoelasticity(matrl_name):
     """Load a viscoelastic modulus table from a text file, sorted by frequency.
 
-    ABAQUS needs the frequency table increasing; the storage and loss moduli are combined
-    into one complex modulus.
+    ABAQUS needs the frequency table increasing; the storage and loss moduli are combined into one
+    complex modulus.
 
     Parameters
     ----------

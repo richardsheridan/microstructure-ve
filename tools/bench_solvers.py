@@ -1,9 +1,9 @@
 """Benchmark LU vs GMRES+ILU per-frequency solve time vs mesh size (periodic homogenization).
 
-This is the reproducer behind the solver-kind crossover: the ``_solver._COST`` LU cost model
-and the 2D-diverges / 3D-iterative-wins boundaries recorded in the design doc (§10) are fit to
-its output. Run from anywhere with the fenicsx interpreter; it prints the table below to stdout and
-writes no file.
+This is the reproducer behind the solver-kind crossover: the ``_solver._COST`` LU cost model and the
+2D-diverges / 3D-iterative-wins boundaries recorded in the design doc (§10) are fit to its output.
+Run from anywhere with the fenicsx interpreter; it prints the table below to stdout and writes no
+file.
 
 Pinned to one BLAS thread (the serial cost-model regime). For each mesh size it times the
 LU and the iterative solver BACK TO BACK, repeated over rounds, so contention hits both
@@ -14,10 +14,10 @@ so no single factorization dominates the run (that regime is exactly where itera
 
 Results
 -------
-Calibration run: 80 logical cores, host load average 27 to 30, 3 rounds, LU cap 75 s,
-uniaxial_x free-traction periodic viscoelastic homogeneous cell. Best of the rounds; the
-rounds agreed within a few percent apart from the first 2D iterative rows. ``pred`` is
-``predict_lu_seconds`` at the time of the run (the fit to these LU times).
+Calibration run: 80 logical cores, host load average 27 to 30, 3 rounds, LU cap 75 s, uniaxial_x
+free-traction periodic viscoelastic homogeneous cell. Best of the rounds; the rounds agreed within a
+few percent apart from the first 2D iterative rows. ``pred`` is ``predict_lu_seconds`` at the time
+of the run (the fit to these LU times).
 
     dim  n    ndof     LU s    pred s   iter s   iter/LU   iterative status
     2    48     4802    0.151    0.132    0.247    1.6x     ok
@@ -30,9 +30,9 @@ rounds agreed within a few percent apart from the first 2D iterative rows. ``pre
     3    16    14739   50.02    41.71     3.078    0.06x    ok
     3    20    27783   skipped  148.2     6.878    -        ok (LU predicted over the cap)
 
-Reading: in 2D the LU wins at every size and the iterative solver fails to converge at the
-largest; in 3D the iterative solver wins from the smallest size. The ``iter/LU`` column is
-the ratio of the best iterative round to the best LU round.
+Reading: in 2D the LU wins at every size and the iterative solver fails to converge at the largest;
+in 3D the iterative solver wins from the smallest size. The ``iter/LU`` column is the ratio of the
+best iterative round to the best LU round.
 """
 import os
 

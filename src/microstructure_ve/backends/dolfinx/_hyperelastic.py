@@ -1,12 +1,12 @@
 """Finite-strain (total-Lagrangian) hyperelasticity for ``Static`` steps (NLGEOM).
 
-The ``*HYPERELASTIC`` responses (``ArrudaBoyce`` / ``Polynomial`` / ``ReducedPolynomial``)
-are path-independent strain-energy materials, meaningful only at finite strain, so a Static
-step carrying one needs a geometrically nonlinear solve: ``F = I + H + grad(w)`` with the
-macro displacement gradient ``H`` (non-symmetric -- the corner-driven PBC imposes the raw
-``H[i,a] = value/L_a``, so a shear drive is *simple* shear, not the symmetrized small-strain
-``E``) and the periodic fluctuation ``w`` through the same ``dolfinx_mpc`` constraint the
-linear/plastic paths use.
+The ``*HYPERELASTIC`` responses (``ArrudaBoyce`` / ``Polynomial`` / ``ReducedPolynomial``) are
+path-independent strain-energy materials, meaningful only at finite strain, so a Static step
+carrying one needs a geometrically nonlinear solve: ``F = I + H + grad(w)`` with the macro
+displacement gradient ``H`` (non-symmetric -- the corner-driven PBC imposes the raw
+``H[i,a] = value/L_a``, so a shear drive is *simple* shear, not the symmetrized small-strain ``E``)
+and the periodic fluctuation ``w`` through the same ``dolfinx_mpc`` constraint the linear/plastic
+paths use.
 
 Design notes (mirroring ``_plastic``, the reference for every convention here):
 
@@ -20,19 +20,18 @@ Design notes (mirroring ``_plastic``, the reference for every convention here):
   volumetric energy ``U(J)`` integrates on the 1-point (centroid) rule, the deviatoric part
   on the full degree-2 rule. Locking comes only from the volumetric term (the deviatoric
   invariants are volume-independent), so this matches CPE4/C3D8 closely.
-* **Complex-scalar PETSc build**: the energy contains ``J**(-2/3)`` / ``ln(J)`` whose
-  complex branches are noise-sensitive, so the fluctuation ``w`` is held real (its imaginary
-  part is zeroed after every Newton update); every fractional power then evaluates on a
-  real-positive ``J`` and the assembled complex objects carry real values -- the same
-  invariant ``_plastic`` relies on.
+* **Complex-scalar PETSc build**: the energy contains ``J**(-2/3)`` / ``ln(J)`` whose complex
+  branches are noise-sensitive, so the fluctuation ``w`` is held real (its imaginary part is zeroed
+  after every Newton update); every fractional power then evaluates on a real-positive ``J`` and the
+  assembled complex objects carry real values -- the same invariant ``_plastic`` relies on.
 * **2D is plane strain**: ``F`` is embedded 3x3 with ``F[2,2] = 1`` so the out-of-plane
   stretch enters the invariants exactly.
-* **Reactions are nominal (PK1)**: the drive-corner constraint force is conjugate to the
-  corner displacement, ``RF = P-bar[:, a0] * cross_area`` with the volume-average PK1
-  assembled on the same SRI measures as the residual (``dPi/dH[i,a] = V0 * P-bar[i,a]``;
-  the face force ``int P.N dA0`` is the physical force ABAQUS reports). A free lateral
-  corner normal means ``P-bar[b,b] = 0``, solved by ``_nonlinear.FreeLateralRamp``, the
-  root-find the plastic path also uses (on average PK1 here, average Cauchy there).
+* **Reactions are nominal (PK1)**: the drive-corner constraint force is conjugate to the corner
+  displacement, ``RF = P-bar[:, a0] * cross_area`` with the volume-average PK1 assembled on the same
+  SRI measures as the residual (``dPi/dH[i,a] = V0 * P-bar[i,a]``; the face force ``int P.N dA0`` is
+  the physical force ABAQUS reports). A free lateral corner normal means ``P-bar[b,b] = 0``, solved
+  by ``_nonlinear.FreeLateralRamp``, the root-find the plastic path also uses (on average PK1 here,
+  average Cauchy there).
 
 All phases must be hyperelastic of the same model class (``_loading.check_supported`` enforces it:
 an ``*Elastic`` phase under NLGEOM is hypoelastic in ABAQUS, which this formulation cannot
@@ -75,13 +74,13 @@ def _coefficient_table(responses):
     kind : type
         The model class shared by every response.
     dev_cols : numpy.ndarray
-        ``(n_mat, n_dev)`` deviatoric coefficients in a fixed layout (ReducedPolynomial:
-        C10..CN0; Polynomial: the ABAQUS pair order up to the largest N; ArrudaBoyce: the 5
-        combined coefficients ``a_i = mu*C_i/lm^(2i-2)``; NeoHookean: ``mu0``).
+        ``(n_mat, n_dev)`` deviatoric coefficients in a fixed layout (ReducedPolynomial: C10..CN0;
+        Polynomial: the ABAQUS pair order up to the largest N; ArrudaBoyce: the 5 combined
+        coefficients ``a_i = mu*C_i/lm^(2i-2)``; NeoHookean: ``mu0``).
     invd_cols : numpy.ndarray
-        ``(n_mat, n_vol)`` holding ``1/Di``, 0 where ``Di == 0`` (the ABAQUS convention that a
-        zero Di drops that volumetric term). For NeoHookean, which has no D series, the one
-        column is ``lam`` itself.
+        ``(n_mat, n_vol)`` holding ``1/Di``, 0 where ``Di == 0`` (the ABAQUS convention that a zero
+        Di drops that volumetric term). For NeoHookean, which has no D series, the one column is
+        ``lam`` itself.
 
     Raises
     ------
@@ -129,8 +128,8 @@ def _dg0_fields(mesh, mat_of_cell, oci, columns, keep_zero=False):
     """One DG0 Function per column, filled per cell through the pixel->dolfinx cell map.
 
     Columns that are zero for every material return ``None`` (their energy term is absent
-    everywhere, so it is not built at all), unless ``keep_zero`` is set, in which case
-    every column gets a Function.
+    everywhere, so it is not built at all), unless ``keep_zero`` is set, in which case every column
+    gets a Function.
     """
     DG0 = fem.functionspace(mesh, ("DG", 0))
     fns = []
@@ -202,8 +201,8 @@ def _order_from_pairs(n_pairs):
 class _FormsMixin:
     """Shared setup and UFL construction: energy, residual, Jacobian, and average-PK1 forms.
 
-    ``self.disp`` is the displacement field (periodic fluctuation ``w`` or full ``u``, kept
-    real), ``self.H`` the macro-gradient Constant (zero for the standard path).
+    ``self.disp`` is the displacement field (periodic fluctuation ``w`` or full ``u``, kept real),
+    ``self.H`` the macro-gradient Constant (zero for the standard path).
     """
 
     def __init__(self, prob, model):
@@ -359,12 +358,12 @@ class _HyperelasticSolver(_FormsMixin):
 class _StandardHyperelasticSolver(_FormsMixin):
     """Finite strain for the standard (non-periodic) path: direct face Dirichlet, no MPC.
 
-    The macro loading enters through the prescribed face displacements (``F = I + grad(u)``,
-    no fluctuation/H split -- ``self.H`` stays zero); the drive ramps over ``n_incr``
-    increments by scaling the Dirichlet values. The reaction is the assembled nonlinear
-    residual (internal nominal force) summed at the drive face -- the finite-strain analogue
-    of ``_StandardPlasticSolver``'s internal force. Standard cells are fully confined
-    (``_loading._standard_check``), so there is no free-lateral root-find.
+    The macro loading enters through the prescribed face displacements (``F = I + grad(u)``, no
+    fluctuation/H split -- ``self.H`` stays zero); the drive ramps over ``n_incr`` increments by
+    scaling the Dirichlet values. The reaction is the assembled nonlinear residual (internal nominal
+    force) summed at the drive face -- the finite-strain analogue of ``_StandardPlasticSolver``'s
+    internal force. Standard cells are fully confined (``_loading._standard_check``), so there is no
+    free-lateral root-find.
 
     Persistent across a sim's Static steps: ``set_step`` re-parses each step's drives and
     the next ``solve`` ramps from the committed (previous converged) boundary values to the
@@ -391,10 +390,9 @@ class _StandardHyperelasticSolver(_FormsMixin):
     def set_step(self, step):
         """Re-parse ``step``'s BCs; the next ``solve`` ramps from the committed state.
 
-        The ramp start for each bc is read off the current converged displacement at that
-        bc's dofs (the converged u is the previous step's committed boundary value, since
-        the drive is applied through Newton's lifting -- see ``solve``), so no cross-step
-        value bookkeeping is needed."""
+        The ramp start for each bc is read off the current converged displacement at that bc's dofs
+        (the converged u is the previous step's committed boundary value, since the drive is applied
+        through Newton's lifting -- see ``solve``), so no cross-step value bookkeeping is needed."""
         from . import _standard
 
         entries, drive_nodes = _standard._parse_bcs_ex(

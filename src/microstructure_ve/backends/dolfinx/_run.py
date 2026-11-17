@@ -1,10 +1,10 @@
 """Orchestration: wire the concern submodules into a solver and sweep the frequencies.
 
 ``build_solver`` assembles the spec/assembly/constraints/solver/homogenize pieces into a
-``solve_one(f)`` closure (all dolfinx/PETSc state captured in it). ``run`` sweeps the
-frequencies and optionally writes a readODB-style tsv, optionally fanning the independent
-per-frequency solves across a spawn ProcessPool (``workers``). The macro loading is parsed
-from the sim by ``_loading.macro_loading``.
+``solve_one(f)`` closure (all dolfinx/PETSc state captured in it). ``run`` sweeps the frequencies
+and optionally writes a readODB-style tsv, optionally fanning the independent per-frequency solves
+across a spawn ProcessPool (``workers``). The macro loading is parsed from the sim by
+``_loading.macro_loading``.
 
 Thread safety (the guarantee): every entry point of this backend -- ``run``,
 ``build_solver`` plus the ``solve_one`` closures it returns, and ``clear_cache`` --
@@ -116,13 +116,12 @@ def _fe_problem(geom, model, bbar):
 def build_solver(sim, bbar=True, cancel=None, petsc_options=None, solver="auto"):
     """Build the FE solver for ``sim``; return ``(solve_one, dim)``.
 
-    ``solve_one(f)`` returns the readODB-style row for one frequency, at each material's
-    complex modulus ``E*(f)`` even when the sim's step is Static; ``solve_one(f, elastic=True)``
-    solves with the real elastic moduli instead, as ``run`` does for a Static step.
-    The mesh-only setup
-    (mesh, dof map, forms, MPC/BCs, factorizable matrix) is cached by mesh shape and reused
-    across cells (see ``_fe_problem``); only the per-cell material mapping and the
-    per-frequency matrix values are refilled.
+    ``solve_one(f)`` returns the readODB-style row for one frequency, at each material's complex
+    modulus ``E*(f)`` even when the sim's step is Static; ``solve_one(f, elastic=True)`` solves with
+    the real elastic moduli instead, as ``run`` does for a Static step. The mesh-only setup (mesh,
+    dof map, forms, MPC/BCs, factorizable matrix) is cached by mesh shape and reused across cells
+    (see ``_fe_problem``); only the per-cell material mapping and the per-frequency matrix values
+    are refilled.
 
     Dispatches on the model's boundary conditions: *Periodic* (carries a
     ``PeriodicBoundaryConstraint``) -> corner-driven homogenization via MPC; *Standard* ->
@@ -215,55 +214,54 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
         petsc_options=None, n_incr=None, return_energy=False):
     """Solve ``sim``; one row per frequency of a Dynamic step and one per Static step.
 
-    Everything about the *problem* is read from ``sim`` -- there are no physics kwargs.
-    The rows are ordered by step, ``(n_rows, 1+3*dim)``. A Dynamic step sweeps its frequencies
+    Everything about the *problem* is read from ``sim`` -- there are no physics kwargs. The rows are
+    ordered by step, ``(n_rows, 1+3*dim)``. A Dynamic step sweeps its frequencies
     (``spec.frequencies``) at each material's complex modulus ``E*(f)``. A Static step that is
     neither plastic nor hyperelastic solves once with each material's real elastic modulus
-    (``youngs``), so its row has zero loss, whether it is the sim's only step or one of several.
-    The macro loading (driven axis/mode and
-    the free vs held lateral components) is parsed from the corner BCs and the step drive(s)
-    by ``_loading.macro_loading``; a zero ``Prescribed`` in ``model.bcs`` holds its dofs as a
-    ``Fixed`` does (``_loading.model_holds``) and a nonzero one is refused. The remaining
-    kwargs are execution knobs only.
+    (``youngs``), so its row has zero loss, whether it is the sim's only step or one of several. The
+    macro loading (driven axis/mode and the free vs held lateral components) is parsed from the
+    corner BCs and the step drive(s) by ``_loading.macro_loading``; a zero ``Prescribed`` in
+    ``model.bcs`` holds its dofs as a ``Fixed`` does (``_loading.model_holds``) and a nonzero one is
+    refused. The remaining kwargs are execution knobs only.
 
-    Each step's rows report that step's own drive and the reaction to it. A periodic ``Static``
-    step with no drive of its own reports the drive of the last ``Static`` step that carried
-    one; a ``Dynamic`` step with no drive of its own, or a driveless first step, is refused.
+    Each step's rows report that step's own drive and the reaction to it. A periodic ``Static`` step
+    with no drive of its own reports the drive of the last ``Static`` step that carried one; a
+    ``Dynamic`` step with no drive of its own, or a driveless first step, is refused.
 
-    Each row is ``[frame_value, RF_Real_1..d, RF_Imag_1..d, U_1..d]`` (same columns as the
-    ABAQUS readODB tsv; ``frame_value`` is the frequency for a Dynamic sweep, the step time
-    for a Static/transient step), where ``RF`` is the complex reaction on the drive face and ``U`` the
+    Each row is ``[frame_value, RF_Real_1..d, RF_Imag_1..d, U_1..d]`` (same columns as the ABAQUS
+    readODB tsv; ``frame_value`` is the frequency for a Dynamic sweep, the step time for a
+    Static/transient step), where ``RF`` is the complex reaction on the drive face and ``U`` the
     applied drive displacement. For a uniaxial drive along x the homogenized complex modulus is::
 
         E*_x(f) = (RF_Real_1 + 1j*RF_Imag_1) / (cross_area * exx)
 
-    with ``cross_area = Ly`` (2D) or ``Ly*Lz`` (3D) and ``exx = U_1 / Lx`` -- i.e. divide
-    the x reaction by the cross-section and the applied macro strain.
+    with ``cross_area = Ly`` (2D) or ``Ly*Lz`` (3D) and ``exx = U_1 / Lx`` -- i.e. divide the x
+    reaction by the cross-section and the applied macro strain.
 
     bbar:    selective reduced integration on the volumetric term (recommended; matches
              ABAQUS CPE4/C3D8 B-bar and avoids Q1 volumetric locking).
     workers: 1 = serial. >1 spawns a ProcessPoolExecutor and splits the independent
-             per-frequency solves across processes -- each worker builds the solver once,
-             then solves its share, pinned to one BLAS thread. A driver that calls this
-             with workers>1 must guard the call under ``if __name__ == "__main__":`` (the
-             standard "spawn" requirement) or the workers will re-import and re-run it.
+             per-frequency solves across processes -- each worker builds the solver once, then
+             solves its share, pinned to one BLAS thread. A driver that calls this with workers>1
+             must guard the call under ``if __name__ == "__main__":`` (the standard "spawn"
+             requirement) or the workers will re-import and re-run it.
     cancel:  callable() -> bool, or None. Polled before each frequency. Stop the sweep
-             either by returning a truthy value (raises ``Cancelled``) or by raising your
-             own exception (propagates unchanged) -- the latter lets a caller carry a
-             reason/payload out of the sweep. Because an LU solve is one uninterruptible C
-             call, cancellation takes effect at the start of the next frequency, so
-             worst-case latency is one solve (kept under ``_solver.LU_TIME_S`` by the
-             solver-kind crossover; see ``build_solver``). In parallel mode it is polled in this parent process as
-             workers finish, and either trigger SIGTERMs the live workers (killing an
-             in-flight solve too) before propagating; the predicate runs here, never in a
-             worker. With ``solver="iterative"`` ``cancel`` is also polled *inside* each
-             solve (per KSP iteration), so latency is sub-second on large meshes.
+             either by returning a truthy value (raises ``Cancelled``) or by raising your own
+             exception (propagates unchanged) -- the latter lets a caller carry a reason/payload out
+             of the sweep. Because an LU solve is one uninterruptible C call, cancellation takes
+             effect at the start of the next frequency, so worst-case latency is one solve (kept
+             under ``_solver.LU_TIME_S`` by the solver-kind crossover; see ``build_solver``). In
+             parallel mode it is polled in this parent process as workers finish, and either trigger
+             SIGTERMs the live workers (killing an in-flight solve too) before propagating; the
+             predicate runs here, never in a worker. With ``solver="iterative"`` ``cancel`` is also
+             polled *inside* each solve (per KSP iteration), so latency is sub-second on large
+             meshes.
     solver:  ``"auto"`` (default) keeps LU in 2D (where it scales well and the iterative path
-             diverges) and switches to the GMRES+ILU ``IterativeSolver`` only for large 3D
-             meshes above the LU time budget (``select_solver_kind``); ``"lu"``/``"iterative"``
-             force one. The complex-symmetric system has no AMG (GAMG/hypre are real-only),
-             so the iterative path is GMRES+ILU and may stagnate on the hardest meshes (it
-             raises ``ConvergenceError`` on non-convergence). Periodic path only; standard BC uses LU.
+             diverges) and switches to the GMRES+ILU ``IterativeSolver`` only for large 3D meshes
+             above the LU time budget (``select_solver_kind``); ``"lu"``/``"iterative"`` force one.
+             The complex-symmetric system has no AMG (GAMG/hypre are real-only), so the iterative
+             path is GMRES+ILU and may stagnate on the hardest meshes (it raises
+             ``ConvergenceError`` on non-convergence). Periodic path only; standard BC uses LU.
     petsc_options: dict of PETSc options overriding the iterative KSP/PC (e.g.
              ``{"pc_type": "bjacobi"}``); ignored for LU.
     return_energy: hyperelastic Static sims only (``ValueError`` otherwise). When True the
@@ -272,15 +270,15 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
              measures (exactly the potential Newton minimized; zero at the undeformed
              state, so no baseline subtraction is needed). ``output_path`` still writes
              the rows only.
-    n_incr:  load increments per plastic or hyperelastic ``Static`` step. Default ``None``
-             solves a plastic step in one increment, as ABAQUS solves the emitted ``*STATIC``
-             with no increment data line (docs/dolfinx_backend_design.md, section 12), and
-             a hyperelastic step in a few (see ``_run_multistep``).
-             Ignored for linear sims and the standard-BC plastic path (single ramp).
+    n_incr:  load increments per plastic or hyperelastic ``Static`` step.  Default ``None``
+             solves a plastic step in one increment, as ABAQUS solves the emitted ``*STATIC`` with
+             no increment data line (docs/dolfinx_backend_design.md, section 12), and a hyperelastic
+             step in a few (see ``_run_multistep``). Ignored for linear sims and the standard-BC
+             plastic path (single ramp).
 
     Refusal: a sim that ``_loading.check_supported`` rejects raises that check's
-    ``NotImplementedError`` (unsupported feature) or ``ValueError`` (malformed sim) before
-    any solver is built.
+    ``NotImplementedError`` (unsupported feature) or ``ValueError`` (malformed sim) before any
+    solver is built.
 
     Non-convergence: a hyperelastic or plastic ``Static`` step whose final Newton solve or
     free-lateral root-find misses its tolerance, or an iterative linear solve that does not
@@ -382,14 +380,13 @@ def _has_hyperelastic_static(sim):
 
 def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_incr=None,
                    collect_energy=False):
-    """Solve a multi-step sim, or any sim with a ``Static`` step, step by step, emitting rows
-    in the ABAQUS reader's order (per
-    step, then per frame): a ``Static`` step contributes one row (zero loss) at frame value 1.0
-    -- elastic (real ``*Elastic`` moduli) or, if a ``Plastic`` response is present, the nonlinear
-    J2 return-mapping solve (``_plastic``), or for hyperelastic materials the finite-strain solve
-    (``_hyperelastic``) -- and a ``Dynamic`` step one row per swept frequency
-    (ascending). The FE problem (mesh/MPC/forms) is built once and reused across steps.
-    Each step's drive follows ``run``; every step drives the components the first drive sets.
+    """Solve a multi-step sim, or any sim with a ``Static`` step, step by step, emitting rows in the
+    ABAQUS reader's order (per step, then per frame): a ``Static`` step contributes one row (zero
+    loss) at frame value 1.0 -- elastic (real ``*Elastic`` moduli) or, if a ``Plastic`` response is
+    present, the nonlinear J2 return-mapping solve (``_plastic``), or for hyperelastic materials the
+    finite-strain solve (``_hyperelastic``) -- and a ``Dynamic`` step one row per swept frequency
+    (ascending). The FE problem (mesh/MPC/forms) is built once and reused across steps. Each step's
+    drive follows ``run``; every step drives the components the first drive sets.
 
     ``collect_energy=True`` returns ``(rows, energies)`` with one strain-energy scalar per
     row -- assembled by the hyperelastic solver after its step converges, ``np.nan`` for

@@ -98,9 +98,9 @@ def synthetic_materials(intph_img, stride=_TABLE_STRIDE):
 def synthetic_simulation(etype="CPE4R"):
     """A complete small ``Simulation`` mirroring ``example.py`` on the synthetic RVE.
 
-    Corner-driven periodic BCs with a free lateral edge (Poisson contraction) and a
-    30-frequency steady-state dynamic step. Deterministic, so it backs a golden ``.inp``
-    with the default ``etype``; a DOLFINx run passes an element type that backend solves.
+    Corner-driven periodic BCs with a free lateral edge (Poisson contraction) and a 30-frequency
+    steady-state dynamic step. Deterministic, so it backs a golden ``.inp`` with the default
+    ``etype``; a DOLFINx run passes an element type that backend solves.
     """
     intph_img = synthetic_microstructure()
     nodes = GridNodes.from_matl_img(intph_img, SCALE)

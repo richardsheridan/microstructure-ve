@@ -1,10 +1,10 @@
 """Extract viscoelastic response from an ABAQUS output ODB to a TSV.
 
 This module is the single source of truth for the standalone reader script that
-``microstructure_ve.backends.abaqus.write_odb_reader`` emits. It is written to run under the
-ABAQUS python interpreter (no f-strings, no package imports, numpy + odbAccess only);
-``odbAccess``/``abaqusConstants`` are imported at module top, so importing it outside
-ABAQUS requires those names to be stubbed in ``sys.modules`` first (the test does this).
+``microstructure_ve.backends.abaqus.write_odb_reader`` emits. It is written to run under the ABAQUS
+python interpreter (no f-strings, no package imports, numpy + odbAccess only);
+``odbAccess``/``abaqusConstants`` are imported at module top, so importing it outside ABAQUS
+requires those names to be stubbed in ``sys.modules`` first (the test does this).
 
 Run standalone under ABAQUS python::
 
@@ -29,18 +29,18 @@ def read_odb(name, drive_nodeset):
     Returns
     -------
     list of ndarray
-        One ``[frame_value, RF_Real..., RF_Imag..., U_Real...]`` row per loaded frame, in
-        step order. ``frame_value`` is the frame's independent coordinate: frequency (Hz)
-        for a steady-state Dynamic step, step time for a Static step. Frames at frame value
-        0 (a perturbation base state, or the unloaded static initial frame) are skipped. A
-        Dynamic step gives one row per frequency; a Static step gives one row, its final
-        loaded frame. ``RF_Imag`` is zero for frames without conjugate data.
+        One ``[frame_value, RF_Real..., RF_Imag..., U_Real...]`` row per loaded frame, in step
+        order. ``frame_value`` is the frame's independent coordinate: frequency (Hz) for a
+        steady-state Dynamic step, step time for a Static step. Frames at frame value 0 (a
+        perturbation base state, or the unloaded static initial frame) are skipped. A Dynamic step
+        gives one row per frequency; a Static step gives one row, its final loaded frame.
+        ``RF_Imag`` is zero for frames without conjugate data.
 
     Raises
     ------
     RuntimeError
-        If no step has a loaded frame, or if the drive node set yields no U/RF values
-        (misnamed set or instance mismatch).
+        If no step has a loaded frame, or if the drive node set yields no U/RF values (misnamed set
+        or instance mismatch).
     """
     odb = openOdb(name + ".odb", readOnly=True)
     drive_nset = odb.rootAssembly.instances["PART-1-1"].nodeSets[drive_nodeset.upper()]

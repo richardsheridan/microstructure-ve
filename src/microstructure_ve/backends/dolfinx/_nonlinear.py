@@ -1,12 +1,12 @@
 """The drivers the nonlinear ``Static`` solvers share (``_plastic``, ``_hyperelastic``).
 
 ``modified_newton`` equilibrates the field at a fixed macro state; ``FreeLateralRamp`` ramps the
-macro state over increments and finds the free lateral entries by a root-find on the average
-stress. Each solver supplies its residual, Jacobian refresh and average stress; the iteration
-and its tolerances live here. ``FreeLateralRamp`` raises when an increment fails;
-``modified_newton`` reports convergence and leaves the raise to its caller, and the standard
-solvers, which have no free lateral entries, run their own increments around it.
-``periodic_row`` and ``face_row`` build the readODB row of a converged step.
+macro state over increments and finds the free lateral entries by a root-find on the average stress.
+Each solver supplies its residual, Jacobian refresh and average stress; the iteration and its
+tolerances live here. ``FreeLateralRamp`` raises when an increment fails; ``modified_newton``
+reports convergence and leaves the raise to its caller, and the standard solvers, which have no free
+lateral entries, run their own increments around it. ``periodic_row`` and ``face_row`` build the
+readODB row of a converged step.
 """
 from __future__ import annotations
 
@@ -35,17 +35,18 @@ def modified_newton(residual, refresh_jacobian, ksp, x, field, *, mpc=None, real
                     r_ref=0.0):
     """Drive ``residual`` to zero by modified Newton on ``field``, with step halving.
 
-    Each iteration solves ``J du = R`` and updates ``field <- field - du``. ``refresh_jacobian``
-    is called on the first correcting iteration and whenever an iteration shrinks the residual
-    by less than ``_FROZEN_RATIO``; in between, iterations reuse the current factorization. A step that grows the residual is halved back, at most
-    ``_MAX_HALVINGS`` times in a row: return-map branch switching can trap an undamped Newton
-    in a two-cycle. The converged answer is set by the residual and tolerance alone.
+    Each iteration solves ``J du = R`` and updates ``field <- field - du``. ``refresh_jacobian`` is
+    called on the first correcting iteration and whenever an iteration shrinks the residual by less
+    than ``_FROZEN_RATIO``; in between, iterations reuse the current factorization. A step that
+    grows the residual is halved back, at most ``_MAX_HALVINGS`` times in a row: return-map branch
+    switching can trap an undamped Newton in a two-cycle. The converged answer is set by the
+    residual and tolerance alone.
 
     Parameters
     ----------
     residual : callable
-        ``residual() -> PETSc.Vec``, the residual at the current ``field`` with its Dirichlet
-        rows set to the correction they impose.
+        ``residual() -> PETSc.Vec``, the residual at the current ``field`` with its Dirichlet rows
+        set to the correction they impose.
     refresh_jacobian : callable
         ``refresh_jacobian()`` brings the operator of ``ksp`` up to date with the iterate of the
         last ``residual`` call, or leaves it alone when it would not change.
@@ -56,17 +57,16 @@ def modified_newton(residual, refresh_jacobian, ksp, x, field, *, mpc=None, real
     field : dolfinx.fem.Function
         The iterate, updated in place.
     mpc : dolfinx_mpc.MultiPointConstraint, optional
-        The constraint whose reduced dofs ``x`` holds; without it ``x`` is in ``field``'s
-        layout.
+        The constraint whose reduced dofs ``x`` holds; without it ``x`` is in ``field``'s layout.
     real : bool
-        Hold ``field`` real, and treat a non-finite residual or one with an imaginary part as
-        an inverted element, backtracked like a growing residual.
+        Hold ``field`` real, and treat a non-finite residual or one with an imaginary part as an
+        inverted element, backtracked like a growing residual.
     r_ref : float
-        The convergence reference before this call. The call's first residual raises it to at
-        least that residual, and convergence is ``|R| <= _NEWTON_TOL + _NEWTON_RTOL * r_ref``.
-        A caller that passes the returned reference back in judges a warm-started re-solve,
-        which begins essentially converged, against the largest initial residual seen rather
-        than its own, so it does not grind to the absolute floor.
+        The convergence reference before this call. The call's first residual raises it to at least
+        that residual, and convergence is ``|R| <= _NEWTON_TOL + _NEWTON_RTOL * r_ref``. A caller
+        that passes the returned reference back in judges a warm-started re-solve, which begins
+        essentially converged, against the largest initial residual seen rather than its own, so it
+        does not grind to the absolute floor.
 
     Returns
     -------
@@ -183,15 +183,15 @@ def root_step(J, resid):
 class FreeLateralRamp:
     """Ramp a macro state over increments, solving its free entries for zero average stress.
 
-    The free entries are found by an outer root-find whose macro Jacobian is bootstrapped by
-    finite differences and kept current by Broyden rank-1 updates across outer iterations,
-    increments and calls. It is dropped when the set of free axes changes.
+    The free entries are found by an outer root-find whose macro Jacobian is bootstrapped by finite
+    differences and kept current by Broyden rank-1 updates across outer iterations, increments and
+    calls. It is dropped when the set of free axes changes.
 
     Parameters
     ----------
     free_index : callable
-        ``free_index(axis)`` is the index into the macro state of the entry conjugate to the
-        average normal stress on ``axis``.
+        ``free_index(axis)`` is the index into the macro state of the entry conjugate to the average
+        normal stress on ``axis``.
     """
 
     def __init__(self, free_index):
@@ -214,11 +214,11 @@ class FreeLateralRamp:
         n_incr : int
             The number of increments.
         equilibrate : callable
-            ``equilibrate(M) -> bool`` solves at macro state ``M`` and returns whether the
-            solve met its tolerance.
+            ``equilibrate(M) -> bool`` solves at macro state ``M`` and returns whether the solve met
+            its tolerance.
         average_stress : callable
-            ``average_stress(M)`` is the volume-averaged stress ``(dim, dim)`` of the last
-            solve at ``M``.
+            ``average_stress(M)`` is the volume-averaged stress ``(dim, dim)`` of the last solve at
+            ``M``.
         stress_scale : float
             The modulus that turns ``max |target|`` into the stress scale of ``_OUTER_TOL``.
         commit : callable, optional
@@ -278,9 +278,9 @@ class FreeLateralRamp:
 
     @staticmethod
     def _jacobian_fd(M, free_axes, idx, base_r, equilibrate, average_stress):
-        """FD bootstrap of the macro Jacobian: one warm-started solve per free entry, against
-        the residual ``base_r`` already converged at ``M``. No restore solve: the outer loop's
-        next solve re-converges from the perturbed warm start."""
+        """FD bootstrap of the macro Jacobian: one warm-started solve per free entry, against the
+        residual ``base_r`` already converged at ``M``. No restore solve: the outer loop's next
+        solve re-converges from the perturbed warm start."""
         n = len(free_axes)
         J = np.empty((n, n))
         for k, i in enumerate(idx):

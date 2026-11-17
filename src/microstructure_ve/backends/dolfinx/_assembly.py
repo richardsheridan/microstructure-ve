@@ -130,9 +130,9 @@ class MaterialFields:
     def set_moduli_elastic(self):
         """Fill mu/lambda from each material's real ``*Elastic`` modulus (``youngs``).
 
-        This is what a ``Static`` step uses: the frequency-domain ``*Viscoelastic`` table
-        applies only to steady-state dynamics, so a static step sees the real long-term
-        modulus and produces zero loss.
+        This is what a ``Static`` step uses: the frequency-domain ``*Viscoelastic`` table applies
+        only to steady-state dynamics, so a static step sees the real long-term modulus and produces
+        zero loss.
         """
         self._fill(self.youngs_cell.astype(complex))
 
@@ -141,13 +141,12 @@ class MaterialFields:
 class Forms:
     """Bilinear form ``a``, the symmetric unit-strain basis, per-mode RHS forms, and ``sig``.
 
-    ``modes`` is the ordered list of symmetric macro-strain components ``(i, j)`` with
-    ``i <= j``: the ``dim`` normals first, then the off-diagonal shears -- 3 in 2D
-    ((0,0),(1,1),(0,1)), 6 in 3D. ``unit_E[k]`` is the unit tensor for ``modes[k]`` (normal:
-    a 1 on the diagonal; shear: 1 in *both* off-diagonal slots, so its coefficient is the
-    tensor strain component ``E_ij``), and ``L_forms[k]`` its RHS source. The homogenizer
-    selects the active subset per loading; building the full basis here keeps the forms
-    mode-agnostic.
+    ``modes`` is the ordered list of symmetric macro-strain components ``(i, j)`` with ``i <= j``:
+    the ``dim`` normals first, then the off-diagonal shears -- 3 in 2D ((0,0),(1,1),(0,1)), 6 in 3D.
+    ``unit_E[k]`` is the unit tensor for ``modes[k]`` (normal: a 1 on the diagonal; shear: 1 in
+    *both* off-diagonal slots, so its coefficient is the tensor strain component ``E_ij``), and
+    ``L_forms[k]`` its RHS source. The homogenizer selects the active subset per loading; building
+    the full basis here keeps the forms mode-agnostic.
     """
 
     a_form: Any

@@ -13,8 +13,8 @@ Run under the fenicsx env::
 
     python tools/mechanical_mnist_parity.py --refine 1 2 3 --set all
 
-``--json PATH`` additionally writes the per-bitmap psi, reference and relative-error rows to
-PATH; pick a path under ``abaqus-work/`` or elsewhere untracked. Nothing is written by default.
+``--json PATH`` additionally writes the per-bitmap psi, reference and relative-error rows to PATH;
+pick a path under ``abaqus-work/`` or elsewhere untracked. Nothing is written by default.
 
 Results
 -------

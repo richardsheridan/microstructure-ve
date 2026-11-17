@@ -49,9 +49,9 @@ Per-section breakdown after the changes (default full mode, grid 50, no cProfile
     ksp_solve           13.602    71.0     411
     [sum] 18.198 s (94.9%); other 0.969 s (5.1%)
 
-Residual decay of the last _newton call (a warm-started re-solve) in each variant: confined
-0.0120 to 1.2e-7 over 6 iterations (geometric-mean ratio 0.041); free-lateral 1.3e-3 to
-3.8e-8 over 1 iteration (ratio 2.8e-5).
+Residual decay of the last _newton call (a warm-started re-solve) in each variant: confined 0.0120
+to 1.2e-7 over 6 iterations (geometric-mean ratio 0.041); free-lateral 1.3e-3 to 3.8e-8 over 1
+iteration (ratio 2.8e-5).
 
 The changes, in the order they were made:
 

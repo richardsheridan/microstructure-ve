@@ -1,9 +1,9 @@
 """ABAQUS ``.inp`` emission for the solver-neutral spec dataclasses.
 
-Each spec object is serialized by a ``functools.singledispatch`` ``emit`` handler. Container
-objects (``Simulation``, ``Model``, ``Step``, ``GridNodes``) recurse through ``emit``; a
-``Material`` dispatches on the type of its ``response`` (``emit_response``) and a
-``BoundaryCondition`` on the type of its ``constraint`` (``emit_constraint``).
+Each spec object is serialized by a ``functools.singledispatch`` ``emit`` handler. Container objects
+(``Simulation``, ``Model``, ``Step``, ``GridNodes``) recurse through ``emit``; a ``Material``
+dispatches on the type of its ``response`` (``emit_response``) and a ``BoundaryCondition`` on the
+type of its ``constraint`` (``emit_constraint``).
 """
 from __future__ import annotations
 
@@ -61,8 +61,8 @@ def write_inp(simulation, file_or_path):
     simulation : Simulation
         The spec to emit.
     file_or_path : str, path-like or text file
-        A path, opened for writing as ASCII and closed afterwards, or an already-open text
-        file, which is written to and left open.
+        A path, opened for writing as ASCII and closed afterwards, or an already-open text file,
+        which is written to and left open.
 
     Returns
     -------
@@ -154,8 +154,8 @@ def _(obj, f):
 def _emit_material_header(material, f):
     """Write the elset and the ``*Solid Section`` / ``*Material`` / ``*Density`` header.
 
-    The hyperelastic handlers follow it with ``*Hyperelastic`` instead of ``*Elastic``.
-    ``material`` supplies ``elset`` and ``density``.
+    The hyperelastic handlers follow it with ``*Hyperelastic`` instead of ``*Elastic``. ``material``
+    supplies ``elset`` and ``density``.
     """
     emit(material.elset, f)
     mc = material.elset.matl_code
@@ -182,9 +182,9 @@ def _emit_material_base(material, response, f, elastic_moduli=None):
     f : text file
         The deck being written.
     elastic_moduli : str, optional
-        Tags the keyword as ``*Elastic, moduli=<elastic_moduli>`` (``"LONG TERM"`` for a
-        Prony response, whose ``youngs``/``poisson`` are the relaxed moduli). ``None`` emits
-        the plain ``*Elastic``.
+        Tags the keyword as ``*Elastic, moduli=<elastic_moduli>`` (``"LONG TERM"`` for a Prony
+        response, whose ``youngs``/``poisson`` are the relaxed moduli). ``None`` emits the plain
+        ``*Elastic``.
     """
     _emit_material_header(material, f)
     mc = material.elset.matl_code
