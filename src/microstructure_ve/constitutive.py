@@ -233,6 +233,16 @@ _POLYNOMIAL_VALID_LENGTHS = {N * (N + 3) // 2: N for N in range(1, 7)}
 # {2:1, 5:2, 9:3, 14:4, 20:5, 27:6}
 
 
+def _check_supplied_d1(d):
+    """Raise ``ValueError`` unless the supplied ``d`` is absent or its D1 is positive and finite.
+
+    D1 = 2/K0, so a zero, negative or non-finite D1 has no compressible bulk modulus; higher Di
+    may be zero.
+    """
+    if d is not None and not (np.isfinite(d[0]) and d[0] > 0):
+        raise ValueError(f"D1 (d[0]) must be a positive finite number; got D1={d[0]!r}")
+
+
 @dataclass
 class ReducedPolynomial:
     """A reduced polynomial (Rivlin) hyperelastic response.
@@ -249,6 +259,7 @@ class ReducedPolynomial:
     K0 = 2*mu0*(1+nu) / (3*(1-2*nu))); higher Di (i>1) are set to zero, giving an
     ``effective d`` of length N = [D1, 0, ..., 0].  When ``d`` is supplied it is used
     verbatim and must have length N.
+    Its D1 must be a positive finite number; higher Di may be zero.
 
     ``poisson`` is required even when ``d`` is given: it feeds the small-strain
     duck-typed backend interface (``youngs``, ``complex_modulus``).
@@ -276,6 +287,7 @@ class ReducedPolynomial:
                 f"d must have length N={n} for ReducedPolynomial(N={n}); "
                 f"got len(d)={len(self.d)}"
             )
+        _check_supplied_d1(self.d)
 
     @property
     def n(self) -> int:
@@ -325,6 +337,7 @@ class Polynomial:
     parameter is illegal with data lines; compressibility is encoded through Di.  When ``d``
     is not given, D1 = 3*(1-2*nu) / (mu0*(1+nu)) and higher Di are zero (length N).  When
     ``d`` is supplied it must have length N.
+    Its D1 must be a positive finite number; higher Di may be zero.
 
     ``poisson`` is required even when ``d`` is given: it feeds ``youngs``/``complex_modulus``.
 
@@ -353,6 +366,7 @@ class Polynomial:
                 f"d must have length N={n} for Polynomial(N={n}); "
                 f"got len(d)={len(self.d)}"
             )
+        _check_supplied_d1(self.d)
 
     @property
     def n(self) -> int:
@@ -408,7 +422,7 @@ class ArrudaBoyce:
     **Compressibility:** the ABAQUS ``POISSON`` parameter is illegal with data lines.
     When ``d`` is not given, D1 = 3*(1-2*nu) / (mu0*(1+nu)) and the effective d is [D1]
     (single entry; ArrudaBoyce always has N=1 for the volumetric term).  When ``d`` is
-    supplied it must be a single-element list.
+    supplied it must be a single-element list whose D1 is a positive finite number.
 
     ``poisson`` is required even when ``d`` is given.
 
@@ -430,6 +444,7 @@ class ArrudaBoyce:
             raise ValueError(
                 f"ArrudaBoyce d must be a single-element list; got len(d)={len(self.d)}"
             )
+        _check_supplied_d1(self.d)
 
     @property
     def mu0(self) -> float:
