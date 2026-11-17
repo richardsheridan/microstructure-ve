@@ -92,8 +92,8 @@ elastic case matches ABAQUS **C3D8 to 6e-9** — and being elastic (no tabular i
 isolates the FE/homogenization as exact, locating the 2D 0.08% residual in the viscoelastic
 log-frequency table interpolation rather than the discretization.
 
-**Remaining follow-ups:**
-- **Frequency-level parallelism (recommended near-term lever).** The 30-frequency sweep is
+**Scaling directions** (frequency parallelism is implemented, §9; the others remain open):
+- **Frequency-level parallelism (implemented, §9).** The 30-frequency sweep is
   embarrassingly parallel — independent serial solves sharing one mesh. Splitting frequencies across
   cores (`multiprocessing`, or MPI ranks each owning a subset on their *own serial mesh*) gives
   near-linear speedup (~15 s → ~4 s on 4 cores) with **zero distributed-mesh rework**. Note: ABAQUS
@@ -156,10 +156,10 @@ The `.inp` emitter and the DOLFINx builder become two consumers of one constrain
 
 ### 4.1 Mesh: `GridNodes`/`GridElements` → `dolfinx.mesh.create_mesh` ✓
 
-- Coordinates: `np.indices(shape)[::-1] * scale`, raveled — same arrays `GridNodes.to_inp` writes.
-- Connectivity: the same slicing `GridElements.to_inp` uses, **without the counterclockwise swap**.
+- Coordinates: `np.indices(shape)[::-1] * scale`, raveled — the same arrays the ABAQUS emitter writes for `GridNodes` (`emit` in `backends/abaqus/_inp.py`).
+- Connectivity: the same slicing the ABAQUS emitter uses for `GridElements`, **without the counterclockwise swap**.
   DOLFINx quadrilaterals use tensor-product ("zigzag") vertex ordering — exactly what
-  `itertools.product` produces *before* the swap at `microstructure_ve.py` ~:119. Verified: mesh
+  `itertools.product` produces *before* the emitter's swap. Verified: mesh
   assembles with exact total area `(n·scale)²`.
 - **dolfinx 0.10 API trap:** `create_mesh(comm, cells, e, x)` — the coordinate element comes
   *before* the coordinates (0.9 had `(comm, cells, x, e)`). Smoke test hit this.
@@ -180,14 +180,16 @@ The backend solves only the full-integration types, `SOLVED_ELEMENT_TYPES` in
 `backends/dolfinx/_loading.py`; `run` refuses every other type with `NotImplementedError`. The
 ABAQUS backend still emits every type.
 
-### 4.3 Materials: `ElementSet` → DG0 fields; factor `complex_modulus(freqs)` out of `to_inp`
+### 4.3 Materials: `ElementSet` → DG0 fields; `complex_modulus(freqs)` shared by both backends
 
 - Per-pixel materials become cellwise-constant ("DG", 0) complex fields. **Must assign through
   `original_cell_index`** ✓: `dg0.x.array[:] = per_original_cell_values[oci]` (our element order is
   the raveled pixel order). Verified against `compute_midpoints` — naïve order silently scrambles
   the microstructure.
-- **Refactor prerequisite in `microstructure_ve.py`:** extract the master-curve evaluation from
-  `TabularViscoelasticMaterial.to_inp` into a reusable method, used by both backends:
+- **Shared master-curve evaluation:** the design extracted the master-curve evaluation from the
+  single-file layout's `.inp` writer into a reusable method, used by both backends. It is now
+  `TabularViscoelastic.complex_modulus` in `constitutive.py`, which interpolates in log10 frequency
+  (see its docstring); the proposal read:
 
   ```python
   def complex_modulus(self, freqs):
@@ -206,9 +208,10 @@ ABAQUS backend still emits every type.
   linearly in frequency between table points. The master curve (R10 data) is dense, and the
   `Dynamic` sweep should be evaluated with the same rule (`np.interp` on linear f, not log-f) to
   match. Quantify during implementation; if residual disagreement at low f exceeds tolerance,
-  this is the first suspect.
+  this is the first suspect. The shipped `complex_modulus` interpolates in log10 frequency
+  instead, and §0 attributes the remaining 2D 0.08% to this interpolation.
 - Constant real ν per material (the constant-ν normalization is already the only path
-  `to_inp` uses); density is not needed (§4.5).
+  the ABAQUS emitter uses); density is not needed (§4.5).
 
 ### 4.4 Constraints: PBC equations → `dolfinx_mpc` general constraints ✓
 
@@ -231,9 +234,9 @@ bcs=bcs, petsc_options={"ksp_type": "preonly", "pc_type": "lu"})`; constraint re
 
 - The reference corners (X0Y0, X1Y0, X0Y1) appear only as masters — same invariant
   `validate_constraints` enforces; a model that passes validation maps cleanly onto an MPC.
-- Scaling note (DONE): the coordinate-bytes dict API (`create_general_constraint`) re-locates
+- Constraint assembly cost: the coordinate-bytes dict API (`create_general_constraint`) re-locates
   every coordinate geometrically (a per-pair `sub().collapse()`), which profiling showed to be
-  ~94% of the matrix-test time and ~1.4 s per 3D `(5,5,5)` build. `periodic_mpc` now feeds the
+  ~94% of the matrix-test time and ~1.4 s per 3D `(5,5,5)` build. `periodic_mpc` therefore feeds the
   dof arrays straight to `mpc.add_constraint(V, slaves, masters, coeffs, owners, offsets)` using
   the structured `block_of_node` map (serial: master = `local_to_global(block)*bs + comp`,
   owner 0, one master per slave). Identical constraint (oracle parity unchanged), ~6x faster
@@ -294,7 +297,7 @@ integration. On a coarse RVE these differ beyond solver tolerance, so the tight 
 Reduced integration was never matched, so the backend refuses `CPE4R` and `C3D8R` outright
 instead of solving them at full integration (§4.2).
 
-## 6. Verification protocol (for the implementation PR)
+## 6. Verification protocol
 
 Same physical-observable strategy as the PBC swap (`.inp`-text equivalence is meaningless across
 solvers; `E*(f)` is the oracle):
@@ -317,14 +320,17 @@ solvers; `E*(f)` is the oracle):
   reorders cells in serial. Pin the env; re-run the smoke suite on any dolfinx upgrade.
 - **Tabular interpolation parity** (§4.3) — most likely source of small `E*(f)` mismatch.
 - **MPC + complex at scale** — validated at toy scale; the 198-equation example is the real test.
-  Fall back to `mpc_data` arrays if the coordinate-dict API gets slow on big grids.
+  Fall back to `mpc_data` arrays if the coordinate-dict API gets slow on big grids (it did;
+  `periodic_mpc` uses dof arrays, §4.4).
 - **Serial-first** — the node↔dof and `original_cell_index` mappings as designed assume one rank.
   MPI distribution renumbers locally; out of scope for the parity milestone (declare backend
   serial-only initially).
 - **Units** — the implied system (µm, MPa, kg/µm³) is consistent for quasi-statics; revisit only
   if inertia or non-harmonic dynamics are ever added.
 
-## 8. Milestone plan (example.py parity)
+## 8. Implementation sequence (example.py parity)
+
+The backend was built in this order:
 
 1. `complex_modulus(freqs)` factoring in `microstructure_ve.py` + `CPE4` in `GridElements`
    (+ regenerate nothing; `.inp` unaffected — verify byte-identical example.inp).
@@ -333,7 +339,7 @@ solvers; `E*(f)` is the oracle):
 4. Frequency loop + σ̄ observable + tsv writer.
 5. `example_dolfinx.py` mirroring `example.py`; run protocol §6; commit oracle + results.
 
-Each step has an isolated check; nothing merges until §6 passes end-to-end.
+Each step had an isolated check, and §6 was the end-to-end acceptance check.
 
 ## 9. Parallel frequency sweep — benchmark results
 
@@ -410,7 +416,7 @@ hypre are real-only and the operator is complex — so the adopted solver is pla
 GMRES, with no nullspace.
 
 **Benchmark** (per-frequency `solve_one`, one BLAS thread; reproducer `tools/bench_solvers.py`,
-recorded calibration `tools/bench_solvers_results.json`):
+whose module docstring records the current calibration under Results):
 
 | dim | ndof | LU (s) | GMRES+ILU (s) | iter/LU | outcome |
 | --- | --- | --- | --- | --- | --- |
@@ -436,11 +442,11 @@ frequency-parallel benchmark — spawn/init/steady — unrelated to this LU-vs-i
 ## 11. Multi-step sweep parallelism (deferred)
 
 `run(workers=N)` fans only the **single-step** frequency sweep across processes (§9); the multi-step
-path (`_run_multistep`) is serial. Extending the fan-out is **deferred** until the history-dependent
-material models (`hyperelastic_plastic`, `viscoelastic_transient`) land, because the correct
-granularity depends on physics not yet implemented.
+path (`_run_multistep`) is serial. Extending the fan-out is **deferred**: plasticity (§12) runs as one
+sequential chain, and the correct granularity for further history-dependent models (transient
+viscoelasticity) depends on physics not yet implemented.
 
-Planned approach when resumed:
+Proposed approach:
 - **Backend physics classifier decides what may parallelize.** Frequency-domain / linear-elastic
   solves are mutually independent (fan out freely); history-dependent physics is not — plasticity
   carries hysteresis state *across* steps, transient viscoelasticity evolves internal state in time,
