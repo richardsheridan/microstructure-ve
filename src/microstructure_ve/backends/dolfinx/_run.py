@@ -116,7 +116,10 @@ def _fe_problem(geom, model, bbar):
 def build_solver(sim, bbar=True, cancel=None, petsc_options=None, solver="auto"):
     """Build the FE solver for ``sim``; return ``(solve_one, dim)``.
 
-    ``solve_one(f)`` returns the readODB-style row for one frequency. The mesh-only setup
+    ``solve_one(f)`` returns the readODB-style row for one frequency, at each material's
+    complex modulus ``E*(f)`` even when the sim's step is Static; ``solve_one(f, elastic=True)``
+    solves with the real elastic moduli instead, as ``run`` does for a Static step.
+    The mesh-only setup
     (mesh, dof map, forms, MPC/BCs, factorizable matrix) is cached by mesh shape and reused
     across cells (see ``_fe_problem``); only the per-cell material mapping and the
     per-frequency matrix values are refilled.
@@ -210,10 +213,14 @@ def _row_header(dim):
 
 def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
         petsc_options=None, n_incr=None, return_energy=False):
-    """Solve ``sim`` over its frequency sweep; one row per frequency, ``(n_freq, 1+3*dim)``.
+    """Solve ``sim``; one row per frequency of a Dynamic step and one per Static step.
 
     Everything about the *problem* is read from ``sim`` -- there are no physics kwargs.
-    The frequencies come from ``spec.frequencies``; the macro loading (driven axis/mode and
+    The rows are ordered by step, ``(n_rows, 1+3*dim)``. A Dynamic step sweeps its frequencies
+    (``spec.frequencies``) at each material's complex modulus ``E*(f)``. A Static step that is
+    neither plastic nor hyperelastic solves once with each material's real elastic modulus
+    (``youngs``), so its row has zero loss, whether it is the sim's only step or one of several.
+    The macro loading (driven axis/mode and
     the free vs held lateral components) is parsed from the corner BCs and the step drive(s)
     by ``_loading.macro_loading``; the zero-amplitude baseline ``Prescribed`` condition
     in ``model.bcs`` is the ABAQUS path's convention (see ``example.py``). The remaining
@@ -297,7 +304,7 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     loadingmod.check_supported(sim)
 
     energies = None
-    if len(list(sim.steps)) > 1 or _has_plastic_static(sim) or _has_hyperelastic_static(sim):
+    if len(list(sim.steps)) > 1 or _has_static(sim):
         with _BACKEND_LOCK:
             out = _run_multistep(sim, bbar, cancel, solver, petsc_options, n_incr,
                                  collect_energy=return_energy)
@@ -336,31 +343,22 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
 
 
 def _run_serial_sweep(sim, freqs, bbar, cancel, solver, petsc_options):
-    from microstructure_ve.steps import Dynamic
-
     solve_one, _ = build_solver(sim, bbar, cancel=cancel,
                                 petsc_options=petsc_options, solver=solver)
-    # A step without a Dynamic subsection is Static (spec.frequencies): real *Elastic moduli.
-    elastic = spec.find(sim.steps[0].subsections, Dynamic) is None
     rows = []
     for f in freqs:
         if cancel is not None and cancel():
             raise Cancelled("cancelled by callback")
-        rows.append(solve_one(f, elastic=elastic))
+        rows.append(solve_one(f))
     return np.array(rows)
 
 
-def _has_plastic_static(sim):
-    """True iff ``sim`` carries a ``Plastic`` response and a ``Static`` step (numpy-only check).
+def _has_static(sim):
+    """True iff any step of ``sim`` carries a ``Static`` subsection (numpy-only check).
 
-    Such a Static step needs the nonlinear return-mapping solve (``_plastic``) instead of the
-    linear elastic ``solve_one``; a Dynamic step over the same materials stays linear (the
-    *Plastic table is irrelevant to a steady-state perturbation)."""
-    from microstructure_ve.constitutive import Plastic
+    Such a step is solved once by ``_run_multistep``, never swept over frequencies."""
     from microstructure_ve.steps import Static
 
-    if not any(isinstance(m.response, Plastic) for m in sim.model.materials):
-        return False
     return any(any(isinstance(s, Static) for s in step.subsections) for step in sim.steps)
 
 
@@ -374,16 +372,13 @@ def _has_hyperelastic_static(sim):
 
     Such a step needs the finite-strain total-Lagrangian solve (``_hyperelastic``) instead
     of the linear elastic ``solve_one``."""
-    from microstructure_ve.steps import Static
-
-    if not _has_hyperelastic(sim.model):
-        return False
-    return any(any(isinstance(s, Static) for s in step.subsections) for step in sim.steps)
+    return _has_hyperelastic(sim.model) and _has_static(sim)
 
 
 def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_incr=None,
                    collect_energy=False):
-    """Sweep a multi-step sim step-by-step, emitting rows in the ABAQUS reader's order (per
+    """Solve a multi-step sim, or any sim with a ``Static`` step, step by step, emitting rows
+    in the ABAQUS reader's order (per
     step, then per frame): a ``Static`` step contributes one row (zero loss) at frame value 1.0
     -- elastic (real ``*Elastic`` moduli) or, if a ``Plastic`` response is present, the nonlinear
     J2 return-mapping solve (``_plastic``) -- and a ``Dynamic`` step one row per swept frequency
