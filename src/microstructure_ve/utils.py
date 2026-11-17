@@ -13,6 +13,20 @@ import numpy as np
 def in_sorted(arr, val):
     """Determine if val is contained in arr, assuming arr is sorted.
 
+    Parameters
+    ----------
+    arr : ndarray
+        A 1D array sorted ascending.
+    val : scalar
+        The value to look for.
+
+    Returns
+    -------
+    bool or numpy.bool_
+        Whether ``val`` is an element of ``arr``.
+
+    Examples
+    --------
     >>> import numpy as np
     >>> from microstructure_ve.utils import in_sorted
     >>> arr = np.array([1, 3, 5, 7])
@@ -31,11 +45,19 @@ def in_sorted(arr, val):
 
 
 def load_matlab_microstructure(matfile, var_name):
-    """Load the microstructure in .mat file into a 2D boolean ndarray.
-    @para: matfile --> the file name of the microstructure
-           var_name --> the name of the variable in the .mat file
-                        that contains the 2D microstructure 0-1 matrix.
-    @return: 2D ndarray dtype=bool
+    """Load a microstructure variable from a MATLAB ``.mat`` file.
+
+    Parameters
+    ----------
+    matfile : str or path-like
+        The ``.mat`` file holding the microstructure.
+    var_name : str
+        The name of the variable that holds the 2D 0-1 microstructure matrix.
+
+    Returns
+    -------
+    ndarray
+        The variable as ``scipy.io.loadmat`` reads it, dtype as stored in the file.
     """
     from scipy.io import loadmat
 
@@ -45,17 +67,20 @@ def load_matlab_microstructure(matfile, var_name):
 def assign_intph(microstructure: np.ndarray, num_layers_list: List[int]) -> np.ndarray:
     """Generate interphase layers around the particles.
 
-    Microstructure must have at least one zero value.
+    Parameters
+    ----------
+    microstructure : ndarray
+        The microstructure array. Particles must be zero, matrix must be nonzero, and at
+        least one pixel must be zero.
+    num_layers_list : list of int
+        The interphase thicknesses in pixels, as distances from the particles. They are
+        sorted, so the order given does not matter.
 
-    :rtype: numpy.ndarray
-    :param microstructure: The microstructure array. Particles must be zero,
-        matrix must be nonzero.
-    :type microstructure: numpy.ndarray
-
-    :param num_layers_list: The list of interphase thickness in pixels. The order of
-        the layer values is based on the sorted distances in num_layers_list from
-        the particles (near particles -> far from particles)
-    :type num_layers_list: List(int)
+    Returns
+    -------
+    ndarray of uint8
+        0 on particles, 1 within the thinnest layer, rising by one past each thickness, so
+        ``len(num_layers_list) + 1`` marks the matrix beyond every layer.
     """
     from scipy.ndimage import distance_transform_edt
 
@@ -71,17 +96,20 @@ def periodic_assign_intph(
 ) -> np.ndarray:
     """Generate interphase layers around the particles with periodic BC.
 
-    Microstructure must have at least one zero value.
+    Distances are measured across the periodic boundary: the image is tiled 3 times per
+    axis, layered with ``assign_intph``, and the central tile is returned.
 
-    :rtype: numpy.ndarray
-    :param microstructure: The microstructure array. Particles must be zero,
-        matrix must be nonzero.
-    :type microstructure: numpy.ndarray
+    Parameters
+    ----------
+    microstructure : ndarray
+        As for ``assign_intph``.
+    num_layers_list : list of int
+        As for ``assign_intph``.
 
-    :param num_layers_list: The list of interphase thickness in pixels. The order of
-        the layer values is based on the sorted distances in num_layers_list from
-        the particles (near particles -> far from particles)
-    :type num_layers_list: List(int)
+    Returns
+    -------
+    ndarray of uint8
+        As for ``assign_intph``, shaped like ``microstructure``.
     """
     tiled = np.tile(microstructure, (3,) * microstructure.ndim)
     intph_tiled = assign_intph(tiled, num_layers_list)
@@ -96,15 +124,36 @@ def refine_matl_img(matl_img, scale, refine):
     """Split each pixel into ``refine**ndim`` identical-material pixels, keeping the
     physical domain size by returning the correspondingly reduced scale.
 
-    Returns ``(refined_img, scale / refine)`` -- always use both together: pairing the
-    upsampled image with the original scale (or vice versa) describes a physically
-    different, refine-times-larger domain, and nothing downstream can detect that.
-
     Refinement multiplies pixel counts, so pixel-unit image processing is order-
-    sensitive: apply ``assign_intph``/``periodic_assign_intph`` BEFORE refining to keep
+    sensitive: apply ``assign_intph``/``periodic_assign_intph`` before refining to keep
     layer thicknesses in original-pixel units (refining first makes a ``num_layers=n``
     interphase n/refine original pixels thin).
 
+    Parameters
+    ----------
+    matl_img : array_like
+        The material image.
+    scale : float
+        The node spacing of ``matl_img``.
+    refine : int
+        Pixels per original pixel along each axis; a positive integer.
+
+    Returns
+    -------
+    refined_img : ndarray
+        ``matl_img`` itself (as an array) when ``refine == 1``.
+    refined_scale : float
+        ``scale / refine``. Always use it together with ``refined_img``: pairing the
+        upsampled image with the original scale (or vice versa) describes a physically
+        different, refine-times-larger domain, and nothing downstream can detect that.
+
+    Raises
+    ------
+    ValueError
+        If ``refine`` is not a positive integer.
+
+    Examples
+    --------
     >>> import numpy as np
     >>> from microstructure_ve.utils import refine_matl_img
     >>> img, scale = refine_matl_img(np.array([[0, 5], [7, 0]]), 1.0, 2)
@@ -127,10 +176,22 @@ def refine_matl_img(matl_img, scale, refine):
 
 
 def load_viscoelasticity(matrl_name):
-    """load VE data from a text file according to ABAQUS requirements
+    """Load a viscoelastic modulus table from a text file, sorted by frequency.
 
-    mainly the frequency array needs to be strictly increasing, but also having
-    the storage/loss data in complex numbers helps our calculations.
+    ABAQUS needs the frequency table increasing; the storage and loss moduli are combined
+    into one complex modulus.
+
+    Parameters
+    ----------
+    matrl_name : str or path-like
+        A whitespace-delimited file with columns frequency, storage modulus, loss modulus.
+
+    Returns
+    -------
+    freq : ndarray
+        The frequencies, ascending.
+    youngs : ndarray of complex
+        ``storage + 1j * loss`` at each of ``freq``.
     """
     freq, youngs_real, youngs_imag = np.loadtxt(matrl_name, unpack=True)
     youngs = np.empty_like(youngs_real, dtype=complex)

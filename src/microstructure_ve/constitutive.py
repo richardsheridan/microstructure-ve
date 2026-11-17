@@ -1,11 +1,12 @@
 """Constitutive responses: the backend-neutral *physics* a ``Material`` has-a.
 
 Each response is a small, standalone dataclass carrying the elastic constants it needs
-(``poisson``/``youngs``, the long-term / relaxed moduli) plus the one query both backends
-consume: ``complex_modulus(freqs)`` -> the complex Young's modulus E*(f). There is no
-inheritance between responses -- a ``Material`` composes one of them (``Material.response``),
-so adding a new physics is a new dataclass here plus one ABAQUS emit registration, and
-touches no other backend. The ABAQUS backend also reads the tabular helpers
+(``poisson``/``youngs``, the long-term / relaxed moduli) plus the query the DOLFINx backend's
+linear path consumes: ``complex_modulus(freqs)`` -> the complex Young's modulus E*(f). There
+is no inheritance between responses -- a ``Material`` composes one of them
+(``Material.response``), so adding a new physics is a new dataclass here plus one ABAQUS emit
+registration; the DOLFINx backend handles ``Plastic`` and the hyperelastic responses by type.
+The ABAQUS backend also reads the tabular helpers
 (``apply_shift`` / ``normalize_constant_nu_modulus``) to build its ``*Viscoelastic`` table.
 """
 from __future__ import annotations
@@ -28,11 +29,21 @@ def _d1_from_poisson(mu0: float, nu: float) -> float:
 
         D1 = 3*(1-2*nu) / (mu0*(1+nu))
 
-    Note that the ABAQUS ``*HYPERELASTIC`` keyword's ``POISSON`` parameter is *illegal* when
-    coefficients are given on data lines.  Compressibility must therefore be expressed via the
-    Di data-line entries.  ``poisson`` here is converted to D1 (and Di>1 set to zero) unless
-    the caller supplies ``d`` explicitly.  ``poisson``/``youngs`` also serve the small-strain
-    duck-typed backend interface (DOLFINx / complex_modulus).
+    The ABAQUS ``*HYPERELASTIC`` keyword's ``POISSON`` parameter is *illegal* when
+    coefficients are given on data lines, so a hyperelastic response's ``poisson`` reaches
+    the deck through this D1.
+
+    Parameters
+    ----------
+    mu0 : float
+        Small-strain shear modulus.
+    nu : float
+        Poisson's ratio, below 0.5.
+
+    Returns
+    -------
+    float
+        D1.
     """
     return 3.0 * (1.0 - 2.0 * nu) / (mu0 * (1.0 + nu))
 
@@ -41,10 +52,18 @@ def _d1_from_poisson(mu0: float, nu: float) -> float:
 class Elastic:
     """A linear-elastic (frequency-flat) response.
 
-    ``poisson`` is Poisson's ratio and ``youngs`` the Young's modulus in MPa. The complex
-    modulus is frequency-independent, so every entry is just ``youngs`` as a complex number,
-    shaped like ``freqs``:
+    The complex modulus is frequency-independent, so every entry is just ``youngs`` as a
+    complex number, shaped like ``freqs``.
 
+    Parameters
+    ----------
+    poisson : float
+        Poisson's ratio.
+    youngs : float
+        Young's modulus in MPa.
+
+    Examples
+    --------
     >>> import numpy as np
     >>> from microstructure_ve.constitutive import Elastic
     >>> Elastic(poisson=0.3, youngs=5.0).complex_modulus(np.array([1e0, 1e3, 1e6]))
@@ -65,9 +84,24 @@ class Plastic:
 
     The elastic part is the linear-elastic ``youngs``/``poisson`` (the ``*Elastic`` block);
     plasticity adds a hardening table of (yield stress, plastic strain) pairs that ABAQUS reads
-    as a ``*Plastic`` block. The two lists are the table columns and must be the same length.
-    Plasticity is amplitude/path-dependent, not frequency-dependent, so ``complex_modulus`` is
-    the frequency-flat ``youngs`` (same as ``Elastic``).
+    as a ``*Plastic`` block. Plasticity is amplitude/path-dependent, not frequency-dependent,
+    so ``complex_modulus`` is the frequency-flat ``youngs`` (same as ``Elastic``).
+
+    Parameters
+    ----------
+    poisson : float
+        Poisson's ratio.
+    youngs : float
+        Young's modulus in MPa.
+    yield_stress : list of float
+        Von-Mises yield stress in MPa at each hardening point.
+    plastic_strain : list of float
+        Equivalent plastic strain at each hardening point (the first usually 0).
+
+    Raises
+    ------
+    ValueError
+        If the two table columns differ in length.
     """
 
     poisson: float
@@ -91,10 +125,22 @@ class Plastic:
 class TabularViscoelastic:
     """A tabulated frequency-domain viscoelastic response.
 
-    ``youngs`` is the long-term (relaxed) modulus feeding the ABAQUS ``*Elastic`` keyword;
-    ``freq``/``youngs_cplx`` are the measured complex Young's modulus table, and
-    ``shift``/``left_broadening``/``right_broadening`` shift and broaden it about the tan(delta)
-    peak. Assumes a frequency-independent Poisson ratio.
+    Assumes a frequency-independent Poisson ratio.
+
+    Parameters
+    ----------
+    poisson : float
+        Poisson's ratio.
+    youngs : float
+        The long-term (relaxed) modulus in MPa, feeding the ABAQUS ``*Elastic`` keyword.
+    freq : ndarray
+        Excitation frequencies of the measured table, in Hz.
+    youngs_cplx : ndarray of complex
+        The measured complex Young's modulus at each of ``freq``.
+    shift : float
+        Shift of the table in log10(frequency) relative to the nominal properties.
+    left_broadening, right_broadening : float
+        Broadening factors of the table below and above the tan(delta) peak; 1 is none.
     """
 
     poisson: float
@@ -106,9 +152,15 @@ class TabularViscoelastic:
     right_broadening: float = 1.0  # 1 is no broadening
 
     def apply_shift(self):
-        """Apply shift and broadening factors to frequency.
+        """Apply the shift and broadening factors to ``freq``.
 
-        left and right refer to frequencies below and above tand peak"""
+        Returns
+        -------
+        ndarray
+            The table frequencies, each moved by ``-shift`` decades and then scaled in
+            log10(frequency) about the tan(delta) peak by ``left_broadening`` below the peak
+            and ``right_broadening`` from it upward.
+        """
         freq = np.log10(self.freq) - self.shift
 
         # shift relative to tand peak; guard the division so a zero storage modulus
@@ -127,9 +179,17 @@ class TabularViscoelastic:
         return 10**freq
 
     def normalize_constant_nu_modulus(self):
-        # special normalized bulk modulus used by abaqus
-        # if poisson's ratio is frequency-independent, then
-        # youngs=shear=bulk when normalized
+        """The normalized shear and bulk moduli of the ABAQUS ``*Viscoelastic`` table.
+
+        With a frequency-independent Poisson ratio, Young's, shear and bulk moduli coincide
+        once normalized, so both returned arrays are the same object.
+
+        Returns
+        -------
+        wgstar, wkstar : ndarray of complex
+            omega*g* = loss / E0 + 1j * (1 - storage / E0), with E0 the storage modulus of
+            the first table row.
+        """
         wgstar = np.empty_like(self.youngs_cplx)
         youngs_inf = self.youngs_cplx[0].real
         wgstar.real = self.youngs_cplx.imag / youngs_inf
@@ -147,6 +207,16 @@ class TabularViscoelastic:
         We mirror that: interpolate omega-g-star onto ``freqs`` and rescale by
         ``self.youngs``. Interpolation is in log10(frequency) since the table spans
         many decades. Inverts ``normalize_constant_nu_modulus``.
+
+        Parameters
+        ----------
+        freqs : array_like
+            Frequencies in Hz.
+
+        Returns
+        -------
+        ndarray of complex
+            E* at each of ``freqs``.
         """
         wgstar, _ = self.normalize_constant_nu_modulus()
         table_freq = self.apply_shift()
@@ -163,15 +233,27 @@ class TabularViscoelastic:
 class PronyViscoelastic:
     """A generalized-Maxwell (Prony series) viscoelastic response.
 
-    ``youngs``/``poisson`` are the **long-term (relaxed)** elastic constants; the series adds
-    one Maxwell arm per entry: ``shear_modulus_coefficients`` (G_i) and
-    ``bulk_modulus_coefficients`` (K_i) are the *absolute* moduli of each arm and
-    ``relaxation_times`` (tau_i) their time constants -- the three arrays share one length.
-    The ABAQUS backend emits these as a ``*Viscoelastic, frequency=PRONY`` block (ratios
-    relative to the instantaneous moduli, with ``*Elastic, moduli=LONG TERM``); the DOLFINx
-    backend consumes ``complex_modulus`` below.
+    The series adds one Maxwell arm per entry of the three coefficient arrays, which share
+    one length. The ABAQUS backend emits these as a ``*Viscoelastic, frequency=PRONY`` block
+    (ratios relative to the instantaneous moduli, with ``*Elastic, moduli=LONG TERM``); the
+    DOLFINx backend consumes ``complex_modulus`` below.
 
-    Note: the DOLFINx backend assumes a **frequency-independent Poisson ratio** (as its
+    Parameters
+    ----------
+    poisson : float
+        The long-term (relaxed) Poisson's ratio.
+    youngs : float
+        The long-term (relaxed) Young's modulus in MPa.
+    shear_modulus_coefficients : ndarray
+        G_i, the absolute shear modulus of each arm.
+    bulk_modulus_coefficients : ndarray
+        K_i, the absolute bulk modulus of each arm.
+    relaxation_times : ndarray
+        tau_i, the time constant of each arm.
+
+    Notes
+    -----
+    The DOLFINx backend assumes a **frequency-independent Poisson ratio** (as its
     tabular path does), so it faithfully solves only constant-nu Prony materials -- those
     whose bulk arms are proportional to the shear arms (``K_i/K_inf == G_i/G_inf``). ABAQUS
     handles the general (frequency-dependent-nu) case.
@@ -195,9 +277,20 @@ class PronyViscoelastic:
 
         (same for ``K*`` with the bulk coefficients), evaluated at angular frequency
         ``w = 2 pi f``, then recombined into ``E* = 9 K* G* / (3 K* + G*)``. With no
-        Prony terms this reduces to the frequency-flat elastic ``youngs``. Returns a
-        complex array shaped like ``freqs``.
+        Prony terms this reduces to the frequency-flat elastic ``youngs``.
 
+        Parameters
+        ----------
+        freqs : array_like
+            Frequencies in Hz.
+
+        Returns
+        -------
+        ndarray of complex
+            E* shaped like ``freqs``.
+
+        Examples
+        --------
         >>> import numpy as np
         >>> from microstructure_ve.constitutive import PronyViscoelastic
         >>> resp = PronyViscoelastic(
@@ -265,6 +358,21 @@ class ReducedPolynomial:
     duck-typed backend interface (``youngs``, ``complex_modulus``).
 
     ABAQUS keyword: ``*HYPERELASTIC, REDUCED POLYNOMIAL, N=<n>``
+
+    Parameters
+    ----------
+    c : list of float
+        [C10, C20, ..., CN0], length 1 to 6.
+    poisson : float
+        Small-strain Poisson's ratio, below 0.5.
+    d : list of float, optional
+        [D1, ..., DN]; derived from ``poisson`` when omitted.
+
+    Raises
+    ------
+    ValueError
+        If ``poisson >= 0.5``, ``c`` has a length outside 1 to 6, ``d`` has a length other than
+        N, or ``d``'s D1 is not positive and finite.
     """
 
     c: list  # [C10, C20, ..., CN0]; len must be 1..6
@@ -342,6 +450,21 @@ class Polynomial:
     ``poisson`` is required even when ``d`` is given: it feeds ``youngs``/``complex_modulus``.
 
     ABAQUS keyword: ``*HYPERELASTIC, POLYNOMIAL, N=<n>``
+
+    Parameters
+    ----------
+    c : list of float
+        The coefficients in ABAQUS data-line order, a valid length for N = 1 to 6.
+    poisson : float
+        Small-strain Poisson's ratio, below 0.5.
+    d : list of float, optional
+        [D1, ..., DN]; derived from ``poisson`` when omitted.
+
+    Raises
+    ------
+    ValueError
+        If ``poisson >= 0.5``, ``c`` has an invalid length, ``d`` has a length other than N, or
+        ``d``'s D1 is not positive and finite.
     """
 
     c: list  # ABAQUS data-line order; len must be in {2,5,9,14,20,27}
@@ -427,6 +550,23 @@ class ArrudaBoyce:
     ``poisson`` is required even when ``d`` is given.
 
     ABAQUS keyword: ``*HYPERELASTIC, ARRUDA-BOYCE``
+
+    Parameters
+    ----------
+    mu : float
+        Initial shear modulus parameter in MPa.
+    lm : float
+        Locking stretch (chain extensibility limit), dimensionless > 0.
+    poisson : float
+        Small-strain Poisson's ratio, below 0.5.
+    d : list of float, optional
+        [D1]; derived from ``poisson`` when omitted.
+
+    Raises
+    ------
+    ValueError
+        If ``poisson >= 0.5``, ``d`` is not a single-element list, or its D1 is not positive
+        and finite.
     """
 
     mu: float    # initial shear modulus parameter, MPa
@@ -487,7 +627,7 @@ class NeoHookean:
 
         psi = mu/2*(I1 - 3) - mu*ln(J) + lam/2*((J**2 - 1)/2 - ln(J))
 
-    with the FULL first invariant I1 = tr(F^T F) (F embedded 3x3, F33 = 1 in plane
+    with the full first invariant I1 = tr(F^T F) (F embedded 3x3, F33 = 1 in plane
     strain) -- unlike the ABAQUS-convention classes above, whose deviatoric parts use
     the isochoric I1bar = J**(-2/3)*I1. ``mu0`` and ``lam`` are the classical Lame
     parameters of (``youngs``, ``poisson``); the coupled form linearizes to exactly
@@ -498,6 +638,18 @@ class NeoHookean:
     equivalent to ``ReducedPolynomial(c=[mu0/2], poisson=poisson)``): identical
     small-strain E, nu and initial bulk modulus, diverging only at finite strain.
     The DOLFINx backend solves the coupled form exactly.
+
+    Parameters
+    ----------
+    poisson : float
+        Small-strain Poisson's ratio, below 0.5.
+    youngs : float
+        Small-strain Young's modulus in MPa.
+
+    Raises
+    ------
+    ValueError
+        If ``poisson >= 0.5``.
     """
 
     poisson: float

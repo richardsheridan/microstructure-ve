@@ -1,6 +1,6 @@
 """Analysis steps and the top-level model / simulation containers (pure data).
 
-``Model`` still runs ``validate_constraints`` at construction so the over-constraint
+``Model`` runs ``validate_constraints`` at construction so the over-constraint
 guarantee holds for every backend.
 """
 from __future__ import annotations
@@ -15,19 +15,37 @@ from .materials import Material
 
 @dataclass
 class Heading:
+    """The free text of the deck's ``*Heading``."""
+
     text: str = ""
 
 
 @dataclass
 class Static:
-    """Data for an static subsection of a Step"""
+    """A static analysis subsection of a Step.
+
+    Parameters
+    ----------
+    long_term : bool
+        Request the long-term (fully relaxed) static response.
+    """
 
     long_term: bool = False
 
 
 @dataclass
 class Dynamic:
-    """Data for a STEADY STATE DYNAMICS subsection of a Step"""
+    """A STEADY STATE DYNAMICS (harmonic sweep) subsection of a Step.
+
+    Parameters
+    ----------
+    f_initial, f_final : float
+        The frequency range in Hz.
+    f_count : int
+        The number of frequency points in the range.
+    bias : int
+        The ABAQUS bias parameter for the spacing of those points.
+    """
 
     f_initial: float
     f_final: float
@@ -39,11 +57,16 @@ class Dynamic:
 class Step:
     """A block representing a change in boundary conditions to induce a response.
 
-    ``subsections`` is an ordered iterable of the step's contents -- an analysis type
-    (``Static`` / ``Dynamic``) together with the step-level boundary conditions
-    (e.g. the ``Prescribed`` drive ``BoundaryCondition``). ``perturbation`` adds the
-    ``,PERTURBATION`` flag (used for the harmonic steady-state sweep). ``nlgeom`` adds
-    ``nlgeom=YES`` (required for finite-strain / hyperelastic analyses).
+    Parameters
+    ----------
+    subsections : iterable
+        The step's contents in order: an analysis type (``Static`` / ``Dynamic``) together
+        with the step-level boundary conditions (e.g. the ``Prescribed`` drive
+        ``BoundaryCondition``).
+    perturbation : bool
+        Add the ``,PERTURBATION`` flag (used for the harmonic steady-state sweep).
+    nlgeom : bool
+        Add ``nlgeom=YES`` (required for finite-strain / hyperelastic analyses).
     """
 
     subsections: Iterable
@@ -53,6 +76,24 @@ class Step:
 
 @dataclass
 class Model:
+    """The mesh, materials and model-level constraints of a simulation.
+
+    Parameters
+    ----------
+    nodes : GridNodes
+    elements : GridElements
+    materials : iterable of Material
+    bcs : iterable of BoundaryCondition or PeriodicBoundaryConstraint
+        Constraints that hold in every step.
+    nsets : iterable of NodeSet
+        Extra node sets beyond those of ``nodes``.
+
+    Raises
+    ------
+    ValueError
+        If ``bcs`` over-constrain a DOF (``validate_constraints``).
+    """
+
     nodes: GridNodes
     elements: GridElements
     materials: Iterable[Material]
@@ -65,6 +106,8 @@ class Model:
 
 @dataclass
 class Simulation:
+    """A model, an optional heading and the steps run on it in order."""
+
     model: Model
     heading: Optional[Heading] = None
     steps: Iterable[Step] = ()

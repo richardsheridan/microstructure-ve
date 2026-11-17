@@ -21,8 +21,10 @@ from .core import GridNodes, NodeSet, _node_array
 class Fixed:
     """Pin (zero) the given DOFs of the target.
 
-    ``dofs`` is an iterable of 1-indexed DOFs (1=x, 2=y, 3=z). E.g. pin a node
-    in-plane: ``Fixed(dofs=[1, 2])``.
+    Parameters
+    ----------
+    dofs : iterable of int
+        1-indexed DOFs (1=x, 2=y, 3=z). E.g. pin a node in-plane: ``Fixed(dofs=[1, 2])``.
     """
 
     dofs: Iterable
@@ -32,10 +34,17 @@ class Fixed:
 class Prescribed:
     """Prescribe displacement ``value`` on the given DOFs of the target.
 
-    ``dofs`` is an iterable of 1-indexed DOFs (1=x, 2=y, 3=z). Used both as the macro
-    drive (the applied amplitude, placed in a step's ``subsections``) and, with
-    ``value=0``, in ``Model.bcs``, where it holds those DOFs at zero as ``Fixed`` does and a
-    step drive on the same DOF overrides it (ABAQUS rejects a nonzero model-level value).
+    Used both as the macro drive (the applied amplitude, placed in a step's
+    ``subsections``) and, with ``value=0``, in ``Model.bcs``, where it holds those DOFs at
+    zero as ``Fixed`` does and a step drive on the same DOF overrides it (ABAQUS rejects a
+    nonzero model-level value).
+
+    Parameters
+    ----------
+    dofs : iterable of int
+        1-indexed DOFs (1=x, 2=y, 3=z).
+    value : float
+        The displacement imposed on each of ``dofs``.
     """
 
     dofs: Iterable
@@ -46,17 +55,25 @@ class Prescribed:
 class BoundaryCondition:
     """A ``constraint`` (``Fixed`` / ``Prescribed``) applied to a set of nodes.
 
-    ``target`` is a NodeSet or a 1-indexed node number; the physics of the constraint
-    lives on ``constraint`` (has-a, like ``Material.response``)::
+    The physics of the constraint lives on ``constraint`` (has-a, like
+    ``Material.response``)::
 
         BoundaryCondition(origin, Fixed(dofs=[1, 2]))
         BoundaryCondition(drive_corner, Prescribed(dofs=[1], value=0.005))
+
+    Parameters
+    ----------
+    target : NodeSet or int
+        The node set, or a 1-indexed node number.
+    constraint : Fixed or Prescribed
+        The DOFs constrained and how.
     """
 
     target: Union[NodeSet, int]
     constraint: Union[Fixed, Prescribed]
 
     def prescribed_dofs(self):
+        """Yield ``(node_inds, dof)`` for each DOF this condition prescribes."""
         nodes = _node_array(self.target)
         for dof in self.constraint.dofs:
             yield nodes, dof
@@ -81,6 +98,16 @@ class PeriodicBoundaryConstraint:
     dof alone (X1Y0, dof 1 for an x drive); the lateral reactions sit on other corners and
     are not comparable between formulations of the same loading
     (``docs/pbc_verification.md``).
+
+    Parameters
+    ----------
+    nodes : GridNodes
+        The 2D or 3D node grid whose boundary sets are paired.
+
+    Raises
+    ------
+    ValueError
+        If the grid is neither 2D nor 3D, or a dependent set and its image differ in size.
     """
 
     nodes: GridNodes
@@ -138,8 +165,11 @@ class PeriodicBoundaryConstraint:
                 )
 
     def dependent_dofs(self):
-        # The first-listed nset of each pair is the dependent (eliminated) term of the
-        # emitted *Equation, one group per dof (pair-major, dof-minor).
+        """Yield ``(node_inds, dof)`` for each DOF the constraint eliminates.
+
+        The first-listed nset of each pair is the dependent (eliminated) term of the
+        emitted *Equation, one group per dof (pair-major, dof-minor).
+        """
         for pair in self.node_pairs:
             for i in range(self.nodes.dim):
                 yield pair[0].node_inds, i + 1
@@ -148,12 +178,24 @@ class PeriodicBoundaryConstraint:
 def validate_constraints(bcs):
     """Raise ValueError if a dependent (eliminated) DOF is over-constrained.
 
+    ABAQUS eliminates the first-listed (node, dof) of every *Equation. That dependent
+    DOF must not also be (a) the dependent term of another *Equation, nor (b) prescribed
+    by a *Boundary -- either is an over-constraint ABAQUS rejects. Double-*Boundary on a
+    DOF is tolerated (a model-level baseline plus a step displacement is normal) and is
+    not flagged. ``Model`` calls this at construction, so the error surfaces there instead
+    of at solve time.
+
+    Parameters
+    ----------
+    bcs : iterable
+        Constraints; those with a ``dependent_dofs`` or ``prescribed_dofs`` method take
+        part, the rest are ignored.
+
+    Raises
+    ------
+    ValueError
+        Naming the first over-constrained node and dof and the constraints involved.
     """
-    # ABAQUS eliminates the first-listed (node, dof) of every *Equation. That dependent
-    # DOF must not also be (a) the dependent term of another *Equation, nor (b) prescribed
-    # by a *Boundary -- either is an over-constraint ABAQUS rejects. Double-*Boundary on a
-    # DOF is tolerated (a model-level baseline plus a step displacement is normal) and is
-    # not flagged. Catches the error at Model construction instead of at solve time.
 
     # Each constraint yields (node_inds, scalar dof) groups it eliminates / prescribes.
     def gather(attr):

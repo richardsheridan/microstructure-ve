@@ -26,14 +26,21 @@ from .core import ElementSet
 
 @dataclass
 class Material:
-    """A constitutive ``response`` applied to a set of elements at a given density.
-
-    ``elset`` is the ElementSet it applies to, ``density`` is in kg/micron^3, and ``response``
-    is one of the ``constitutive`` responses (``Elastic``, ``Plastic``, ``TabularViscoelastic``,
-    ``PronyViscoelastic``, ``ReducedPolynomial``, ``Polynomial``, ``ArrudaBoyce``,
-    ``NeoHookean``) carrying the elastic constants and frequency/rate behavior::
+    """A constitutive ``response`` applied to a set of elements at a given density::
 
         Material(elset, density=2.65e-15, response=Elastic(poisson=0.3, youngs=5.0))
+
+    Parameters
+    ----------
+    elset : ElementSet
+        The elements the material applies to.
+    density : float
+        Density in kg/micron^3.
+    response
+        One of the ``constitutive`` responses (``Elastic``, ``Plastic``,
+        ``TabularViscoelastic``, ``PronyViscoelastic``, ``ReducedPolynomial``,
+        ``Polynomial``, ``ArrudaBoyce``, ``NeoHookean``) carrying the elastic constants and
+        frequency/rate behavior.
     """
 
     elset: ElementSet
