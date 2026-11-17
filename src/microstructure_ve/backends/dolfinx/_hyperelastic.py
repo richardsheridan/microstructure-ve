@@ -125,16 +125,17 @@ def _coefficient_table(responses):
     return kind, dev, invd
 
 
-def _dg0_fields(mesh, mat_of_cell, oci, columns):
+def _dg0_fields(mesh, mat_of_cell, oci, columns, keep_zero=False):
     """One DG0 Function per column, filled per cell through the pixel->dolfinx cell map.
 
     Columns that are zero for every material return ``None`` (their energy term is absent
-    everywhere, so it is not built at all).
+    everywhere, so it is not built at all), unless ``keep_zero`` is set, in which case
+    every column gets a Function.
     """
     DG0 = fem.functionspace(mesh, ("DG", 0))
     fns = []
     for k in range(columns.shape[1]):
-        if not np.any(columns[:, k]):
+        if not keep_zero and not np.any(columns[:, k]):
             fns.append(None)
             continue
         f = fem.Function(DG0)
@@ -223,7 +224,11 @@ class _FormsMixin:
         mat_of_cell = np.asarray(mf.mat_of_cell).astype(int)
         oci = prob.space.oci
         dev_fns = _dg0_fields(mesh, mat_of_cell, oci, dev_cols)
-        invd_fns = _dg0_fields(mesh, mat_of_cell, oci, invd_cols)
+        # NeoHookean's energy reads its lambda field unconditionally (its volumetric term is
+        # not one of an optional Di series), so the field is built even when lambda = 0
+        # in every phase
+        invd_fns = _dg0_fields(mesh, mat_of_cell, oci, invd_cols,
+                               keep_zero=kind is NeoHookean)
         # outer-tolerance stress scale (initial Young's modulus, volume-averaged enough)
         self._E_scale = float(np.mean([r.youngs for r in responses]))
 
