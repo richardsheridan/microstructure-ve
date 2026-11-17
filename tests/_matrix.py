@@ -8,7 +8,7 @@ The macro loading is imposed exactly as the rest of the package does it: for per
 models by driving the PBC **reference corners** (``X1Y0``/``X0Y1``/``X0Y0Z1`` ...), for
 standard (non-periodic) models by prescribing displacement directly on whole faces. Only
 *physically meaningful* (mode, traction) cells are enumerated -- see ``matrix_cells`` and
-the pruning rule in the module docs of the plan.
+the pruning rule in ``_kept_mode_tractions``.
 
 Nothing here imports dolfinx, so it is usable under the numpy-only env.
 """

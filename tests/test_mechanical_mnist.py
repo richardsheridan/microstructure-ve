@@ -147,12 +147,12 @@ class NeoHookeanSolverTests(unittest.TestCase):
 
 @needs_dolfinx
 class MechanicalMnistParityTests(unittest.TestCase):
-    """Solved strain energies vs the benchmark's committed rows (refine=1, ~1 s each).
+    """Solved strain energies vs the benchmark's committed rows (refine=1).
 
     The tolerance is empirical, set by tools/mechanical_mnist_parity.py's convergence
     study: at refine=1 (one Q1 element per pixel) the d >= 0.1 steps agree with the
-    unstructured-P2 reference to <= ~1.4e-2, halving-ish per refinement step (see
-    tests/data/mechanical_mnist/README.md). rtol carries a 2x margin; atol floors the
+    unstructured-P2 reference to within an error that shrinks with each refinement step (see
+    tests/data/mechanical_mnist/README.md). rtol carries a margin over that error; atol floors the
     small-d steps at the summary files' fixed-point quantization (their d=0.001 column
     rounds to exactly 0).
     """

@@ -286,7 +286,7 @@ class FrequencyParallelTests(unittest.TestCase):
 
     def test_parallel_sweep_does_not_hold_backend_lock(self):
         # A workers>1 sweep touches no parent-process FE state (workers rebuild the
-        # solver from the pickled sim), so its fan-out must run OUTSIDE _BACKEND_LOCK:
+        # solver from the pickled sim), so its fan-out must run outside _BACKEND_LOCK:
         # another thread can take the lock (e.g. for its own serial run) while the
         # sweep is in flight. The cancel callback -- polled in the sweeping thread as
         # futures complete -- doubles as the "mid-sweep" synchronization point.
@@ -324,12 +324,11 @@ class FrequencyParallelTests(unittest.TestCase):
         np.testing.assert_allclose(result["out"], serial, rtol=1e-9, atol=0)
 
     def test_parent_env_untouched_during_parallel_sweep(self):
-        # Workers cap their OWN BLAS/OpenMP threads in-process (threadpoolctl); the parent's
+        # Workers cap their own BLAS/OpenMP threads in-process (threadpoolctl); the parent's
         # os.environ must never be mutated. A watcher thread samples the BLAS env vars while
-        # the sweep runs -- every sample must equal the pre-sweep snapshot. This is red for
-        # any parent-side env juggling: the old whole-sweep cap held "1" for the entire
-        # sweep, and the warmup variant set "1" during spawn -- both are caught here. When
-        # the env is never touched (the guarantee) green is exact: no sample can differ.
+        # the sweep runs -- every sample must equal the pre-sweep snapshot. Any
+        # parent-side env change, such as holding "1" for the whole sweep or only during
+        # spawn, fails here. When the env is never touched (the guarantee) no sample can differ.
         import os
         import threading
         import time

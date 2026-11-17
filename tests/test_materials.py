@@ -87,7 +87,7 @@ class ComplexModulusInterpolation(unittest.TestCase):
         np.testing.assert_allclose(got, [expected], rtol=1e-12, atol=0)
 
     def test_log_interp_differs_from_linear_f(self):
-        # Same table; the log-f interpolant at f=10 must NOT equal the linear-f one,
+        # Same table; the log-f interpolant at f=10 must not equal the linear-f one,
         # otherwise the "interpolate in log-frequency" contract is silently broken.
         freq = np.array([1.0e0, 1.0e2])
         youngs_cplx = np.array([10.0 + 1.0j, 6.0 + 3.0j])

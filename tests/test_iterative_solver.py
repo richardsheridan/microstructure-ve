@@ -85,7 +85,7 @@ class IterativeSolverTests(unittest.TestCase):
         self.assertIn("did not converge", str(cm.exception))
 
     def test_auto_solver_kind_is_lu_in_2d_iterative_for_big_3d(self):
-        # benchmarking: 2D LU completes to >500k ndof while GMRES+ILU diverges there, so auto
+        # benchmarking showed 2D LU stays tractable at sizes where GMRES+ILU diverges, so auto
         # must stay LU in 2D; 3D LU fill explodes, so auto switches to iterative above budget.
         from microstructure_ve.backends.dolfinx._solver import select_solver_kind
 

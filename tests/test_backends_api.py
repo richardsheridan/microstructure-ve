@@ -55,7 +55,7 @@ class DolfinxBackendApiTests(unittest.TestCase):
         msg = str(cm.exception).lower()
         self.assertIn("dolfinx", msg)  # names the backend
         self.assertIn("basix", msg)    # names the actual missing dependency
-        # box-agnostic: must NOT hardcode a specific env name or path
+        # box-agnostic: must not hardcode a specific env name or path
         self.assertNotIn("conda activate", msg)
         self.assertNotIn("docs/", msg)
 
