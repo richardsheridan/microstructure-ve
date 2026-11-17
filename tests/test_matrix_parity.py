@@ -120,8 +120,11 @@ for _cell, _tt in matrix_cases():
     if is_fe_green(_cell, _tt):
         _name = (f"test_{_cell['dim']}d_{_cell['mode']}_{_cell['traction']}"
                  f"_{_cell['bc']}_{_tt}")
-        if _cell["bc"] == "standard" and _tt in _STANDARD_HYPER_TYPES:
-            _rtol = _STANDARD_HYPER_RTOL  # F-bar vs SRI formulation gap (see note above)
+        if _tt in _STANDARD_HYPER_TYPES:
+            # F-bar vs SRI formulation gap on standard and periodic cells alike (see note
+            # above and docs/dolfinx_backend_design.md#parity-fidelity); a periodic drive
+            # column stays at its exact check
+            _rtol = _STANDARD_HYPER_RTOL
         else:
             _rtol = _RTOL_OVERRIDES.get(_name, RTOL)
         setattr(MatrixParityTests, _name, _make_test(_cell, _tt, _rtol))
