@@ -299,7 +299,7 @@ def check_supported(sim):
 
     Handles two cases:
     - *Periodic* sims: validated by ``macro_loading`` (corner-driven PBC path) and the step
-      drive rules of ``run``.
+      drive rules of ``run``; every step carrying a drive must drive the same ordered components.
     - *Standard* sims (no ``PeriodicBoundaryConstraint``): validated by
       ``_standard_check`` (direct-Dirichlet path, well-posed cells only).
     """
@@ -338,8 +338,17 @@ def check_supported(sim):
 
     has_pbc = any(isinstance(bc, PeriodicBoundaryConstraint) for bc in sim.model.bcs)
     if has_pbc:
-        macro_loading(sim)
+        first = macro_loading(sim)
         steps = list(sim.steps)
+        for i, step in enumerate(steps):
+            if not prescribed_bcs(step.subsections):
+                continue
+            active = macro_loading(sim, step=step).active
+            if active != first.active:
+                raise NotImplementedError(
+                    f"step {i} drives components {active}, not the {first.active} of the "
+                    "first drive step; every step must drive the same components in the same order"
+                )
         if steps and not prescribed_bcs(steps[0].subsections):
             raise ValueError("the first step has no Prescribed drive to inherit")
         for i, step in enumerate(steps):

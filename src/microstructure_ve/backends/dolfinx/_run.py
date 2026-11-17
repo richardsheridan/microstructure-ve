@@ -226,7 +226,8 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
 
     Each step's rows report that step's own drive and the reaction to it. A periodic ``Static`` step
     with no drive of its own reports the drive of the last ``Static`` step that carried one; a
-    ``Dynamic`` step with no drive of its own, or a driveless first step, is refused.
+    ``Dynamic`` step with no drive of its own, or a driveless first step, is refused, as is a step
+    that drives other components than the first (``_loading.check_supported``).
 
     Each row is ``[frame_value, RF_Real_1..d, RF_Imag_1..d, U_1..d]`` (same columns as the ABAQUS
     readODB tsv; ``frame_value`` is the frequency for a Dynamic sweep, the step time for a
@@ -386,7 +387,8 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
     present, the nonlinear J2 return-mapping solve (``_plastic``), or for hyperelastic materials the
     finite-strain solve (``_hyperelastic``) -- and a ``Dynamic`` step one row per swept frequency
     (ascending). The FE problem (mesh/MPC/forms) is built once and reused across steps. Each step's
-    drive follows ``run``; every step drives the components the first drive sets.
+    drive follows ``run``; every step drives the components the first drive sets, as
+    ``_loading.check_supported`` requires.
 
     ``collect_energy=True`` returns ``(rows, energies)`` with one strain-energy scalar per
     row -- assembled by the hyperelastic solver after its step converges, ``np.nan`` for

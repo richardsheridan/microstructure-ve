@@ -492,7 +492,8 @@ Design decisions and rationale:
   so reversal/cyclic patterns accumulate the correct hysteresis. Plastic `Static` steps thus
   coalesce into one serial unit; intervening `Dynamic` steps stay *linear* perturbations about the
   base state (their steady-state reaction is unaffected by the plastic prestress) and use the
-  existing `solve_one`. Steps may drive different magnitudes, so the drive is parsed per step
+  existing `solve_one`. Steps may drive different magnitudes, though not different components
+  (`_loading.check_supported`), so the drive is parsed per step
   (`_loading.macro_loading(sim, step=...)`); which drive a step reports is stated by `run`.
 - **Standard (non-periodic) plasticity.** Macro loading enters as prescribed face displacements
   (total strain = `eps(u)`, no fluctuation/macro-strain split); the reaction is the internal-force

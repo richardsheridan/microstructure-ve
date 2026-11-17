@@ -75,10 +75,32 @@ def _driveless_first_step(sim):
     return _without_drives_in_step(sim, 0)
 
 
-def _standard_two_static_elastic():
-    sim = matrix_simulation(test_type="elastic", n=_N, **_STANDARD)
+def _with_repeated_step(sim):
+    """Follow the sim's only step with a copy of it."""
     sim.steps = [sim.steps[0], copy.deepcopy(sim.steps[0])]
     return sim
+
+
+def _step_driving(sim, index, nset_name, dof):
+    """Move step ``index``'s only drive, at its amplitude, to ``dof`` of ``nset_name``."""
+    step = sim.steps[index]
+    (drive,) = _drives(step)
+    moved = BoundaryCondition(sim.model.nodes.nsets[nset_name],
+                              Prescribed([dof], drive.constraint.value))
+    step.subsections = [moved if s is drive else s for s in step.subsections]
+    return sim
+
+
+def _step_drives_reversed(sim, index):
+    """List step ``index``'s drives in reverse order, leaving the rest of the step as built."""
+    step = sim.steps[index]
+    rest = [s for s in step.subsections if not isinstance(s, BoundaryCondition)]
+    step.subsections = rest + _drives(step)[::-1]
+    return sim
+
+
+def _standard_two_static_elastic():
+    return _with_repeated_step(matrix_simulation(test_type="elastic", n=_N, **_STANDARD))
 
 
 def _periodic_hyperelastic_with_elastic_phase():
@@ -178,6 +200,36 @@ def rejected_sims():
          lambda: _without_drives_in_step(
              matrix_simulation(test_type="hyperelastic_plastic_sd", n=_N,
                                **_PERIODIC_CONFINED), 1),
+         NotImplementedError),
+        ("periodic later static step drives another axis",
+         lambda: _step_driving(
+             matrix_simulation(test_type="viscoelastic_halved_ss", n=_N, **_PERIODIC), 1,
+             "X0Y1", 2),
+         NotImplementedError),
+        ("periodic dynamic step drives another axis than the static step",
+         lambda: _step_driving(
+             matrix_simulation(test_type="viscoelastic_halved_sd", n=_N, **_PERIODIC), 1,
+             "X0Y1", 2),
+         NotImplementedError),
+        ("periodic plastic later static step drives another axis",
+         lambda: _step_driving(
+             matrix_simulation(test_type="hyperelastic_plastic_reversal", n=_N, **_PERIODIC),
+             1, "X0Y1", 2),
+         NotImplementedError),
+        ("periodic hyperelastic later static step drives another axis",
+         lambda: _step_driving(_with_repeated_step(
+             matrix_simulation(test_type="reduced_polynomial", n=_N, **_PERIODIC)), 1,
+             "X0Y1", 2),
+         NotImplementedError),
+        ("periodic later step drives the same components in another order",
+         lambda: _step_drives_reversed(
+             matrix_simulation(test_type="viscoelastic_halved_ss", n=_N, mode="compression",
+                               traction="confined_slip", bc="periodic", dim=2), 1),
+         NotImplementedError),
+        ("periodic later step drives off a reference corner",
+         lambda: _step_driving(
+             matrix_simulation(test_type="viscoelastic_halved_ss", n=_N, **_PERIODIC), 1,
+             "X0Y0", 1),
          NotImplementedError),
         ("periodic driveless first static step",
          lambda: _driveless_first_step(
