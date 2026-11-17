@@ -263,7 +263,8 @@ def can_run(sim):
 
 
 def check_supported(sim):
-    """Raise unless the dolfinx backend can solve ``sim`` (drives parse + frequencies resolve).
+    """Raise unless the dolfinx backend can solve ``sim`` (element type in
+    ``SOLVED_ELEMENT_TYPES``, drives parse, frequencies resolve).
 
     Raises
     ------
