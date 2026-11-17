@@ -73,7 +73,7 @@ class AssemblyTests(unittest.TestCase):
                                  Material(e1, 1.0, Elastic(nu, E1))])
         # build a minimal space + fields (no full solver needed)
         from microstructure_ve.backends.dolfinx._spec import Geometry
-        geom = Geometry(2, SCALE, nodes.shape, [2 * SCALE, 2 * SCALE], 2 * SCALE, 2 * SCALE, 1.0)
+        geom = Geometry(2, SCALE, nodes.shape, [2 * SCALE, 2 * SCALE])
         space = assembly.Space.build(geom)
         mats = assembly.MaterialFields.from_model(space, model)
         mats.set_moduli(1.0)
@@ -149,7 +149,9 @@ class AnalyticHomogeneousTests(unittest.TestCase):
         row = run.run(sim)[0]
         dim = sim.model.nodes.dim
         rf_real = np.array(row[1:1 + dim])
-        return rf_real / geom.cross_area, geom.exx  # sigma-bar normal row 0..dim-1
+        cross_area = float(np.prod(geom.L[1:]))
+        exx = spec.drive_displacement(sim) / geom.L[0]
+        return rf_real / cross_area, exx  # sigma-bar normal row 0..dim-1
 
     def test_confined_plane_strain(self):
         E, nu = 3000.0, 0.3
@@ -189,7 +191,9 @@ class PronyViscoelasticBehaviorTests(unittest.TestCase):
         out = run.run(sim)
         dim = sim.model.nodes.dim
         rf = out[:, 1:1 + dim] + 1j * out[:, 1 + dim:1 + 2 * dim]
-        return rf[:, 0] / (geom.cross_area * geom.exx)  # confined M ~ (lam+2mu) ∝ E*(f)
+        cross_area = float(np.prod(geom.L[1:]))
+        exx = spec.drive_displacement(sim) / geom.L[0]
+        return rf[:, 0] / (cross_area * exx)  # confined M ~ (lam+2mu) ∝ E*(f)
 
     def test_prony_modulus_is_frequency_varying_and_lossy(self):
         # wide sweep so both the relaxed and glassy plateaus are reached (tau=1s)

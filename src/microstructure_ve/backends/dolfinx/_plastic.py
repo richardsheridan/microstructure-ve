@@ -38,21 +38,11 @@ import dolfinx_mpc
 
 from microstructure_ve.constitutive import Plastic
 
-from ._solver import ConvergenceError, root_step
+from ._nonlinear import FreeLateralRamp, modified_newton
+from ._solver import ConvergenceError, lu_ksp
 
 _QUAD_DEGREE = 2          # 2x2(x2) Gauss = ABAQUS CPE4 (4 pts) / C3D8 (8 pts)
 _FD_STEP = 1e-7           # finite-difference step for the (consistent) algorithmic tangent
-_NEWTON_TOL = 1e-10       # absolute floor on the reduced residual norm
-_NEWTON_RTOL = 1e-9       # relative to the first iteration's residual
-_MAX_NEWTON = 50
-_MAX_OUTER = 25           # free-lateral root-find iterations
-_OUTER_TOL = 1e-9         # |sigma-bar| on a free component (relative to a stress scale)
-_MACRO_FD_STEP = 1e-6     # macro-strain perturbation for the Jacobian bootstrap
-_OUTER_FD_RETRY = 8       # outer iterations on a Broyden Jacobian before an FD refresh
-_FROZEN_RATIO = 0.5       # refresh tangent+factorization when an iteration shrinks the
-                          # residual by less than this (modified Newton: a frozen-tangent
-                          # back-substitution costs ~3% of a refactor, so even a mediocre
-                          # linear rate beats refactoring every iteration)
 
 # tensor (not engineering) component order used internally: [xx, yy, zz, xy, yz, xz]
 _SHEAR_PAIRS = {2: [(0, 1)], 3: [(0, 1), (1, 2), (0, 2)]}
@@ -228,12 +218,13 @@ def _bbar_jacobian_form(V, dim, qd, C_q, C_c):
                     + ufl.inner(ufl.dot(C_c, vol_u), ev_v) * dx_1)
 
 
-class _PlasticSolver:
-    """Hand-rolled Newton over the periodic MPC + complex LU, with numpy return mapping.
+class _J2Solver:
+    """The setup and Newton plumbing the periodic and standard plastic solvers share.
 
-    Persistent across a sim's plastic Static steps: ``solve`` ramps the macro strain from the
-    previously committed ``E_current`` to the new step target (so reversal/cyclic patterns
-    accumulate plastic state)."""
+    Builds the quadrature, the per-point moduli and committed plastic state, the
+    Quadrature-space coefficients ``sig_q``/``C_q``/``C_c`` and the residual and B-bar Jacobian
+    forms over ``self.u``. A subclass assembles ``self.A`` and implements
+    ``_assemble_jacobian``."""
 
     def __init__(self, prob, model):
         space = prob.space
@@ -244,8 +235,6 @@ class _PlasticSolver:
         self.nv = 3 if self.dim == 2 else 6
         self.mesh = space.mesh
         self.V = space.V
-        self.mpc = prob.mpc
-        self.bcs = prob.center_bcs
         self.materials = list(model.materials)
 
         qd = _QUAD_DEGREE
@@ -270,7 +259,8 @@ class _PlasticSolver:
         self.C_q = fem.Function(fem.functionspace(self.mesh, Qt))
         self.C_c = fem.Function(fem.functionspace(self.mesh, Qt1))  # cell-mean tangent
 
-        self.u = fem.Function(self.V)  # the periodic fluctuation u~ (persists across steps)
+        # the periodic fluctuation u~ or the standard path's full displacement
+        self.u = fem.Function(self.V)
         self.eps_expr = fem.Expression(_eps_voigt(self.u, self.dim), self.points)
         self._cells = np.arange(self.ncells, dtype=np.int32)
 
@@ -283,34 +273,20 @@ class _PlasticSolver:
         # committed state (persists across steps)
         self.eps_p = np.zeros((N, 6))
         self.p = np.zeros(N)
-        self.E_current = np.zeros(self.nv)
-        self._shear_pairs = _SHEAR_PAIRS[self.dim]
-
-        # macro Jacobian for the free-lateral root-find, kept across outer iterations,
-        # increments, and steps (Broyden-updated; FD-bootstrapped when absent or stale)
-        self._J_macro = None
-        self._J_free_slots = None
-        self._r_ref = 0.0  # largest initial Newton residual seen (convergence reference)
 
         self._fill_coeffs(np.zeros((N, self.nv)), commit=False)  # elastic C_q to allocate A
-        self.A = dolfinx_mpc.assemble_matrix(self.a_form, self.mpc, bcs=self.bcs)
-        self.A.assemble()
-        self._C_assembled = self.C_q.x.array.copy()  # tangent the assembled A was built from
-        self.b = dolfinx_mpc.assemble_vector(self.L_form, self.mpc)
-        self.x = self.A.createVecRight()
-        self.du = fem.Function(self.V)
-        self.ksp = PETSc.KSP().create(self.mesh.comm)
-        self.ksp.setOperators(self.A)
-        self.ksp.setType("preonly")
-        self.ksp.getPC().setType("lu")
+        self._C_assembled = self.C_q.x.array.copy()  # tangent the assembled A is built from
 
     # -- coefficient refresh -------------------------------------------------
-    def _total_strain(self, E_voigt):
-        """Total engineering strain at the quad points: ``E + eps(u~)`` (N,nv), real, with the
+    def _total_strain(self, E_voigt=None):
+        """Total engineering strain at the quad points: ``E + eps(u)`` (N,nv), real, with the
         mean-dilatation B-bar (volumetric strain replaced by its per-cell mean; for rectangular
-        Q1/hex the cell mean == centroid value, i.e. the standard B-bar)."""
+        Q1/hex the cell mean == centroid value, i.e. the standard B-bar). ``E_voigt`` is the
+        periodic path's macro strain; without it the strain is ``eps(u)``."""
         ev = self.eps_expr.eval(self.mesh, self._cells)  # (ncells, npts, nv), complex
-        eps = np.asarray(ev).real + E_voigt
+        eps = np.asarray(ev).real
+        if E_voigt is not None:
+            eps = eps + E_voigt
         vol = eps[:, :, :self.dim].sum(axis=2)           # volumetric strain (sum of normals)
         w = self.weights
         vbar = (vol * w).sum(axis=1, keepdims=True) / w.sum()
@@ -321,7 +297,8 @@ class _PlasticSolver:
 
     def _fill_coeffs(self, eps_total, commit, tangent=True):
         """Refresh the residual stress ``sig_q`` (always) and, when ``tangent``, the FD
-        algorithmic tangent ``C_q``/``C_c`` (1+nv return maps instead of 1)."""
+        algorithmic tangent ``C_q``/``C_c`` (1+nv return maps instead of 1). Returns the
+        stress (N,nv)."""
         if tangent:
             C, sig, eps_p_new, p_new = _tangent(eps_total, self.mu, self.lam, self.eps_p,
                                                 self.p, self.mat_id, self.materials, self.dim)
@@ -336,7 +313,44 @@ class _PlasticSolver:
         self.sig_q.x.array[:] = sig.reshape(-1)
         if commit:
             self.eps_p, self.p = eps_p_new, p_new
-        return self._average(sig)
+        return sig
+
+    def _refresh_tangent(self):
+        """``modified_newton``'s Jacobian refresh: the tangent at the last residual's strain,
+        reassembled only when it changed."""
+        self._fill_coeffs(self._eps_total, commit=False, tangent=True)
+        if not np.array_equal(self.C_q.x.array, self._C_assembled):
+            self.A.zeroEntries()
+            self._assemble_jacobian()
+            self.A.assemble()  # values-only refill; PETSc refactors on the next solve
+            self.ksp.setOperators(self.A)
+            self._C_assembled = self.C_q.x.array.copy()
+
+
+class _PlasticSolver(_J2Solver):
+    """Hand-rolled Newton over the periodic MPC + complex LU, with numpy return mapping.
+
+    Persistent across a sim's plastic Static steps: ``solve`` ramps the macro strain from the
+    previously committed ``E_current`` to the new step target (so reversal/cyclic patterns
+    accumulate plastic state)."""
+
+    def __init__(self, prob, model):
+        super().__init__(prob, model)
+        self.mpc = prob.mpc
+        self.bcs = prob.center_bcs
+        self.E_current = np.zeros(self.nv)
+        self._shear_pairs = _SHEAR_PAIRS[self.dim]
+        self._ramp = FreeLateralRamp(lambda axis: axis)
+        self._r_ref = 0.0  # largest initial Newton residual seen (convergence reference)
+
+        self.A = dolfinx_mpc.assemble_matrix(self.a_form, self.mpc, bcs=self.bcs)
+        self.A.assemble()
+        self.b = dolfinx_mpc.assemble_vector(self.L_form, self.mpc)
+        self.x = self.A.createVecRight()
+        self.ksp = lu_ksp(self.A, self.mesh.comm)
+
+    def _assemble_jacobian(self):
+        dolfinx_mpc.assemble_matrix(self.a_form, self.mpc, bcs=self.bcs, A=self.A)
 
     def _average(self, sig_v):
         """Volume-averaged stress tensor (dim,dim) from a (N,nv) Voigt field (uniform grid)."""
@@ -345,24 +359,19 @@ class _PlasticSolver:
         sbar_v = (w[:, None] * sig_v).sum(axis=0) / denom
         return _voigt_stress_tensor(sbar_v, self.dim)
 
+    def _average_stress(self, E_voigt):
+        """Volume-averaged stress (dim,dim) of the current fluctuation at ``E_voigt``."""
+        return self._average(self._fill_coeffs(self._total_strain(E_voigt), commit=False,
+                                               tangent=False))
+
     # -- one Newton solve at a fixed macro strain ----------------------------
     def _newton(self, E_voigt):
-        """Modified Newton: the tangent (and its LU factorization) is refreshed on the first
-        correcting iteration and whenever the frozen-tangent residual reduction stalls below
-        ``_FROZEN_RATIO``; in between, iterations reuse the factorization (back-substitution
-        only, ~3% of a refactor). A step that grows the residual is backtracked (halved,
-        residual-only re-check): return-map branch switching can trap an undamped Newton in a
-        two-cycle (the standard shear_xy no_slip plastic cells of ``MatrixParityTests`` cycle
-        without it, in ``_StandardPlasticSolver.solve``'s copy of this loop). The converged
-        answer is set by the residual and tolerance, which are unchanged. Returns the average
-        stress and whether the residual met its tolerance."""
-        r0 = rprev = None
-        last_du = None
-        halvings = 0
-        converged = False
-        for _ in range(_MAX_NEWTON):
-            eps_total = self._total_strain(E_voigt)
-            self._fill_coeffs(eps_total, commit=False, tangent=False)
+        """Equilibrate the fluctuation at macro strain ``E_voigt`` by ``modified_newton``,
+        judged against the largest initial residual this solver has seen. Returns whether the
+        residual met its tolerance."""
+        def residual():
+            self._eps_total = self._total_strain(E_voigt)
+            self._fill_coeffs(self._eps_total, commit=False, tangent=False)
             with self.b.localForm() as bl:
                 bl.set(0.0)
             dolfinx_mpc.assemble_vector(self.L_form, self.mpc, self.b)
@@ -370,44 +379,11 @@ class _PlasticSolver:
             self.b.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
             fempetsc.set_bc(self.b, self.bcs)
             self.b.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
+            return self.b
 
-            rnorm = self.b.norm()
-            if r0 is None:
-                r0 = rnorm
-                # convergence is judged against the largest initial residual seen so far, not
-                # this call's r0: warm-started re-solves (outer root-find, FD bootstrap) begin
-                # essentially converged and must not grind to the absolute floor
-                self._r_ref = max(self._r_ref, r0)
-            if rnorm <= _NEWTON_TOL + _NEWTON_RTOL * (self._r_ref or 1.0):
-                converged = True
-                break
-
-            if rprev is not None and rnorm > rprev and last_du is not None and halvings < 8:
-                last_du *= 0.5                      # backtrack: retreat half of the last step
-                self.u.x.array[:] = self.u.x.array + last_du
-                halvings += 1
-                continue
-            halvings = 0
-
-            if rprev is None or rnorm > _FROZEN_RATIO * rprev:
-                self._fill_coeffs(eps_total, commit=False, tangent=True)
-                if not np.array_equal(self.C_q.x.array, self._C_assembled):
-                    self.A.zeroEntries()
-                    dolfinx_mpc.assemble_matrix(self.a_form, self.mpc, bcs=self.bcs, A=self.A)
-                    self.A.assemble()  # values-only refill; PETSc refactors on the next solve
-                    self.ksp.setOperators(self.A)
-                    self._C_assembled = self.C_q.x.array.copy()
-            self.ksp.solve(self.b, self.x)            # x = A^{-1} R
-            self.x.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
-            du = self.du
-            fempetsc.assign(self.x, du)
-            self.mpc.homogenize(du)
-            self.mpc.backsubstitution(du)
-            last_du = du.x.array.copy()
-            self.u.x.array[:] = self.u.x.array - last_du
-            rprev = rnorm
-        sbar = self._fill_coeffs(self._total_strain(E_voigt), commit=False, tangent=False)
-        return sbar, converged
+        converged, self._r_ref = modified_newton(residual, self._refresh_tangent, self.ksp,
+                                                 self.x, self.u, mpc=self.mpc, r_ref=self._r_ref)
+        return converged
 
     # -- public entry --------------------------------------------------------
     def _target_voigt(self, loading):
@@ -425,48 +401,12 @@ class _PlasticSolver:
         """Ramp the macro strain from the committed ``E_current`` to this step's target over
         ``n_incr`` increments (committing plastic state each), solving any ``free`` components so
         their average stress vanishes. Returns the readODB row and advances ``E_current``."""
-        target = self._target_voigt(loading)
-        free = list(loading.free)
-        free_slots = [b for (b, _) in free]
-        free_val = np.array([self.E_current[s] for s in free_slots])
-        E_start = self.E_current.copy()
-        if free_slots != self._J_free_slots:
-            self._J_macro, self._J_free_slots = None, free_slots
-
-        E = target.copy()
-        for inc in range(1, n_incr + 1):
-            frac = inc / n_incr
-            E_drv = E_start + frac * (target - E_start)
-            prev_val = prev_resid = None  # secant pairs are only valid at a fixed E_drv
-            for it in range(_MAX_OUTER):
-                E = E_drv.copy()
-                for k, s in enumerate(free_slots):
-                    E[s] = free_val[k]
-                sbar, converged = self._newton(E)
-                if not free:
-                    break
-                resid = np.array([sbar[b, b] for (b, _) in free])
-                scale = max(np.abs(target).max() * (self.mu.mean() + self.lam.mean()), 1.0)
-                if np.max(np.abs(resid)) <= _OUTER_TOL * scale:
-                    break
-                if self._J_macro is not None and prev_val is not None:
-                    dv = free_val - prev_val  # Broyden rank-1 secant update
-                    denom = float(dv @ dv)
-                    if denom > 0.0:
-                        self._J_macro += np.outer(
-                            (resid - prev_resid) - self._J_macro @ dv, dv) / denom
-                if self._J_macro is None or it == _OUTER_FD_RETRY:
-                    self._J_macro = self._macro_jac_fd(E, free_slots, resid)
-                prev_val, prev_resid = free_val.copy(), resid
-                free_val = free_val - root_step(self._J_macro, resid)
-            else:
-                raise ConvergenceError(
-                    f"free-lateral root-find did not converge in increment {inc}/{n_incr}")
-            if not converged:
-                raise ConvergenceError(
-                    f"Newton solve did not converge in increment {inc}/{n_incr}")
+        def commit(E):
             self._fill_coeffs(self._total_strain(E), commit=True, tangent=False)
 
+        E = self._ramp.run(self.E_current, self._target_voigt(loading),
+                           [b for (b, _) in loading.free], n_incr, self._newton,
+                           self._average_stress, self.mu.mean() + self.lam.mean(), commit)
         self.E_current = E.copy()
         sbar = self._average(_return_map(self._total_strain(E), self.mu, self.lam, self.eps_p,
                                          self.p, self.mat_id, self.materials, self.dim)[0])
@@ -476,178 +416,64 @@ class _PlasticSolver:
         U[loading.primary_dof - 1] = loading.drive_value
         return [1.0] + list(RF.real) + [0.0] * self.dim + list(U)
 
-    def _macro_jac_fd(self, E, free_slots, base_r):
-        """FD bootstrap of the macroscopic Jacobian d(sigma-bar_free)/d(E_free): one warm-started
-        inner Newton per free component, against the already-converged residual ``base_r`` at
-        ``E``. No restore solve -- the outer loop's next ``_newton`` re-converges from the
-        perturbed warm start. Called once, then kept fresh by Broyden updates in ``solve``."""
-        n = len(free_slots)
-        J = np.empty((n, n))
-        for k, s in enumerate(free_slots):
-            Ep = E.copy()
-            Ep[s] += _MACRO_FD_STEP
-            pert, _ = self._newton(Ep)
-            J[:, k] = (np.array([pert[t, t] for t in free_slots]) - base_r) / _MACRO_FD_STEP
-        return J
 
-
-class _StandardPlasticSolver:
+class _StandardPlasticSolver(_J2Solver):
     """J2 plasticity for the standard (non-periodic) path: direct face Dirichlet, no MPC.
 
     Macro loading enters through the prescribed face displacements (so the total strain is just
     ``eps(u)``, no fluctuation/E split); the reaction is the internal force ``int sig:eps(v)``
     summed at the drive face -- the nonlinear analogue of the linear path's ``K_full * u``.
-    Standard cells are fully confined (single Static step), so there is no free root-find.
-
-    TODO: share the quadrature setup, ``_fill_coeffs`` and the Newton loop with
-    ``_PlasticSolver``. Until then a change to ``_tangent``, ``_return_map`` or the loop has
-    to be made in both classes."""
+    Standard cells are fully confined (single Static step), so there is no free root-find."""
 
     def __init__(self, prob, model, sim):
         from . import _standard
 
-        space = prob.space
-        if space.dim not in (2, 3):
-            raise NotImplementedError("dolfinx plasticity supports 2D/3D only")
-        self.dim = space.dim
-        self.nv = 3 if self.dim == 2 else 6
-        self.mesh = space.mesh
-        self.V = space.V
-        self.materials = list(model.materials)
-
-        qd = _QUAD_DEGREE
-        self.points, self.weights = basix.make_quadrature(self.mesh.basix_cell(), qd)
-        self.npts = len(self.weights)
-        self.ncells = self.mesh.topology.index_map(self.mesh.topology.dim).size_local
-        N = self.ncells * self.npts
-
-        mf = prob.matfields
-        oci = space.oci
-        E = np.asarray(mf.youngs_cell, dtype=complex).real[oci].astype(float)
-        nu = np.asarray(mf.nu_cell, dtype=complex).real[oci].astype(float)
-        self.mu = np.repeat(E / (2 * (1 + nu)), self.npts)
-        self.lam = np.repeat(E * nu / ((1 + nu) * (1 - 2 * nu)), self.npts)
-        self.mat_id = np.repeat(np.asarray(mf.mat_of_cell)[oci].astype(int), self.npts)
-
-        cellname = self.mesh.topology.cell_name()
-        Qv = basix.ufl.quadrature_element(cellname, value_shape=(self.nv,), degree=qd)
-        Qt = basix.ufl.quadrature_element(cellname, value_shape=(self.nv, self.nv), degree=qd)
-        Qt1 = basix.ufl.quadrature_element(cellname, value_shape=(self.nv, self.nv), degree=1)
-        self.sig_q = fem.Function(fem.functionspace(self.mesh, Qv))
-        self.C_q = fem.Function(fem.functionspace(self.mesh, Qt))
-        self.C_c = fem.Function(fem.functionspace(self.mesh, Qt1))  # cell-mean tangent
-
-        self.u = fem.Function(self.V)  # the FULL displacement
-        self.eps_expr = fem.Expression(_eps_voigt(self.u, self.dim), self.points)
-        self._cells = np.arange(self.ncells, dtype=np.int32)
-
-        v_te = ufl.TestFunction(self.V)
-        dx_q = ufl.dx(metadata={"quadrature_degree": qd, "quadrature_scheme": "default"})
-        ev_v = _eps_voigt(v_te, self.dim)
-        self.a_form = _bbar_jacobian_form(self.V, self.dim, qd, self.C_q, self.C_c)
-        self.L_form = fem.form(ufl.inner(self.sig_q, ev_v) * dx_q)
-
-        self.eps_p = np.zeros((N, 6))
-        self.p = np.zeros(N)
-
+        super().__init__(prob, model)
+        space = self.space
         if prob.vc_spaces is None:
             prob.vc_spaces, prob.inv_maps = _standard._build_dof_maps(space)
         self.bcs, drive_nodes = _standard._parse_bcs(sim, space, prob.vc_spaces, prob.inv_maps)
         bs = self.V.dofmap.index_map_bs
         self._drive_flat = [space.block_of_node[drive_nodes] * bs + c for c in range(self.dim)]
 
-        self._fill_coeffs(np.zeros((N, self.nv)))  # elastic C_q to allocate A
         self.A = fempetsc.assemble_matrix(self.a_form, bcs=self.bcs)
         self.A.assemble()
-        self._C_assembled = self.C_q.x.array.copy()  # tangent the assembled A was built from
+        self.r = fempetsc.assemble_vector(self.L_form)
         self.x = self.A.createVecRight()
-        self.ksp = PETSc.KSP().create(self.mesh.comm)
-        self.ksp.setOperators(self.A)
-        self.ksp.setType("preonly")
-        self.ksp.getPC().setType("lu")
+        self.ksp = lu_ksp(self.A, self.mesh.comm)
 
-    def _strain(self):
-        ev = self.eps_expr.eval(self.mesh, self._cells)
-        eps = np.asarray(ev).real
-        vol = eps[:, :, :self.dim].sum(axis=2)
-        w = self.weights
-        vbar = (vol * w).sum(axis=1, keepdims=True) / w.sum()
-        corr = (vbar - vol) / self.dim
-        for k in range(self.dim):
-            eps[:, :, k] += corr
-        return eps.reshape(-1, self.nv)
-
-    def _fill_coeffs(self, eps_total, commit=False, tangent=True):
-        if tangent:
-            C, sig, eps_p_new, p_new = _tangent(eps_total, self.mu, self.lam, self.eps_p,
-                                                self.p, self.mat_id, self.materials, self.dim)
-            self.C_q.x.array[:] = C.reshape(-1)
-            w = self.weights
-            Cc = (C.reshape(self.ncells, self.npts, self.nv, self.nv)
-                  * w[None, :, None, None]).sum(axis=1) / w.sum()
-            self.C_c.x.array[:] = Cc.reshape(-1)
-        else:
-            sig, eps_p_new, p_new = _return_map(eps_total, self.mu, self.lam, self.eps_p,
-                                                self.p, self.mat_id, self.materials, self.dim)
-        self.sig_q.x.array[:] = sig.reshape(-1)
-        if commit:
-            self.eps_p, self.p = eps_p_new, p_new
+    def _assemble_jacobian(self):
+        fempetsc.assemble_matrix(self.A, self.a_form, bcs=self.bcs)
 
     def _residual(self):
-        """Internal-force vector ``R(u) = int sig_q : eps(v)`` (a fresh assembled PETSc vec)."""
-        r = fempetsc.assemble_vector(self.L_form)
-        r.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
-        return r
+        """Internal-force vector ``R(u) = int sig_q : eps(v)``, assembled into ``self.r``."""
+        with self.r.localForm() as rl:
+            rl.set(0.0)
+        fempetsc.assemble_vector(self.r, self.L_form)
+        self.r.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
+        return self.r
 
     def solve(self):
         fempetsc.set_bc(self.u.x.petsc_vec, self.bcs)   # u carries the prescribed face displ.
         self.u.x.scatter_forward()
-        r0 = rprev = None
-        last_du = None
-        halvings = 0
-        for _ in range(_MAX_NEWTON):
-            eps_total = self._strain()
-            self._fill_coeffs(eps_total, tangent=False)
+
+        def residual():
+            self._eps_total = self._total_strain()
+            self._fill_coeffs(self._eps_total, commit=False, tangent=False)
             r = self._residual()                                 # R(u) = internal force
             fempetsc.set_bc(r, self.bcs, x0=self.u.x.petsc_vec, alpha=-1.0)  # 0 at Dirichlet
             r.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
-            rnorm = r.norm()
-            if r0 is None:
-                r0 = rnorm
-            if rnorm <= _NEWTON_TOL + _NEWTON_RTOL * (r0 or 1.0):
-                r.destroy()
-                break
-            if rprev is not None and rnorm > rprev and last_du is not None and halvings < 8:
-                last_du *= 0.5                      # backtrack: retreat half of the last step
-                self.u.x.array[:] = self.u.x.array + last_du
-                halvings += 1
-                r.destroy()
-                continue
-            halvings = 0
-            if rprev is None or rnorm > _FROZEN_RATIO * rprev:  # modified Newton (see _newton)
-                self._fill_coeffs(eps_total, tangent=True)
-                if not np.array_equal(self.C_q.x.array, self._C_assembled):
-                    self.A.zeroEntries()
-                    fempetsc.assemble_matrix(self.A, self.a_form, bcs=self.bcs)
-                    self.A.assemble()  # values-only refill; PETSc refactors on the next solve
-                    self.ksp.setOperators(self.A)
-                    self._C_assembled = self.C_q.x.array.copy()
-            self.ksp.solve(r, self.x)            # x = A^{-1} R
-            self.x.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
-            last_du = self.x.array.copy()
-            self.u.x.array[:] = self.u.x.array - last_du
-            r.destroy()
-            rprev = rnorm
-        else:
+            return r
+
+        converged, _ = modified_newton(residual, self._refresh_tangent, self.ksp, self.x, self.u)
+        if not converged:
             raise ConvergenceError("Newton solve did not converge")
         # commit + reaction = internal force (no BC modification) summed at the drive face
-        self._fill_coeffs(self._strain(), commit=True, tangent=False)
-        fint = self._residual()
-        f = fint.getArray()
+        self._fill_coeffs(self._total_strain(), commit=True, tangent=False)
+        f = self._residual().getArray()
         u = self.u.x.array
         RF = [float(f[flat].sum().real) for flat in self._drive_flat]
         U = [float(u[flat].sum().real) for flat in self._drive_flat]
-        fint.destroy()
         return [1.0] + RF + [0.0] * self.dim + U
 
 
@@ -659,12 +485,3 @@ def make_solver(prob, model):
 def make_standard_solver(prob, model, sim):
     """Build a standard (non-periodic) plastic solver for a single plastic Static step."""
     return _StandardPlasticSolver(prob, model, sim)
-
-
-def solve_static_plastic(prob, loading, model, n_incr=1):
-    """Solve one standalone plastic ``Static`` step; return its readODB row.
-
-    ``n_incr`` defaults to one increment, as in ``run``. For multi-step sims build one
-    ``make_solver`` and call ``.solve`` per step.
-    """
-    return make_solver(prob, model).solve(loading, n_incr)

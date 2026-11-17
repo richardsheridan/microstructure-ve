@@ -43,11 +43,6 @@ class SpecParsingTests(unittest.TestCase):
         self.sim = synthetic_simulation()
         self.model = self.sim.model
 
-    def test_default_frequencies(self):
-        freqs = spec.default_frequencies(self.sim)
-        self.assertEqual(len(freqs), 30)
-        np.testing.assert_allclose([freqs[0], freqs[-1]], [1e-7, 1e5], rtol=1e-12)
-
     def test_drive_displacement(self):
         self.assertAlmostEqual(spec.drive_displacement(self.sim), 0.005)
 
@@ -55,15 +50,12 @@ class SpecParsingTests(unittest.TestCase):
         self.assertTrue(dataclasses.is_dataclass(spec.Geometry))
         g = spec.Geometry.from_model(self.model, self.sim)
         self.assertEqual(g.dim, 2)
-        self.assertAlmostEqual(g.exx, 0.005 / (6 * 0.0025))
 
     def test_geometry(self):
         g = spec.Geometry.from_model(self.model, self.sim)
         self.assertEqual(g.dim, 2)
         np.testing.assert_array_equal(g.shape, [7, 7])
-        self.assertAlmostEqual(g.Lx, 6 * 0.0025)
-        self.assertAlmostEqual(g.cross_area, 6 * 0.0025)
-        self.assertAlmostEqual(g.exx, 0.005 / (6 * 0.0025))
+        np.testing.assert_allclose(g.L, [6 * 0.0025, 6 * 0.0025])
 
     def test_material_cell_maps_partition(self):
         mat_of_cell, poissons, youngs, modulus_fns = spec.material_cell_maps(self.model)
@@ -75,9 +67,6 @@ class SpecParsingTests(unittest.TestCase):
         for mi, mat in enumerate(self.model.materials):
             for e in mat.elset.elements:
                 self.assertEqual(mat_of_cell[e - 1], mi)
-
-    def test_require_periodic(self):
-        spec.require_periodic(self.model)  # synthetic sim has a PBC -> no raise
 
 
 if __name__ == "__main__":

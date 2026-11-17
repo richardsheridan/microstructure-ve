@@ -10,11 +10,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from microstructure_ve.boundary import (
-    BoundaryCondition,
-    PeriodicBoundaryConstraint,
-    Prescribed,
-)
+from microstructure_ve.boundary import BoundaryCondition, Prescribed
 from microstructure_ve.steps import Dynamic, Static
 
 
@@ -34,22 +30,20 @@ def find_drive(items):
     return None
 
 
-def default_frequencies(sim):
-    """Log-spaced excitation frequencies from the Dynamic subsection of the first step."""
-    dyn = find(sim.steps[0].subsections, Dynamic)
-    if dyn is None:
-        raise ValueError("no Dynamic subsection found in the first step")
+def sweep_frequencies(dyn):
+    """The log-spaced excitation frequencies of the ``Dynamic`` subsection ``dyn``."""
     return np.logspace(np.log10(dyn.f_initial), np.log10(dyn.f_final), dyn.f_count)
 
 
 def frequencies(sim):
     """The points the sweep is evaluated at -- the single entry point used by ``run`` and the
-    ``_loading.check_supported`` capability check. Returns the ``Dynamic`` sweep of the first step if present;
+    ``_loading.check_supported`` capability check. Returns the log-spaced ``Dynamic`` sweep of the first step if present;
     returns ``[1.0]`` for a ``Static``-only sim, the frame value of its one row, which ``run``
     solves with the real elastic moduli rather than ``complex_modulus`` at 1.0; raises
     ``ValueError`` if neither subsection is present."""
-    if find(sim.steps[0].subsections, Dynamic) is not None:
-        return default_frequencies(sim)
+    dyn = find(sim.steps[0].subsections, Dynamic)
+    if dyn is not None:
+        return sweep_frequencies(dyn)
     if find(sim.steps[0].subsections, Static) is not None:
         return np.array([1.0])
     raise ValueError(
@@ -112,33 +106,23 @@ def periodic_pairs(shape):
 
 @dataclass
 class Geometry:
-    """Macro geometry for x-uniaxial loading: axis lengths, cross-section, drive strain.
+    """Macro geometry of the node grid: dimension, pixel scale, grid shape and axis lengths.
 
     ``shape`` is the node grid ``(.., ny+1, nx+1)`` so coordinate axis ``i`` maps to grid
-    axis ``dim - 1 - i``. ``L = [Lx, Ly, (Lz)]``; ``cross_area`` is perpendicular to the
-    x drive; ``exx = drive_displacement / Lx`` (delta == exx * Lx).
+    axis ``dim - 1 - i``. ``L = [Lx, Ly, (Lz)]``.
     """
 
     dim: int
     scale: float
     shape: tuple
     L: list
-    Lx: float
-    cross_area: float
-    exx: float
 
     @classmethod
-    def from_model(cls, model, sim):
+    def from_model(cls, model, sim=None):
+        """The geometry of ``model``'s node grid. ``sim`` is not read."""
         nodes = model.nodes
         dim = nodes.dim
         scale = nodes.scale
         shape = nodes.shape
         L = [(shape[dim - 1 - i] - 1) * scale for i in range(dim)]
-        cross_area = float(np.prod(L[1:]))
-        return cls(dim, scale, shape, L, L[0], cross_area, drive_displacement(sim) / L[0])
-
-
-def require_periodic(model):
-    """Raise unless the model carries a PeriodicBoundaryConstraint (the FE backend needs it)."""
-    if find(model.bcs, PeriodicBoundaryConstraint) is None:
-        raise ValueError("the dolfinx backend requires a PeriodicBoundaryConstraint")
+        return cls(dim, scale, shape, L)

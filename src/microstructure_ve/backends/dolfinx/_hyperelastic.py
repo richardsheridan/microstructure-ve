@@ -31,9 +31,8 @@ Design notes (mirroring ``_plastic``, the reference for every convention here):
   corner displacement, ``RF = P-bar[:, a0] * cross_area`` with the volume-average PK1
   assembled on the same SRI measures as the residual (``dPi/dH[i,a] = V0 * P-bar[i,a]``;
   the face force ``int P.N dA0`` is the physical force ABAQUS reports). A free lateral
-  corner normal means ``P-bar[b,b] = 0``, solved by the same FD-bootstrapped Broyden outer
-  root-find as ``_plastic._PlasticSolver.solve`` (kept in sync by hand -- the loop is short
-  and the residuals differ: average PK1 here, average Cauchy there).
+  corner normal means ``P-bar[b,b] = 0``, solved by ``_nonlinear.FreeLateralRamp``, the
+  root-find the plastic path also uses (on average PK1 here, average Cauchy there).
 
 All phases must be hyperelastic of the same model class (``_loading.check_supported`` enforces it:
 an ``*Elastic`` phase under NLGEOM is hypoelastic in ABAQUS, which this formulation cannot
@@ -56,17 +55,8 @@ from microstructure_ve.constitutive import (
     ReducedPolynomial,
 )
 
-from ._solver import ConvergenceError, root_step
-
-_NEWTON_TOL = 1e-10       # absolute floor on the residual norm
-_NEWTON_RTOL = 1e-9       # relative to the largest initial residual seen
-_MAX_NEWTON = 50
-_MAX_OUTER = 25           # free-lateral root-find iterations
-_OUTER_TOL = 1e-9         # |P-bar| on a free component (relative to a stress scale)
-_MACRO_FD_STEP = 1e-6     # macro-gradient perturbation for the Jacobian bootstrap
-_OUTER_FD_RETRY = 8       # outer iterations on a Broyden Jacobian before an FD refresh
-_FROZEN_RATIO = 0.5       # refresh Jacobian+factorization when an iteration shrinks the
-                          # residual by less than this (modified Newton, as in _plastic)
+from ._nonlinear import FreeLateralRamp, modified_newton
+from ._solver import ConvergenceError, lu_ksp
 
 # Arruda-Boyce Langevin-expansion coefficients C_i, i = 1..5
 _AB_C = (0.5, 1.0 / 20.0, 11.0 / 1050.0, 19.0 / 7000.0, 519.0 / 673750.0)
@@ -264,6 +254,13 @@ class _FormsMixin:
                          for j in range(dim)] for i in range(dim)]
         self.vol0 = prob.space.area
 
+    def _refresh_jacobian(self):
+        """``modified_newton``'s Jacobian refresh: reassemble at the current displacement."""
+        self.A.zeroEntries()
+        self._assemble_jacobian()
+        self.A.assemble()  # values-only refill; PETSc refactors on the next solve
+        self.ksp.setOperators(self.A)
+
     def _avg_P(self):
         """Volume-average PK1 (dim, dim), real."""
         return np.array([[complex(fem.assemble_scalar(self.P_forms[i][j])).real
@@ -300,77 +297,39 @@ class _HyperelasticSolver(_FormsMixin):
         self.b = dolfinx_mpc.assemble_vector(self.res_forms[0], self.mpc)
         self._b_vol = dolfinx_mpc.assemble_vector(self.res_forms[1], self.mpc)
         self.x = self.A.createVecRight()
-        self.du = fem.Function(self.V)
-        self.ksp = PETSc.KSP().create(self.mesh.comm)
-        self.ksp.setOperators(self.A)
-        self.ksp.setType("preonly")
-        self.ksp.getPC().setType("lu")
+        self.ksp = lu_ksp(self.A, self.mesh.comm)
 
         self.H_current = np.zeros((self.dim, self.dim))
-        self._J_macro = None       # free-lateral macro Jacobian (Broyden-updated)
-        self._J_free_slots = None
+        self._ramp = FreeLateralRamp(lambda axis: (axis, axis))
         self._r_ref = 0.0          # largest initial Newton residual seen
 
-    def _set_H(self, H_num):
-        self.H.value[:] = H_num
+    def _assemble_jacobian(self):
+        dolfinx_mpc.assemble_matrix(self.jac_form, self.mpc, bcs=self.bcs, A=self.A)
+
+    def _residual(self):
+        """The constrained residual at the current fluctuation, in ``self.b``."""
+        # each part gets its own vector: dolfinx_mpc.assemble_vector zeroes its target
+        # (docs/dolfinx_backend_design.md#vector-assembly-into-one-target)
+        dolfinx_mpc.assemble_vector(self.res_forms[0], self.mpc, self.b)
+        dolfinx_mpc.assemble_vector(self.res_forms[1], self.mpc, self._b_vol)
+        with self.b.localForm() as bl, self._b_vol.localForm() as vl:
+            bl.array[:] += vl.array
+        dolfinx_mpc.apply_lifting(self.b, [self.jac_form], [self.bcs], self.mpc)
+        self.b.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
+        fempetsc.set_bc(self.b, self.bcs)
+        self.b.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
+        return self.b
 
     # -- one Newton solve at a fixed macro gradient ---------------------------
-    def _newton(self):
-        """Modified Newton with step-halving backtracking, mirroring ``_plastic._newton``
-        (same constants, same ``_r_ref`` warm-start reference). The tangent refresh is a UFL
-        Jacobian assembly instead of a return-map coefficient fill. Returns whether the
-        residual met its tolerance."""
-        r0 = rprev = None
-        last_du = None
-        halvings = 0
-        for _ in range(_MAX_NEWTON):
-            # each part gets its own vector: dolfinx_mpc.assemble_vector zeroes its target
-            # (docs/dolfinx_backend_design.md#vector-assembly-into-one-target)
-            dolfinx_mpc.assemble_vector(self.res_forms[0], self.mpc, self.b)
-            dolfinx_mpc.assemble_vector(self.res_forms[1], self.mpc, self._b_vol)
-            with self.b.localForm() as bl, self._b_vol.localForm() as vl:
-                bl.array[:] += vl.array
-            dolfinx_mpc.apply_lifting(self.b, [self.jac_form], [self.bcs], self.mpc)
-            self.b.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
-            fempetsc.set_bc(self.b, self.bcs)
-            self.b.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
-
-            rnorm = self.b.norm()
-            # imaginary residual => some det(F) went non-positive (complex branch of the
-            # fractional powers): element inversion, handled like a growing residual
-            inverted = (not np.isfinite(rnorm)) or (
-                np.abs(np.asarray(self.b.getArray()).imag).max() > 1e-8 * max(rnorm, 1.0))
-            if not inverted:
-                if r0 is None:
-                    r0 = rnorm
-                    self._r_ref = max(self._r_ref, r0)
-                if rnorm <= _NEWTON_TOL + _NEWTON_RTOL * (self._r_ref or 1.0):
-                    return True
-
-            grew = rprev is not None and rnorm > rprev
-            if (inverted or grew) and last_du is not None and halvings < 8:
-                last_du *= 0.5                      # backtrack: retreat half of the last step
-                self.disp.x.array[:] = self.disp.x.array.real + last_du
-                halvings += 1
-                continue
-            halvings = 0
-
-            if rprev is None or rnorm > _FROZEN_RATIO * rprev:
-                self.A.zeroEntries()
-                dolfinx_mpc.assemble_matrix(self.jac_form, self.mpc, bcs=self.bcs, A=self.A)
-                self.A.assemble()  # values-only refill; PETSc refactors on the next solve
-                self.ksp.setOperators(self.A)
-            self.ksp.solve(self.b, self.x)
-            self.x.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
-            du = self.du
-            fempetsc.assign(self.x, du)
-            self.mpc.homogenize(du)
-            self.mpc.backsubstitution(du)
-            last_du = du.x.array.real.copy()
-            # keep w real: fractional powers of det(F) must see a real-positive J
-            self.disp.x.array[:] = self.disp.x.array.real - last_du
-            rprev = rnorm
-        return False
+    def _newton(self, H):
+        """Equilibrate the fluctuation at macro gradient ``H`` by ``modified_newton``, held
+        real and judged against the largest initial residual this solver has seen. Returns
+        whether the residual met its tolerance."""
+        self.H.value[:] = H
+        converged, self._r_ref = modified_newton(self._residual, self._refresh_jacobian,
+                                                 self.ksp, self.x, self.disp, mpc=self.mpc,
+                                                 real=True, r_ref=self._r_ref)
+        return converged
 
     # -- public entry ----------------------------------------------------------
     def _target_H(self, loading):
@@ -385,49 +344,10 @@ class _HyperelasticSolver(_FormsMixin):
         """Ramp the macro gradient from the committed ``H_current`` to this step's target
         over ``n_incr`` increments (Newton warm-started across increments), solving any
         ``free`` lateral diagonal entries so their average PK1 vanishes. Returns the readODB
-        row and advances ``H_current``. Mirrors ``_plastic._PlasticSolver.solve``."""
-        target = self._target_H(loading)
-        free_slots = [b for (b, _) in loading.free]
-        free_val = np.array([self.H_current[b, b] for b in free_slots])
-        H_start = self.H_current.copy()
-        if free_slots != self._J_free_slots:
-            self._J_macro, self._J_free_slots = None, free_slots
-
-        Hc = target.copy()
-        for inc in range(1, n_incr + 1):
-            frac = inc / n_incr
-            H_drv = H_start + frac * (target - H_start)
-            prev_val = prev_resid = None  # secant pairs are only valid at a fixed H_drv
-            for it in range(_MAX_OUTER):
-                Hc = H_drv.copy()
-                for k, b in enumerate(free_slots):
-                    Hc[b, b] = free_val[k]
-                self._set_H(Hc)
-                converged = self._newton()
-                if not free_slots:
-                    break
-                Pbar = self._avg_P()
-                resid = np.array([Pbar[b, b] for b in free_slots])
-                scale = max(np.abs(target).max() * self._E_scale, 1.0)
-                if np.max(np.abs(resid)) <= _OUTER_TOL * scale:
-                    break
-                if self._J_macro is not None and prev_val is not None:
-                    dv = free_val - prev_val  # Broyden rank-1 secant update
-                    denom = float(dv @ dv)
-                    if denom > 0.0:
-                        self._J_macro += np.outer(
-                            (resid - prev_resid) - self._J_macro @ dv, dv) / denom
-                if self._J_macro is None or it == _OUTER_FD_RETRY:
-                    self._J_macro = self._macro_jac_fd(Hc, free_slots, resid)
-                prev_val, prev_resid = free_val.copy(), resid
-                free_val = free_val - root_step(self._J_macro, resid)
-            else:
-                raise ConvergenceError(
-                    f"free-lateral root-find did not converge in increment {inc}/{n_incr}")
-            if not converged:
-                raise ConvergenceError(
-                    f"Newton solve did not converge in increment {inc}/{n_incr}")
-
+        row and advances ``H_current``."""
+        Hc = self._ramp.run(self.H_current, self._target_H(loading),
+                            [b for (b, _) in loading.free], n_incr, self._newton,
+                            lambda H: self._avg_P(), self._E_scale)
         self.H_current = Hc.copy()
         Pbar = self._avg_P()
         a0 = loading.primary_axis
@@ -435,22 +355,6 @@ class _HyperelasticSolver(_FormsMixin):
         U = np.zeros(self.dim)
         U[loading.primary_dof - 1] = loading.drive_value
         return [1.0] + list(RF) + [0.0] * self.dim + list(U)
-
-    def _macro_jac_fd(self, Hc, free_slots, base_r):
-        """FD bootstrap of d(P-bar_free)/d(H_free): one warm-started inner Newton per free
-        slot against the already-converged ``base_r``. No restore solve (the outer loop's
-        next ``_newton`` re-converges from the perturbed warm start)."""
-        n = len(free_slots)
-        J = np.empty((n, n))
-        for k, s in enumerate(free_slots):
-            Hp = Hc.copy()
-            Hp[s, s] += _MACRO_FD_STEP
-            self._set_H(Hp)
-            self._newton()
-            Pp = self._avg_P()
-            J[:, k] = (np.array([Pp[t, t] for t in free_slots]) - base_r) / _MACRO_FD_STEP
-        self._set_H(Hc)
-        return J
 
 
 class _StandardHyperelasticSolver(_FormsMixin):
@@ -490,11 +394,9 @@ class _StandardHyperelasticSolver(_FormsMixin):
 
         self.A = fempetsc.assemble_matrix(self.jac_form, bcs=self.bcs)
         self.A.assemble()
+        self.r = fempetsc.assemble_vector(self.res_forms[0])
         self.x = self.A.createVecRight()
-        self.ksp = PETSc.KSP().create(self.mesh.comm)
-        self.ksp.setOperators(self.A)
-        self.ksp.setType("preonly")
-        self.ksp.getPC().setType("lu")
+        self.ksp = lu_ksp(self.A, self.mesh.comm)
 
     def set_step(self, step):
         """Re-parse ``step``'s BCs; the next ``solve`` ramps from the committed state.
@@ -523,11 +425,28 @@ class _StandardHyperelasticSolver(_FormsMixin):
             g_start[vc_dofs] = u[flat_dofs]
             self._bc_gs.append((bc, g_start, bc.g.x.array.real.copy()))
 
+    def _assemble_jacobian(self):
+        fempetsc.assemble_matrix(self.A, self.jac_form, bcs=self.bcs)
+
     def _residual(self):
-        """Assembled internal (nominal) force vector ``R(u)`` -- a fresh PETSc vec."""
-        r = fempetsc.assemble_vector(self.res_forms[0])
-        fempetsc.assemble_vector(r, self.res_forms[1])
+        """Assembled internal (nominal) force vector ``R(u)``, in ``self.r``."""
+        with self.r.localForm() as rl:
+            rl.set(0.0)
+        fempetsc.assemble_vector(self.r, self.res_forms[0])
+        fempetsc.assemble_vector(self.r, self.res_forms[1])
+        self.r.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
+        return self.r
+
+    def _lifted_residual(self):
+        """The Newton residual with the increment's BC delta carried through lifting: ``du``
+        solves ``J du = R`` with ``du = u - g`` at the Dirichlet dofs, so ``u_new = u - du``
+        lands exactly on the (rescaled) bc values and the first iterate of an increment is
+        the smooth linearized response to the bc change."""
+        r = self._residual()
+        fempetsc.apply_lifting(r, [self.jac_form], bcs=[self.bcs],
+                               x0=[self.disp.x.petsc_vec], alpha=-1.0)
         r.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
+        fempetsc.set_bc(r, self.bcs, x0=self.disp.x.petsc_vec, alpha=-1.0)
         return r
 
     def solve(self, n_incr):
@@ -536,62 +455,17 @@ class _StandardHyperelasticSolver(_FormsMixin):
             frac = inc / n_incr
             for bc, g_start, g_target in self._bc_gs:
                 bc.g.x.array[:] = g_start + frac * (g_target - g_start)
-            r0 = rprev = None
-            last_du = None
-            halvings = 0
-            for _ in range(_MAX_NEWTON):
-                # Newton with the increment's BC delta carried through lifting: du solves
-                # J du = R with du = u - g at the Dirichlet dofs, so u_new = u - du lands
-                # exactly on the (rescaled) bc values and the first iterate of an increment
-                # is the smooth linearized response to the bc change.
-                r = self._residual()
-                fempetsc.apply_lifting(r, [self.jac_form], bcs=[self.bcs],
-                                       x0=[self.disp.x.petsc_vec], alpha=-1.0)
-                r.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
-                fempetsc.set_bc(r, self.bcs, x0=self.disp.x.petsc_vec, alpha=-1.0)
-                rnorm = r.norm()
-                # a residual with an imaginary part means some det(F) went non-positive
-                # (fractional powers jumped onto the complex branch): element inversion,
-                # handled like a growing residual (backtrack)
-                inverted = (not np.isfinite(rnorm)) or (
-                    np.abs(np.asarray(r.getArray()).imag).max() > 1e-8 * max(rnorm, 1.0))
-                if not inverted:
-                    if r0 is None:
-                        r0 = rnorm
-                        r_ref = max(r_ref, r0)
-                    if rnorm <= _NEWTON_TOL + _NEWTON_RTOL * (r_ref or 1.0):
-                        r.destroy()
-                        break
-                grew = rprev is not None and rnorm > rprev
-                if (inverted or grew) and last_du is not None and halvings < 8:
-                    last_du *= 0.5                  # backtrack: retreat half of the last step
-                    self.disp.x.array[:] = self.disp.x.array.real + last_du
-                    halvings += 1
-                    r.destroy()
-                    continue
-                halvings = 0
-                if rprev is None or rnorm > _FROZEN_RATIO * rprev:  # modified Newton
-                    self.A.zeroEntries()
-                    fempetsc.assemble_matrix(self.A, self.jac_form, bcs=self.bcs)
-                    self.A.assemble()
-                    self.ksp.setOperators(self.A)
-                self.ksp.solve(r, self.x)
-                self.x.ghostUpdate(addv=PETSc.InsertMode.INSERT,
-                                   mode=PETSc.ScatterMode.FORWARD)
-                last_du = self.x.array.real.copy()
-                self.disp.x.array[:] = self.disp.x.array.real - last_du
-                r.destroy()
-                rprev = rnorm
-            else:
+            converged, r_ref = modified_newton(self._lifted_residual, self._refresh_jacobian,
+                                               self.ksp, self.x, self.disp, real=True,
+                                               r_ref=r_ref)
+            if not converged:
                 raise ConvergenceError(
                     f"Newton solve did not converge in increment {inc}/{n_incr}")
         # reaction = internal force (no BC masking) summed at the drive face
-        fint = self._residual()
-        f = fint.getArray()
+        f = self._residual().getArray()
         u = self.disp.x.array
         RF = [float(f[flat].sum().real) for flat in self._drive_flat]
         U = [float(u[flat].sum().real) for flat in self._drive_flat]
-        fint.destroy()
         return [1.0] + RF + [0.0] * self.dim + U
 
 

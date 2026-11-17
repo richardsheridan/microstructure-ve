@@ -148,7 +148,7 @@ def _build_solver(sim, bbar, cancel, petsc_options, solver):
         raise ValueError(f"solver must be 'auto', 'lu' or 'iterative', got {solver!r}")
     model = sim.model
     has_pbc = any(isinstance(bc, PeriodicBoundaryConstraint) for bc in model.bcs)
-    geom = spec.Geometry.from_model(model, sim)
+    geom = spec.Geometry.from_model(model)
     prob = _fe_problem(geom, model, bbar)
 
     if not has_pbc:
@@ -238,7 +238,7 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
         E*_x(f) = (RF_Real_1 + 1j*RF_Imag_1) / (cross_area * exx)
 
     with ``cross_area = Ly`` (2D) or ``Ly*Lz`` (3D) and ``exx = U_1 / Lx`` -- i.e. divide
-    the x reaction by the cross-section and the applied macro strain (see ``Geometry``).
+    the x reaction by the cross-section and the applied macro strain.
 
     bbar:    selective reduced integration on the volumetric term (recommended; matches
              ABAQUS CPE4/C3D8 B-bar and avoids Q1 volumetric locking).
@@ -403,7 +403,7 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
     plastic_solver = None
     if has_plastic:
         from . import _plastic as _plastic
-        geom = spec.Geometry.from_model(sim.model, sim)
+        geom = spec.Geometry.from_model(sim.model)
         prob = _fe_problem(geom, sim.model, bbar)          # cached, populated by build_solver
         # ONE persistent solver for the whole sim: plastic state (eps_p, p, u~, E_current)
         # carries across consecutive plastic Static steps, so reversal/cyclic patterns
@@ -416,7 +416,7 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
     hyper_solver = None
     if has_hyper:
         from . import _hyperelastic
-        geom = spec.Geometry.from_model(sim.model, sim)
+        geom = spec.Geometry.from_model(sim.model)
         prob = _fe_problem(geom, sim.model, bbar)          # cached, populated by build_solver
         # ONE persistent finite-strain solver: H_current and the fluctuation warm-start
         # carry across consecutive hyperelastic Static steps (the response itself is
@@ -446,7 +446,7 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
         # the standard solve_one reads its BCs from the sim and takes no step drive
         step_kw = {} if loading is None else {"step_loading": loading}
         if dyn is not None:
-            freqs = np.logspace(np.log10(dyn.f_initial), np.log10(dyn.f_final), dyn.f_count)
+            freqs = spec.sweep_frequencies(dyn)
             rows.extend(solve_one(float(f), **step_kw) for f in freqs)
             energies.extend([np.nan] * len(freqs))
         elif spec.find(step.subsections, Static) is not None:
