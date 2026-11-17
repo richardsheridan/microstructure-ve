@@ -1,7 +1,7 @@
 """Direct-Dirichlet solve path for standard (non-periodic) boundary conditions.
 
 Assembles the B-bar stiffness with complex moduli, imposes Dirichlet BCs from the
-simulation's ``Fixed`` boundary conditions (zero) and step ``Prescribed`` drives
+simulation's model-level holds (zero, ``_loading.model_holds``) and step ``Prescribed`` drives
 (prescribed displacement), solves with PETSc serial LU, then reports the readODB-style
 row: ``[f, RF_Real..., RF_Imag..., U_Real...]`` where RF and U are summed over the
 primary drive nodeset nodes for each component.
@@ -26,12 +26,12 @@ from petsc4py import PETSc
 from dolfinx import fem
 import dolfinx.fem.petsc as fempetsc
 
-from microstructure_ve.boundary import (
-    BoundaryCondition,
-    Prescribed,
-)
 from microstructure_ve.core import _node_array
-from microstructure_ve.backends.dolfinx._loading import model_holds
+from microstructure_ve.backends.dolfinx._loading import (
+    model_holds,
+    prescribed_bcs,
+    unconstrained_components,
+)
 
 
 def _build_dof_maps(space):
@@ -108,8 +108,7 @@ def _parse_bcs_ex(sim, space, Vc_spaces, inv_maps, step=None):
         flat_dofs = (blocks * bs + comp).astype(np.int32)
         entries.append((bc, flat_dofs, inv_maps[comp][flat_dofs].astype(np.int32)))
 
-    drives = [s for s in step.subsections
-              if isinstance(s, BoundaryCondition) and isinstance(s.constraint, Prescribed)]
+    drives = prescribed_bcs(step.subsections)
     driven = {}
     for s in drives:
         for dof in s.constraint.dofs:
@@ -164,20 +163,11 @@ def build_solver(sim, prob):
     the solved displacement is non-unique, so the oracle U values cannot be reproduced.
     """
     model = sim.model
+    dim = model.nodes.dim
 
     # Guard: reject free-lateral cells (RBM null space → singular K, non-unique U).
-    dim = model.nodes.dim
-    constrained = set()
-    for bc in model.bcs:
-        if model_holds(bc):
-            for dof in bc.constraint.dofs:
-                constrained.add(int(dof) - 1)
-    for s in sim.steps[0].subsections:
-        if isinstance(s, BoundaryCondition) and isinstance(s.constraint, Prescribed):
-            for dof in s.constraint.dofs:
-                constrained.add(int(dof) - 1)
-    if constrained != set(range(dim)):
-        free = [i for i in range(dim) if i not in constrained]
+    free = unconstrained_components(model, sim.steps[0])
+    if free:
         raise NotImplementedError(
             f"free-lateral standard cell: component(s) {free} have no Dirichlet constraint; "
             "the stiffness matrix is singular (rigid-body-translation null space) and the "

@@ -215,8 +215,8 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     Everything about the *problem* is read from ``sim`` -- there are no physics kwargs.
     The frequencies come from ``spec.frequencies``; the macro loading (driven axis/mode and
     the free vs held lateral components) is parsed from the corner BCs and the step drive(s)
-    by ``_loading.macro_loading``; the zero-amplitude baseline ``Prescribed`` condition
-    in ``model.bcs`` is the ABAQUS path's convention (see ``example.py``). The remaining
+    by ``_loading.macro_loading``; a zero ``Prescribed`` in ``model.bcs`` holds its dofs as a
+    ``Fixed`` does (``_loading.model_holds``) and a nonzero one is refused. The remaining
     kwargs are execution knobs only.
 
     Each row is ``[frame_value, RF_Real_1..d, RF_Imag_1..d, U_1..d]`` (same columns as the

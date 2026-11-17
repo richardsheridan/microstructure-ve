@@ -102,6 +102,26 @@ def model_holds(bc):
     return isinstance(c, Fixed) or (isinstance(c, Prescribed) and c.value == 0)
 
 
+def prescribed_bcs(items):
+    """Every ``BoundaryCondition`` in ``items`` whose constraint is a ``Prescribed``."""
+    return [s for s in items
+            if isinstance(s, BoundaryCondition) and isinstance(s.constraint, Prescribed)]
+
+
+def unconstrained_components(model, step):
+    """Sorted 0-indexed components with no Dirichlet value in ``step``.
+
+    A component is constrained by a model-level hold (``model_holds``) or a drive of ``step``
+    on that dof. A standard cell with an unconstrained component has a rigid-body-translation
+    null space, so its stiffness matrix is singular.
+    """
+    constrained = {int(dof) - 1 for bc in model.bcs if model_holds(bc)
+                   for dof in bc.constraint.dofs}
+    constrained |= {int(dof) - 1 for s in prescribed_bcs(step.subsections)
+                    for dof in s.constraint.dofs}
+    return sorted(set(range(model.nodes.dim)) - constrained)
+
+
 def macro_loading(sim, step=None):
     """Parse ``sim`` into a ``MacroLoading`` (raises NotImplementedError if unsupported).
 
@@ -116,16 +136,12 @@ def macro_loading(sim, step=None):
 
     L = _axis_lengths(nodes)
 
-    def _drives(items):
-        return [s for s in items
-                if isinstance(s, BoundaryCondition) and isinstance(s.constraint, Prescribed)]
-
     if step is not None:
-        drives = _drives(step.subsections)
+        drives = prescribed_bcs(step.subsections)
     else:
         drives = []
         for st in sim.steps:
-            drives = _drives(st.subsections)
+            drives = prescribed_bcs(st.subsections)
             if drives:
                 break
     if len(drives) == 0:
@@ -201,8 +217,8 @@ def _standard_check(sim):
       standard paths are single-step.
     - Frequencies resolve (Static or Dynamic subsection present); for a hyperelastic
       multistep every step must carry a ``Static``.
-    - Every spatial component (x, y[, z]) has at least one Dirichlet constraint (either
-      a ``Fixed`` boundary condition or a step drive) so the stiffness matrix is
+    - Every spatial component (x, y[, z]) has at least one Dirichlet constraint in every
+      step (``unconstrained_components`` is empty) so the stiffness matrix is
       non-singular.  Modes with a free lateral direction (no constraint on a transverse
       component) have a rigid-body-translation null space; those are excluded because
       the quasi-static FE solver (no mass term) does not uniquely determine the
@@ -231,29 +247,13 @@ def _standard_check(sim):
         # Check frequencies resolve (single-step: Static or Dynamic)
         spec.frequencies(sim)
 
-    dim = model.nodes.dim
-    model_fixed = set()
-    for bc in model.bcs:
-        if model_holds(bc):
-            for dof in bc.constraint.dofs:
-                model_fixed.add(int(dof) - 1)
-
     for i, step in enumerate(steps):
-        # Every step needs at least one drive, and (with the model Fixed BCs) must leave
-        # no component unconstrained (rigid-body translation mode)
-        constrained = set(model_fixed)
-        has_drive = False
-        for s in step.subsections:
-            if isinstance(s, BoundaryCondition) and isinstance(s.constraint, Prescribed):
-                has_drive = True
-                for dof in s.constraint.dofs:
-                    constrained.add(int(dof) - 1)
-        if not has_drive:
+        if not prescribed_bcs(step.subsections):
             raise ValueError(f"step {i} has no Prescribed drive")
-        if constrained != set(range(dim)):
+        free = unconstrained_components(model, step)
+        if free:
             raise NotImplementedError(
-                f"free-lateral standard cell: component(s) "
-                f"{sorted(set(range(dim)) - constrained)} of step {i} have no "
+                f"free-lateral standard cell: component(s) {free} of step {i} have no "
                 "Dirichlet constraint"
             )
 
@@ -320,9 +320,8 @@ def check_supported(sim):
                 "supported; hyperelastic sims must be Static-only"
             )
 
-    for bc in sim.model.bcs:
-        if (isinstance(bc, BoundaryCondition) and isinstance(bc.constraint, Prescribed)
-                and bc.constraint.value != 0):
+    for bc in prescribed_bcs(sim.model.bcs):
+        if bc.constraint.value != 0:
             raise ValueError(
                 f"model-level Prescribed value {bc.constraint.value!r} is nonzero; a "
                 "model-level displacement may only hold its dofs at zero"
