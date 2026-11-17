@@ -266,6 +266,10 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
              with no increment data line (docs/dolfinx_backend_design.md, section 12).
              Ignored for non-plastic sims and the standard-BC plastic path (single ramp).
 
+    Refusal: a sim that ``_loading.check_supported`` rejects raises that check's
+    ``NotImplementedError`` (unsupported feature) or ``ValueError`` (malformed sim) before
+    any solver is built.
+
     Thread safety: ``run`` may be called concurrently from multiple threads. Serial
     sweeps and the multistep paths serialize on a process-wide lock held for the whole
     call (see the module docstring), so each returns exactly what a serial call would --
@@ -285,19 +289,8 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
             "an energy form)"
         )
 
-    # Dispatch below reads only the caller's sim (pure numpy checks), so it needs no lock.
-    if _has_hyperelastic(sim.model):
-        from microstructure_ve.steps import Dynamic
-
-        if any(spec.find(step.subsections, Dynamic) is not None for step in sim.steps):
-            raise NotImplementedError(
-                "steady-state dynamics about a hyperelastic (finite-strain) state is "
-                "not supported; hyperelastic sims must be Static-only"
-            )
-        if _has_plastic_static(sim):
-            raise NotImplementedError(
-                "mixing hyperelastic and plastic responses in one model is not supported"
-            )
+    # The check reads only the caller's sim (pure numpy), so it needs no lock.
+    loadingmod.check_supported(sim)
 
     energies = None
     if len(list(sim.steps)) > 1 or _has_plastic_static(sim) or _has_hyperelastic_static(sim):
@@ -365,14 +358,7 @@ def _has_plastic_static(sim):
 
 def _has_hyperelastic(model):
     """True iff ``model`` carries a hyperelastic response (numpy-only check)."""
-    from microstructure_ve.constitutive import (
-        ArrudaBoyce, NeoHookean, Polynomial, ReducedPolynomial,
-    )
-
-    return any(
-        isinstance(m.response, (ArrudaBoyce, ReducedPolynomial, Polynomial, NeoHookean))
-        for m in model.materials
-    )
+    return any(isinstance(m.response, loadingmod.HYPER_TYPES) for m in model.materials)
 
 
 def _has_hyperelastic_static(sim):

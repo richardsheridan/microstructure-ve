@@ -27,9 +27,17 @@ from microstructure_ve.boundary import (
     Fixed,
     Prescribed,
 )
+from microstructure_ve.constitutive import (
+    ArrudaBoyce,
+    NeoHookean,
+    Polynomial,
+    ReducedPolynomial,
+)
 from microstructure_ve.core import _node_array
 
 from . import _spec as spec
+
+HYPER_TYPES = (ArrudaBoyce, ReducedPolynomial, Polynomial, NeoHookean)
 
 
 @dataclass
@@ -174,8 +182,8 @@ def macro_loading(sim, step=None):
     )
 
 
-def _standard_can_run(sim):
-    """True iff ``sim`` is a well-posed standard (non-periodic, direct-Dirichlet) problem.
+def _standard_check(sim):
+    """Raise unless ``sim`` is a well-posed standard (non-periodic, direct-Dirichlet) problem.
 
     Requirements:
     - Exactly one step with at least one ``Prescribed`` drive -- OR several such steps
@@ -193,29 +201,26 @@ def _standard_can_run(sim):
 
     Pure numpy; no dolfinx import.
     """
-    from microstructure_ve.constitutive import (
-        ArrudaBoyce, NeoHookean, Polynomial, ReducedPolynomial,
-    )
     from microstructure_ve.steps import Static
 
     model = sim.model
     steps = list(sim.steps)
     if len(steps) != 1:
         all_hyper = all(
-            isinstance(m.response, (ArrudaBoyce, ReducedPolynomial, Polynomial,
-                                    NeoHookean))
-            for m in model.materials
+            isinstance(m.response, HYPER_TYPES) for m in model.materials
         ) and len(list(model.materials)) > 0
         if not all_hyper:
-            return False
+            raise NotImplementedError(
+                "a standard (non-periodic) sim with more than one step is supported only "
+                "when every material is hyperelastic"
+            )
         if any(spec.find(step.subsections, Static) is None for step in steps):
-            return False
+            raise NotImplementedError(
+                "every step of a standard hyperelastic multistep sim must be Static"
+            )
     else:
         # Check frequencies resolve (single-step: Static or Dynamic)
-        try:
-            spec.frequencies(sim)
-        except (NotImplementedError, ValueError):
-            return False
+        spec.frequencies(sim)
 
     dim = model.nodes.dim
     model_fixed = set()
@@ -224,7 +229,7 @@ def _standard_can_run(sim):
             for dof in bc.constraint.dofs:
                 model_fixed.add(int(dof) - 1)
 
-    for step in steps:
+    for i, step in enumerate(steps):
         # Every step needs at least one drive, and (with the model Fixed BCs) must leave
         # no component unconstrained (rigid-body translation mode)
         constrained = set(model_fixed)
@@ -234,27 +239,44 @@ def _standard_can_run(sim):
                 has_drive = True
                 for dof in s.constraint.dofs:
                     constrained.add(int(dof) - 1)
-        if not has_drive or constrained != set(range(dim)):
-            return False
-
-    return True
+        if not has_drive:
+            raise ValueError(f"step {i} has no Prescribed drive")
+        if constrained != set(range(dim)):
+            raise NotImplementedError(
+                f"free-lateral standard cell: component(s) "
+                f"{sorted(set(range(dim)) - constrained)} of step {i} have no "
+                "Dirichlet constraint"
+            )
 
 
 def can_run(sim):
-    """True iff the dolfinx backend can solve ``sim`` (drives parse + frequencies resolve).
+    """True iff the dolfinx backend can solve ``sim``, that is iff ``check_supported`` passes."""
+    try:
+        check_supported(sim)
+    except (NotImplementedError, ValueError):
+        return False
+    return True
 
-    Pure numpy; the test harness's ``is_fe_green`` calls this, so support widens
-    automatically as ``macro_loading`` / the frequency resolution grow.
+
+def check_supported(sim):
+    """Raise unless the dolfinx backend can solve ``sim`` (drives parse + frequencies resolve).
+
+    Raises
+    ------
+    NotImplementedError
+        ``sim`` is well formed but uses a feature the backend does not support.
+    ValueError
+        ``sim`` is malformed (for example no drive, or a step with neither Static nor Dynamic).
+
+    Pure numpy; ``run`` calls this before building a solver and ``can_run`` (hence the test
+    harness's ``is_fe_green``) wraps it, so support widens in both automatically as ``macro_loading`` / the frequency resolution grow.
 
     Handles two cases:
     - *Periodic* sims: validated by ``macro_loading`` (corner-driven PBC path).
     - *Standard* sims (no ``PeriodicBoundaryConstraint``): validated by
-      ``_standard_can_run`` (direct-Dirichlet path, well-posed cells only).
+      ``_standard_check`` (direct-Dirichlet path, well-posed cells only).
     """
     from microstructure_ve.boundary import PeriodicBoundaryConstraint
-    from microstructure_ve.constitutive import (
-        ArrudaBoyce, NeoHookean, Polynomial, ReducedPolynomial,
-    )
     from microstructure_ve.steps import Dynamic, Static
 
     # Hyperelastic (finite-strain) sims: the total-Lagrangian solver handles Static steps
@@ -262,29 +284,28 @@ def can_run(sim):
     # phase must be hyperelastic of the SAME model class (an *Elastic phase under NLGEOM
     # is hypoelastic in ABAQUS, which the total-Lagrangian energy formulation cannot
     # reproduce; different classes would need distinct coefficient layouts per cell).
-    hyper = [m.response for m in sim.model.materials
-             if isinstance(m.response, (ArrudaBoyce, ReducedPolynomial, Polynomial,
-                                        NeoHookean))]
+    hyper = [m.response for m in sim.model.materials if isinstance(m.response, HYPER_TYPES)]
     if hyper:
         if len(hyper) != len(list(sim.model.materials)):
-            return False
+            raise NotImplementedError(
+                "mixing hyperelastic and non-hyperelastic phases in one model is not supported"
+            )
         if len({type(r) for r in hyper}) != 1:
-            return False
+            raise NotImplementedError("all hyperelastic phases must share one model class")
         if any(spec.find(step.subsections, Dynamic) is not None for step in sim.steps):
-            return False
+            raise NotImplementedError(
+                "steady-state dynamics about a hyperelastic (finite-strain) state is not "
+                "supported; hyperelastic sims must be Static-only"
+            )
 
     has_pbc = any(isinstance(bc, PeriodicBoundaryConstraint) for bc in sim.model.bcs)
     if has_pbc:
-        try:
-            macro_loading(sim)
-        except (NotImplementedError, ValueError):
-            return False
+        macro_loading(sim)
         # every step must be a resolvable analysis (Static or Dynamic); the run loop
         # sweeps each step in turn (multi-step = several such steps)
-        return all(
-            spec.find(step.subsections, Dynamic) is not None
-            or spec.find(step.subsections, Static) is not None
-            for step in sim.steps
-        )
+        for i, step in enumerate(sim.steps):
+            if (spec.find(step.subsections, Dynamic) is None
+                    and spec.find(step.subsections, Static) is None):
+                raise ValueError(f"step {i} has neither a Static nor a Dynamic")
     else:
-        return _standard_can_run(sim)
+        _standard_check(sim)
