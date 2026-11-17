@@ -14,6 +14,7 @@ from microstructure_ve.boundary import BoundaryCondition, Fixed
 from microstructure_ve.constitutive import ArrudaBoyce, Elastic
 from microstructure_ve.steps import Dynamic, Static, Step
 
+from tests._helpers import homogeneous_simulation
 from tests._matrix import matrix_simulation
 
 try:
@@ -88,6 +89,27 @@ def _periodic_step_without_procedure():
     return sim
 
 
+def _with_element_type(etype, dim):
+    """A homogeneous periodic sim, otherwise supported, whose elements are of type ``etype``.
+
+    The type is set after construction, so a string the spec does not accept still reaches
+    the backend.
+    """
+    sim = homogeneous_simulation(n=3, dim=dim)
+    sim.model.elements.type = etype
+    return sim
+
+
+def refused_element_types():
+    """``(name, element type, grid dimension)`` for each element type ``run`` refuses."""
+    return [
+        ("plane stress", "CPS4R", 2),
+        ("2D reduced integration", "CPE4R", 2),
+        ("3D reduced integration", "C3D8R", 3),
+        ("unknown to the spec", "CPE8", 2),
+    ]
+
+
 def rejected_sims():
     """``(name, build, exception type)`` for each kind of sim ``can_run`` rejects."""
     return [
@@ -123,6 +145,10 @@ def rejected_sims():
          ValueError),
         ("periodic step with neither static nor dynamic", _periodic_step_without_procedure,
          ValueError),
+    ] + [
+        (f"element type {etype} ({name})",
+         lambda etype=etype, dim=dim: _with_element_type(etype, dim), NotImplementedError)
+        for name, etype, dim in refused_element_types()
     ]
 
 
@@ -145,6 +171,17 @@ class RunRefusesUnsupportedTests(unittest.TestCase):
                 sim = build()
                 self.assertFalse(_loading.can_run(sim), "catalogue sim is accepted")
                 self.assertRefuses(sim, exc_type)
+
+    def test_element_type_refusal_names_the_type(self):
+        """A sim refused for its element type says which type, so the caller knows what to
+        change."""
+        from microstructure_ve.backends.dolfinx import run
+
+        for name, etype, dim in refused_element_types():
+            with self.subTest(name):
+                with self.assertRaises(NotImplementedError) as cm:
+                    run(_with_element_type(etype, dim))
+                self.assertIn(etype, str(cm.exception))
 
     def test_parallel_sweep_refuses_in_the_calling_process(self):
         """With ``workers>1`` a rejected multi-frequency sim is refused in the caller with

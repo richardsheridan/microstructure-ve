@@ -208,7 +208,7 @@ class FrequencyParallelTests(unittest.TestCase):
         from microstructure_ve.backends.dolfinx import _run as run
 
         # frequency sweep + traction now come from the Simulation itself
-        sim = synthetic_simulation()
+        sim = synthetic_simulation(etype="CPE4")
         serial = run.run(sim, workers=1)
         parallel = run.run(sim, workers=2)
         np.testing.assert_allclose(parallel, serial, rtol=1e-9, atol=0)
