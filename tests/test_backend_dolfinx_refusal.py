@@ -10,12 +10,12 @@ as a failing sub-test.
 import copy
 import unittest
 
-from microstructure_ve.boundary import BoundaryCondition, Fixed
+from microstructure_ve.boundary import BoundaryCondition, Fixed, Prescribed
 from microstructure_ve.constitutive import ArrudaBoyce, Elastic
 from microstructure_ve.steps import Dynamic, Static, Step
 
 from tests._helpers import homogeneous_simulation
-from tests._matrix import matrix_simulation
+from tests._matrix import hold_by_prescribed, matrix_simulation
 
 try:
     import dolfinx  # noqa: F401
@@ -28,6 +28,8 @@ needs_dolfinx = unittest.skipUnless(HAS_DOLFINX, "needs the fenicsx env (dolfinx
 _N = 4
 _STANDARD = {"mode": "uniaxial_x", "traction": "confined_slip", "bc": "standard", "dim": 2}
 _PERIODIC = {"mode": "uniaxial_x", "traction": "free", "bc": "periodic", "dim": 2}
+_PERIODIC_CONFINED = {"mode": "uniaxial_x", "traction": "confined_slip", "bc": "periodic",
+                      "dim": 2}
 
 
 def _drives(step):
@@ -46,6 +48,16 @@ def _without_y_constraint(sim):
         b for b in sim.model.bcs
         if not (isinstance(b, BoundaryCondition) and isinstance(b.constraint, Fixed)
                 and list(b.constraint.dofs) == [2])
+    ]
+    return sim
+
+
+def _with_nonzero_baselines(sim, value):
+    """Give every model-level ``Prescribed`` (the zero baselines on the driven dofs) ``value``."""
+    sim.model.bcs = [
+        BoundaryCondition(b.target, Prescribed(list(b.constraint.dofs), value))
+        if isinstance(b, BoundaryCondition) and isinstance(b.constraint, Prescribed) else b
+        for b in sim.model.bcs
     ]
     return sim
 
@@ -144,6 +156,22 @@ def rejected_sims():
          lambda: _without_drives(matrix_simulation(test_type="elastic", n=_N, **_PERIODIC)),
          ValueError),
         ("periodic step with neither static nor dynamic", _periodic_step_without_procedure,
+         ValueError),
+        ("periodic nonzero model-level Prescribed on an undriven dof",
+         lambda: hold_by_prescribed(matrix_simulation(test_type="elastic", n=_N,
+                                                      **_PERIODIC_CONFINED), "X0Y1", 2, 1e-3),
+         ValueError),
+        ("periodic imaginary model-level Prescribed on an undriven dof",
+         lambda: hold_by_prescribed(matrix_simulation(test_type="elastic", n=_N,
+                                                      **_PERIODIC_CONFINED), "X0Y1", 2, 1e-3j),
+         ValueError),
+        ("standard nonzero model-level Prescribed on an undriven dof",
+         lambda: hold_by_prescribed(matrix_simulation(test_type="elastic", n=_N, **_STANDARD),
+                                    "Y0ALL", 2, 1e-3),
+         ValueError),
+        ("standard nonzero model-level Prescribed on a driven dof",
+         lambda: _with_nonzero_baselines(
+             matrix_simulation(test_type="elastic", n=_N, **_STANDARD), 1e-3),
          ValueError),
     ] + [
         (f"element type {etype} ({name})",
