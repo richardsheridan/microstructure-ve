@@ -8,7 +8,7 @@ Public API::
 ``run`` transparently caches the mesh-only FE setup by mesh shape, so sweeping many
 simulations that share a grid is fast; ``clear_cache`` releases that memory.
 
-All four entry points are thread-safe: calls that touch the in-process cache (serial
+Every entry point is thread-safe: calls that touch the in-process cache (serial
 ``run``, ``build_solver``, ``clear_cache``) serialize on one process-wide lock -- safe,
 but no thread parallelism -- while a ``run(workers=N)`` sweep fans out to worker
 processes *outside* that lock, so parallel sweeps launched from several threads overlap.
@@ -16,8 +16,8 @@ The worker path mutates no process-global state (each worker caps its own BLAS t
 in-process via threadpoolctl). See ``_run``'s module docstring for the full guarantee.
 
 ``run`` / ``build_solver`` are resolved lazily so that importing this package -- and its
-pure-numpy ``_spec`` submodule -- never pulls in dolfinx. The dolfinx-touching modules
-(``_assembly``, ``_constraints``, ``_solver``, ``_homogenize``, ``_run``) import
+pure-numpy ``_spec`` and ``_loading`` submodules -- never pulls in dolfinx. The other
+submodules import
 dolfinx/petsc4py/dolfinx_mpc at module top and are only loaded when ``run`` is used, so
 this package stays importable under the numpy-only msve env.
 """

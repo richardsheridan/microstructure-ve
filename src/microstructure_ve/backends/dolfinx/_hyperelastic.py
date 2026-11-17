@@ -3,7 +3,7 @@
 The ``*HYPERELASTIC`` responses (``ArrudaBoyce`` / ``Polynomial`` / ``ReducedPolynomial``)
 are path-independent strain-energy materials, meaningful only at finite strain, so a Static
 step carrying one needs a geometrically nonlinear solve: ``F = I + H + grad(w)`` with the
-macro displacement gradient ``H`` (NON-symmetric -- the corner-driven PBC imposes the raw
+macro displacement gradient ``H`` (non-symmetric -- the corner-driven PBC imposes the raw
 ``H[i,a] = value/L_a``, so a shear drive is *simple* shear, not the symmetrized small-strain
 ``E``) and the periodic fluctuation ``w`` through the same ``dolfinx_mpc`` constraint the
 linear/plastic paths use.
@@ -21,7 +21,7 @@ Design notes (mirroring ``_plastic``, the reference for every convention here):
   on the full degree-2 rule. Locking comes only from the volumetric term (the deviatoric
   invariants are volume-independent), so this matches CPE4/C3D8 closely.
 * **Complex-scalar PETSc build**: the energy contains ``J**(-2/3)`` / ``ln(J)`` whose
-  complex branches are noise-sensitive, so the fluctuation ``w`` is held REAL (its imaginary
+  complex branches are noise-sensitive, so the fluctuation ``w`` is held real (its imaginary
   part is zeroed after every Newton update); every fractional power then evaluates on a
   real-positive ``J`` and the assembled complex objects carry real values -- the same
   invariant ``_plastic`` relies on.
@@ -55,7 +55,7 @@ from microstructure_ve.constitutive import (
     ReducedPolynomial,
 )
 
-from ._nonlinear import FreeLateralRamp, modified_newton
+from ._nonlinear import FreeLateralRamp, face_row, modified_newton, periodic_row
 from ._solver import ConvergenceError, lu_ksp
 
 # Arruda-Boyce Langevin-expansion coefficients C_i, i = 1..5
@@ -70,20 +70,30 @@ def _poly_pairs(n):
 def _coefficient_table(responses):
     """Per-material coefficient columns for the (single) hyperelastic model class.
 
-    Returns ``(kind, dev_cols, invd_cols)``: ``dev_cols`` is ``(n_mat, n_dev)`` -- the
-    deviatoric coefficients in a fixed layout (ReducedPolynomial: C10..CN0; Polynomial:
-    the ABAQUS pair order up to the largest N; ArrudaBoyce: the 5 combined coefficients
-    ``a_i = mu*C_i/lm^(2i-2)``) -- and ``invd_cols`` is ``(n_mat, n_vol)`` holding **1/Di**
-    (0 where Di == 0, i.e. that volumetric term is absent for the phase, matching the
-    ABAQUS convention that a zero Di drops the term).
+    Returns
+    -------
+    kind : type
+        The model class shared by every response.
+    dev_cols : numpy.ndarray
+        ``(n_mat, n_dev)`` deviatoric coefficients in a fixed layout (ReducedPolynomial:
+        C10..CN0; Polynomial: the ABAQUS pair order up to the largest N; ArrudaBoyce: the 5
+        combined coefficients ``a_i = mu*C_i/lm^(2i-2)``; NeoHookean: ``mu0``).
+    invd_cols : numpy.ndarray
+        ``(n_mat, n_vol)`` holding ``1/Di``, 0 where ``Di == 0`` (the ABAQUS convention that a
+        zero Di drops that volumetric term). For NeoHookean, which has no D series, the one
+        column is ``lam`` itself.
+
+    Raises
+    ------
+    NotImplementedError
+        If the responses mix model classes or the class is not a supported hyperelastic one.
     """
     kind = type(responses[0])
     if any(type(r) is not kind for r in responses):
         raise NotImplementedError("all hyperelastic phases must share one model class")
 
     if kind is NeoHookean:
-        # the coupled form's "volumetric" column is lambda ITSELF (the third slot is
-        # lambda per material, not 1/Di -- there is no D-series in this model)
+        # the coupled form's volumetric column is lambda itself, not 1/Di
         dev = np.array([[r.mu0] for r in responses])
         lam = np.array([[r.lam] for r in responses])
         return kind, dev, lam
@@ -134,23 +144,13 @@ def _dg0_fields(mesh, mat_of_cell, oci, columns, keep_zero=False):
     return fns
 
 
-def _grad3(w, dim):
-    """Displacement gradient of ``w`` embedded 3x3 (plane strain: out-of-plane row/col 0)."""
-    G = ufl.grad(w)
+def _embed3(G, dim):
+    """A ``(dim, dim)`` gradient embedded 3x3 (plane strain: out-of-plane row/col 0)."""
     if dim == 2:
         return ufl.as_matrix([[G[0, 0], G[0, 1], 0],
                               [G[1, 0], G[1, 1], 0],
                               [0, 0, 0]])
     return G
-
-
-def _const3(H, dim):
-    """The macro-gradient Constant embedded 3x3 (plane strain: zero out-of-plane)."""
-    if dim == 2:
-        return ufl.as_matrix([[H[0, 0], H[0, 1], 0],
-                              [H[1, 0], H[1, 1], 0],
-                              [0, 0, 0]])
-    return H
 
 
 def _energy(kind, dev_fns, invd_fns, F):
@@ -166,8 +166,8 @@ def _energy(kind, dev_fns, invd_fns, F):
     I2b = J ** (-4.0 / 3.0) * I2
 
     if kind is NeoHookean:
-        # coupled compressible form: FULL I1 (not I1b) plus the -mu*ln(J) coupling; the
-        # "invd" slot carries lambda directly (see _coefficient_table)
+        # coupled compressible form: the full I1 (not I1b) plus the -mu*ln(J) coupling; the
+        # invd slot carries lambda directly (see _coefficient_table)
         mu, lam = dev_fns[0], invd_fns[0]
         psi_dev = mu / 2 * (I1 - 3) - mu * ufl.ln(J)
         psi_vol = lam / 2 * ((J * J - 1) / 2 - ufl.ln(J))
@@ -200,11 +200,22 @@ def _order_from_pairs(n_pairs):
 
 
 class _FormsMixin:
-    """Shared UFL construction: energy, residual, Jacobian, and average-PK1 forms.
+    """Shared setup and UFL construction: energy, residual, Jacobian, and average-PK1 forms.
 
-    ``self.disp`` is the displacement field (periodic fluctuation ``w`` or full ``u``),
-    ``self.H`` the macro-gradient Constant (zero for the standard path).
+    ``self.disp`` is the displacement field (periodic fluctuation ``w`` or full ``u``, kept
+    real), ``self.H`` the macro-gradient Constant (zero for the standard path).
     """
+
+    def __init__(self, prob, model):
+        space = prob.space
+        if space.dim not in (2, 3):
+            raise NotImplementedError("dolfinx hyperelasticity supports 2D/3D only")
+        self.space = space
+        self.dim = space.dim
+        self.mesh = space.mesh
+        self.V = space.V
+        self.disp = fem.Function(self.V)
+        self._build_forms(model, prob)
 
     def _build_forms(self, model, prob):
         mesh, dim = self.mesh, self.dim
@@ -219,11 +230,12 @@ class _FormsMixin:
         # in every phase
         invd_fns = _dg0_fields(mesh, mat_of_cell, oci, invd_cols,
                                keep_zero=kind is NeoHookean)
-        # outer-tolerance stress scale (initial Young's modulus, volume-averaged enough)
+        # outer-tolerance stress scale: the mean initial Young's modulus of the materials
         self._E_scale = float(np.mean([r.youngs for r in responses]))
 
         self.H = fem.Constant(mesh, np.zeros((dim, dim), dtype=PETSc.ScalarType))
-        F = ufl.variable(ufl.Identity(3) + _const3(self.H, dim) + _grad3(self.disp, dim))
+        F = ufl.variable(ufl.Identity(3) + _embed3(self.H, dim)
+                         + _embed3(ufl.grad(self.disp), dim))
         psi_dev, psi_vol = _energy(kind, dev_fns, invd_fns, F)
         P_dev = ufl.diff(psi_dev, F)
         P_vol = ufl.diff(psi_vol, F)
@@ -235,14 +247,14 @@ class _FormsMixin:
         dx1 = ufl.dx(metadata={"quadrature_degree": 1})  # centroid: SRI ~ B-bar mean dilatation
         v = ufl.TestFunction(self.V)
         du = ufl.TrialFunction(self.V)
-        gv = _grad3(v, dim)
+        gv = _embed3(ufl.grad(v), dim)
         R_dev = ufl.inner(P_dev, gv) * dx2
         R_vol = ufl.inner(P_vol, gv) * dx1
-        # Trap: a 1-form mixing quadrature degrees compiles to one rule, so the residual is
-        # two forms assembled in two passes, see
+        # A 1-form mixing quadrature degrees compiles to one rule, so the residual is two
+        # forms assembled in two passes, see
         # docs/dolfinx_backend_design.md#quadrature-merge-in-1-forms.
-        # The Clapeyron identity in tests/test_mechanical_mnist.py catches the merge on the
-        # standard path only; the periodic path shares these forms but has no such check.
+        # TODO: check for the merge on the periodic path too; the Clapeyron identity in
+        # tests/test_mechanical_mnist.py covers the standard path only.
         self.res_forms = (fem.form(R_dev), fem.form(R_vol))
         self.jac_form = fem.form(ufl.derivative(R_dev + R_vol, self.disp, du))
         # total strain energy on the residual's own SRI measures (so the reported energy
@@ -279,18 +291,9 @@ class _HyperelasticSolver(_FormsMixin):
     path-independent)."""
 
     def __init__(self, prob, model):
-        space = prob.space
-        if space.dim not in (2, 3):
-            raise NotImplementedError("dolfinx hyperelasticity supports 2D/3D only")
-        self.space = space
-        self.dim = space.dim
-        self.mesh = space.mesh
-        self.V = space.V
+        super().__init__(prob, model)  # self.disp is the periodic fluctuation w
         self.mpc = prob.mpc
         self.bcs = prob.center_bcs
-
-        self.disp = fem.Function(self.V)  # the periodic fluctuation w (kept real)
-        self._build_forms(model, prob)
 
         self.A = dolfinx_mpc.assemble_matrix(self.jac_form, self.mpc, bcs=self.bcs)
         self.A.assemble()
@@ -344,17 +347,13 @@ class _HyperelasticSolver(_FormsMixin):
         """Ramp the macro gradient from the committed ``H_current`` to this step's target
         over ``n_incr`` increments (Newton warm-started across increments), solving any
         ``free`` lateral diagonal entries so their average PK1 vanishes. Returns the readODB
-        row and advances ``H_current``."""
+        row, whose reaction is the nominal force on the reference cross-section, and advances
+        ``H_current``."""
         Hc = self._ramp.run(self.H_current, self._target_H(loading),
                             [b for (b, _) in loading.free], n_incr, self._newton,
                             lambda H: self._avg_P(), self._E_scale)
         self.H_current = Hc.copy()
-        Pbar = self._avg_P()
-        a0 = loading.primary_axis
-        RF = Pbar[:, a0] * loading.cross_area  # nominal force on the reference cross-section
-        U = np.zeros(self.dim)
-        U[loading.primary_dof - 1] = loading.drive_value
-        return [1.0] + list(RF) + [0.0] * self.dim + list(U)
+        return periodic_row(loading, self._avg_P())
 
 
 class _StandardHyperelasticSolver(_FormsMixin):
@@ -375,16 +374,7 @@ class _StandardHyperelasticSolver(_FormsMixin):
     def __init__(self, prob, model, sim):
         from . import _standard
 
-        space = prob.space
-        if space.dim not in (2, 3):
-            raise NotImplementedError("dolfinx hyperelasticity supports 2D/3D only")
-        self.space = space
-        self.dim = space.dim
-        self.mesh = space.mesh
-        self.V = space.V
-
-        self.disp = fem.Function(self.V)  # the FULL displacement u (kept real)
-        self._build_forms(model, prob)
+        super().__init__(prob, model)  # self.disp is the full displacement u
 
         if prob.vc_spaces is None:
             prob.vc_spaces, prob.inv_maps = _standard._build_dof_maps(space)
@@ -402,7 +392,7 @@ class _StandardHyperelasticSolver(_FormsMixin):
         """Re-parse ``step``'s BCs; the next ``solve`` ramps from the committed state.
 
         The ramp start for each bc is read off the current converged displacement at that
-        bc's dofs (the converged u IS the previous step's committed boundary value, since
+        bc's dofs (the converged u is the previous step's committed boundary value, since
         the drive is applied through Newton's lifting -- see ``solve``), so no cross-step
         value bookkeeping is needed."""
         from . import _standard
@@ -410,14 +400,10 @@ class _StandardHyperelasticSolver(_FormsMixin):
         entries, drive_nodes = _standard._parse_bcs_ex(
             self._sim, self.space, self._prob.vc_spaces, self._prob.inv_maps, step)
         self.bcs = [bc for bc, _, _ in entries]
-        bs = self.V.dofmap.index_map_bs
-        self._drive_flat = [self.space.block_of_node[drive_nodes] * bs + c
-                            for c in range(self.dim)]
+        self._drive_flat = _standard.drive_dofs(self.space, drive_nodes)
         # (bc, g_start, g_target) per bc: each increment interpolates the bc Function in
-        # place between the committed value and this step's target (the drive is applied
-        # through Newton's lifting, not by pre-setting face dofs -- a directly-imposed
-        # face jump against a lagging interior inverts the first element row, J < 0, and
-        # the fractional powers of J go onto the complex branch)
+        # place between the committed value and this step's target, applied through
+        # Newton's lifting (docs/dolfinx_backend_design.md#standard-bc-drive-through-lifting)
         u = self.disp.x.array.real
         self._bc_gs = []
         for bc, flat_dofs, vc_dofs in entries:
@@ -450,6 +436,15 @@ class _StandardHyperelasticSolver(_FormsMixin):
         return r
 
     def solve(self, n_incr):
+        """Ramp the bc values from the committed state to this step's targets over ``n_incr``
+        increments and return the readODB row: the internal force and displacement summed
+        at the drive face.
+
+        Raises
+        ------
+        ConvergenceError
+            If the Newton solve of some increment does not converge.
+        """
         r_ref = 0.0
         for inc in range(1, n_incr + 1):
             frac = inc / n_incr
@@ -461,12 +456,7 @@ class _StandardHyperelasticSolver(_FormsMixin):
             if not converged:
                 raise ConvergenceError(
                     f"Newton solve did not converge in increment {inc}/{n_incr}")
-        # reaction = internal force (no BC masking) summed at the drive face
-        f = self._residual().getArray()
-        u = self.disp.x.array
-        RF = [float(f[flat].sum().real) for flat in self._drive_flat]
-        U = [float(u[flat].sum().real) for flat in self._drive_flat]
-        return [1.0] + RF + [0.0] * self.dim + U
+        return face_row(self._residual().getArray(), self.disp.x.array, self._drive_flat)
 
 
 def make_solver(prob, model):

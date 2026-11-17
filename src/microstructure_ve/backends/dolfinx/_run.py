@@ -3,8 +3,8 @@
 ``build_solver`` assembles the spec/assembly/constraints/solver/homogenize pieces into a
 ``solve_one(f)`` closure (all dolfinx/PETSc state captured in it). ``run`` sweeps the
 frequencies and optionally writes a readODB-style tsv, optionally fanning the independent
-per-frequency solves across a spawn ProcessPool (``workers``). The macro loading is
-uniaxial along x (coordinate axis 0).
+per-frequency solves across a spawn ProcessPool (``workers``). The macro loading is parsed
+from the sim by ``_loading.macro_loading``.
 
 Thread safety (the guarantee): every entry point of this backend -- ``run``,
 ``build_solver`` plus the ``solve_one`` closures it returns, and ``clear_cache`` --
@@ -232,8 +232,8 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
 
     Each row is ``[frame_value, RF_Real_1..d, RF_Imag_1..d, U_1..d]`` (same columns as the
     ABAQUS readODB tsv; ``frame_value`` is the frequency for a Dynamic sweep, the step time
-    for a Static/transient step), where ``RF`` is the complex reaction on the +x face and ``U`` the
-    applied corner displacement. The homogenized complex modulus along x is::
+    for a Static/transient step), where ``RF`` is the complex reaction on the drive face and ``U`` the
+    applied drive displacement. For a uniaxial drive along x the homogenized complex modulus is::
 
         E*_x(f) = (RF_Real_1 + 1j*RF_Imag_1) / (cross_area * exx)
 
@@ -245,15 +245,15 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     workers: 1 = serial. >1 spawns a ProcessPoolExecutor and splits the independent
              per-frequency solves across processes -- each worker builds the solver once,
              then solves its share, pinned to one BLAS thread. A driver that calls this
-             with workers>1 MUST guard the call under ``if __name__ == "__main__":`` (the
+             with workers>1 must guard the call under ``if __name__ == "__main__":`` (the
              standard "spawn" requirement) or the workers will re-import and re-run it.
     cancel:  callable() -> bool, or None. Polled before each frequency. Stop the sweep
              either by returning a truthy value (raises ``Cancelled``) or by raising your
              own exception (propagates unchanged) -- the latter lets a caller carry a
              reason/payload out of the sweep. Because an LU solve is one uninterruptible C
              call, cancellation takes effect at the start of the next frequency, so
-             worst-case latency is one solve (kept under ~10s by the solver-kind crossover;
-             see ``build_solver``). In parallel mode it is polled in this parent process as
+             worst-case latency is one solve (kept under ``_solver.LU_TIME_S`` by the
+             solver-kind crossover; see ``build_solver``). In parallel mode it is polled in this parent process as
              workers finish, and either trigger SIGTERMs the live workers (killing an
              in-flight solve too) before propagating; the predicate runs here, never in a
              worker. With ``solver="iterative"`` ``cancel`` is also polled *inside* each
@@ -272,10 +272,11 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
              measures (exactly the potential Newton minimized; zero at the undeformed
              state, so no baseline subtraction is needed). ``output_path`` still writes
              the rows only.
-    n_incr:  load increments per plastic ``Static`` step (periodic path). Default ``None``
-             solves each step in one increment, as ABAQUS solves the emitted ``*STATIC``
-             with no increment data line (docs/dolfinx_backend_design.md, section 12).
-             Ignored for non-plastic sims and the standard-BC plastic path (single ramp).
+    n_incr:  load increments per plastic or hyperelastic ``Static`` step. Default ``None``
+             solves a plastic step in one increment, as ABAQUS solves the emitted ``*STATIC``
+             with no increment data line (docs/dolfinx_backend_design.md, section 12), and
+             a hyperelastic step in a few (see ``_run_multistep``).
+             Ignored for linear sims and the standard-BC plastic path (single ramp).
 
     Refusal: a sim that ``_loading.check_supported`` rejects raises that check's
     ``NotImplementedError`` (unsupported feature) or ``ValueError`` (malformed sim) before
@@ -385,7 +386,8 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
     in the ABAQUS reader's order (per
     step, then per frame): a ``Static`` step contributes one row (zero loss) at frame value 1.0
     -- elastic (real ``*Elastic`` moduli) or, if a ``Plastic`` response is present, the nonlinear
-    J2 return-mapping solve (``_plastic``) -- and a ``Dynamic`` step one row per swept frequency
+    J2 return-mapping solve (``_plastic``), or for hyperelastic materials the finite-strain solve
+    (``_hyperelastic``) -- and a ``Dynamic`` step one row per swept frequency
     (ascending). The FE problem (mesh/MPC/forms) is built once and reused across steps.
     Each step's drive follows ``run``; every step drives the components the first drive sets.
 
@@ -405,7 +407,7 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
         from . import _plastic as _plastic
         geom = spec.Geometry.from_model(sim.model)
         prob = _fe_problem(geom, sim.model, bbar)          # cached, populated by build_solver
-        # ONE persistent solver for the whole sim: plastic state (eps_p, p, u~, E_current)
+        # One persistent solver for the whole sim: plastic state (eps_p, p, u~, E_current)
         # carries across consecutive plastic Static steps, so reversal/cyclic patterns
         # accumulate the correct hysteresis. The standard (non-periodic) path drives face
         # Dirichlet directly and is single-step (no macro-strain/free split).
@@ -418,7 +420,7 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
         from . import _hyperelastic
         geom = spec.Geometry.from_model(sim.model)
         prob = _fe_problem(geom, sim.model, bbar)          # cached, populated by build_solver
-        # ONE persistent finite-strain solver: H_current and the fluctuation warm-start
+        # One persistent finite-strain solver: H_current and the fluctuation warm-start
         # carry across consecutive hyperelastic Static steps (the response itself is
         # path-independent).
         if has_pbc:
@@ -459,9 +461,9 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
                 energies.append(np.nan)
             elif has_hyper and has_pbc:
                 step_incr = n_incr
-                # a few increments even when fully prescribed: Newton globalization at
-                # ~30-50% strain (the answer is increment-independent -- path-independent
-                # energy -- only the warm-start path changes)
+                # a few increments even when fully prescribed, for Newton globalization
+                # (the answer is increment-independent -- path-independent energy -- only
+                # the warm-start path changes)
                 if step_incr is None:
                     step_incr = 5 if not list(loading.free) else 10
                 rows.append(hyper_solver.solve(loading, step_incr))

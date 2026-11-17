@@ -6,14 +6,14 @@ needs a genuine nonlinear solve. This module provides it for the periodic, corne
 homogenization in **2D (plane strain) and 3D**, including multi-step sims where plastic state
 persists across consecutive plastic Static steps (load/reverse hysteresis).
 
-Design constraints (see the plan / design doc):
+Design constraints (docs/dolfinx_backend_design.md, section 12):
 
 * **Complex-scalar PETSc build** -- UFL yield conditionals on complex scalars are ill-defined,
   so the radial return runs in **numpy at the quadrature points** (real arithmetic) and is fed
   back as Quadrature-space coefficients: the stress ``sig_q`` (residual) and algorithmic tangent
   ``C_q`` (Jacobian). Assembled complex matrices/vectors carry real values.
-* **Hand-rolled Newton** over the proven ``dolfinx_mpc`` assemble + complex-LU path (mirrors
-  ``_solver.LuSolver``); ``dolfinx_mpc.NonlinearProblem``/SNES is skipped in complex builds and
+* **Hand-rolled Newton** (``_nonlinear.modified_newton``) over the ``dolfinx_mpc`` assemble +
+  complex-LU path; ``dolfinx_mpc.NonlinearProblem``/SNES is skipped in complex builds and
   would not let us refresh the return-map coefficients between iterations.
 * **B-bar** (mean-dilatation) on the strain removes Q1/Q1-hex volumetric locking from J2's
   near-isochoric plastic flow, matching the elastic path's selective reduced integration.
@@ -21,7 +21,7 @@ Design constraints (see the plan / design doc):
 
 The macro strain ``E`` enters through the *total* strain ``eps(E.x + u~) = E + eps(u~)`` (the
 fluctuation formulation the linear path also uses); driven components are imposed and any
-``free`` lateral components are found by a small outer root-find so their volume-averaged stress
+``free`` lateral components are found by the outer root-find of ``_nonlinear.FreeLateralRamp`` so their volume-averaged stress
 vanishes. Reported row mirrors the readODB columns: ``[1.0, RF_Real..., 0..., U...]`` (zero loss).
 """
 from __future__ import annotations
@@ -38,7 +38,7 @@ import dolfinx_mpc
 
 from microstructure_ve.constitutive import Plastic
 
-from ._nonlinear import FreeLateralRamp, modified_newton
+from ._nonlinear import FreeLateralRamp, face_row, modified_newton, periodic_row
 from ._solver import ConvergenceError, lu_ksp
 
 _QUAD_DEGREE = 2          # 2x2(x2) Gauss = ABAQUS CPE4 (4 pts) / C3D8 (8 pts)
@@ -97,9 +97,31 @@ def _tensor_stress_to_voigt(s, dim):
 def _return_map(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim):
     """Radial-return a vectorized Gauss-point batch (pure -- safe to re-call for the tangent).
 
-    ``eps_v``: ``(N, nv)`` total engineering Voigt strain (nv=3 in 2D, 6 in 3D). ``mu``/``lam``:
-    ``(N,)``. ``eps_p_old``: ``(N, 6)`` tensor plastic strain. ``p_old``: ``(N,)``. Returns
-    ``(sig_v (N,nv), eps_p_new (N,6), p_new (N,))``.
+    Parameters
+    ----------
+    eps_v : numpy.ndarray
+        ``(N, nv)`` total engineering Voigt strain (nv=3 in 2D, 6 in 3D).
+    mu, lam : numpy.ndarray
+        ``(N,)`` Lame moduli.
+    eps_p_old : numpy.ndarray
+        ``(N, 6)`` committed tensor plastic strain.
+    p_old : numpy.ndarray
+        ``(N,)`` committed equivalent plastic strain.
+    mat_id : numpy.ndarray
+        ``(N,)`` material index of each point into ``materials``.
+    materials : list
+        The model's materials; a non-``Plastic`` one never yields.
+    dim : int
+        2 (plane strain) or 3.
+
+    Returns
+    -------
+    sig_v : numpy.ndarray
+        ``(N, nv)`` Voigt stress.
+    eps_p_new : numpy.ndarray
+        ``(N, 6)`` updated tensor plastic strain.
+    p_new : numpy.ndarray
+        ``(N,)`` updated equivalent plastic strain.
     """
     e = _voigt_to_tensor_strain(eps_v, dim)
     ee = e - eps_p_old
@@ -202,8 +224,8 @@ def _bbar_jacobian_form(V, dim, qd, C_q, C_c):
 
     The residual evaluates stress at the B-bar strain (volumetric part replaced by its cell
     mean), so its exact derivative acts on ``dev eps(u) + mean_cell(vol eps(u))`` -- not on the
-    raw ``eps(u)``. An inconsistent Jacobian costs Newton its quadratic convergence (observed:
-    linear decay at ~0.34/iter, ~25 iterations per solve). The dev part integrates at the full
+    raw ``eps(u)``. An inconsistent Jacobian costs Newton its quadratic convergence
+    (tools/profile_plastic.py). The dev part integrates at the full
     rule against the quadrature-point tangent ``C_q``; the cell-mean vol part reduces to the
     1-point (centroid) rule against the cell-averaged tangent ``C_c`` (exact for a cell-constant
     tangent on the rectangular Q1 grid, where the centroid value equals the cell mean). The
@@ -328,7 +350,7 @@ class _J2Solver:
 
 
 class _PlasticSolver(_J2Solver):
-    """Hand-rolled Newton over the periodic MPC + complex LU, with numpy return mapping.
+    """Newton over the periodic MPC + complex LU, with numpy return mapping.
 
     Persistent across a sim's plastic Static steps: ``solve`` ramps the macro strain from the
     previously committed ``E_current`` to the new step target (so reversal/cyclic patterns
@@ -410,11 +432,7 @@ class _PlasticSolver(_J2Solver):
         self.E_current = E.copy()
         sbar = self._average(_return_map(self._total_strain(E), self.mu, self.lam, self.eps_p,
                                          self.p, self.mat_id, self.materials, self.dim)[0])
-        a0 = loading.primary_axis
-        RF = sbar[:, a0] * loading.cross_area
-        U = np.zeros(self.dim)
-        U[loading.primary_dof - 1] = loading.drive_value
-        return [1.0] + list(RF.real) + [0.0] * self.dim + list(U)
+        return periodic_row(loading, sbar)
 
 
 class _StandardPlasticSolver(_J2Solver):
@@ -433,8 +451,7 @@ class _StandardPlasticSolver(_J2Solver):
         if prob.vc_spaces is None:
             prob.vc_spaces, prob.inv_maps = _standard._build_dof_maps(space)
         self.bcs, drive_nodes = _standard._parse_bcs(sim, space, prob.vc_spaces, prob.inv_maps)
-        bs = self.V.dofmap.index_map_bs
-        self._drive_flat = [space.block_of_node[drive_nodes] * bs + c for c in range(self.dim)]
+        self._drive_flat = _standard.drive_dofs(space, drive_nodes)
 
         self.A = fempetsc.assemble_matrix(self.a_form, bcs=self.bcs)
         self.A.assemble()
@@ -454,6 +471,14 @@ class _StandardPlasticSolver(_J2Solver):
         return self.r
 
     def solve(self):
+        """Solve the single Static step, commit the plastic state, and return the readODB
+        row: the internal force and displacement summed at the drive face.
+
+        Raises
+        ------
+        ConvergenceError
+            If the Newton solve does not converge.
+        """
         fempetsc.set_bc(self.u.x.petsc_vec, self.bcs)   # u carries the prescribed face displ.
         self.u.x.scatter_forward()
 
@@ -468,13 +493,8 @@ class _StandardPlasticSolver(_J2Solver):
         converged, _ = modified_newton(residual, self._refresh_tangent, self.ksp, self.x, self.u)
         if not converged:
             raise ConvergenceError("Newton solve did not converge")
-        # commit + reaction = internal force (no BC modification) summed at the drive face
         self._fill_coeffs(self._total_strain(), commit=True, tangent=False)
-        f = self._residual().getArray()
-        u = self.u.x.array
-        RF = [float(f[flat].sum().real) for flat in self._drive_flat]
-        U = [float(u[flat].sum().real) for flat in self._drive_flat]
-        return [1.0] + RF + [0.0] * self.dim + U
+        return face_row(self._residual().getArray(), self.u.x.array, self._drive_flat)
 
 
 def make_solver(prob, model):

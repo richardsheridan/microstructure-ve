@@ -6,6 +6,7 @@ stress. Each solver supplies its residual, Jacobian refresh and average stress; 
 and its tolerances live here. ``FreeLateralRamp`` raises when an increment fails;
 ``modified_newton`` reports convergence and leaves the raise to its caller, and the standard
 solvers, which have no free lateral entries, run their own increments around it.
+``periodic_row`` and ``face_row`` build the readODB row of a converged step.
 """
 from __future__ import annotations
 
@@ -22,9 +23,7 @@ _NEWTON_RTOL = 1e-9       # relative to the convergence reference (see modified_
 _MAX_NEWTON = 50
 _MAX_HALVINGS = 8         # consecutive step halvings before a growing step is taken anyway
 _FROZEN_RATIO = 0.5       # refresh tangent+factorization when an iteration shrinks the
-                          # residual by less than this (modified Newton: a frozen-tangent
-                          # back-substitution costs ~3% of a refactor, so even a mediocre
-                          # linear rate beats refactoring every iteration)
+                          # residual by less than this (tools/profile_plastic.py)
 _INVERSION_TOL = 1e-8     # imaginary residual, relative to max(|R|, 1), read as inversion
 _MAX_OUTER = 25           # free-lateral root-find iterations
 _OUTER_TOL = 1e-9         # average stress on a free entry, relative to a stress scale
@@ -120,6 +119,51 @@ def modified_newton(residual, refresh_jacobian, ksp, x, field, *, mpc=None, real
 def _values(field, real):
     """The dof values of ``field``, their real part when ``real``."""
     return field.x.array.real if real else field.x.array
+
+
+def periodic_row(loading, avg_stress):
+    """The readODB row of a converged periodic ``Static`` step, with zero loss.
+
+    Parameters
+    ----------
+    loading : _loading.MacroLoading
+        The step's loading; it names the reported axis, dof and drive.
+    avg_stress : numpy.ndarray
+        The real volume-averaged stress ``(dim, dim)`` conjugate to the drive.
+
+    Returns
+    -------
+    list of float
+        ``[1.0, RF..., 0..., U...]`` with ``RF = avg_stress[:, primary_axis] * cross_area`` and
+        ``U`` the drive's corner displacement.
+    """
+    dim = loading.dim
+    RF = avg_stress[:, loading.primary_axis] * loading.cross_area
+    U = np.zeros(dim)
+    U[loading.primary_dof - 1] = loading.drive_value
+    return [1.0] + list(RF.real) + [0.0] * dim + list(U)
+
+
+def face_row(force, disp, drive_dofs):
+    """The readODB row of a converged standard ``Static`` step, with zero loss.
+
+    Parameters
+    ----------
+    force : numpy.ndarray
+        The internal force vector, without Dirichlet masking.
+    disp : numpy.ndarray
+        The converged displacement dof values.
+    drive_dofs : list of numpy.ndarray
+        Per component, the dofs of the drive face (``_standard.drive_dofs``).
+
+    Returns
+    -------
+    list of float
+        ``[1.0, RF..., 0..., U...]``, each ``RF`` and ``U`` summed over the drive face.
+    """
+    RF = [float(force[dofs].sum().real) for dofs in drive_dofs]
+    U = [float(disp[dofs].sum().real) for dofs in drive_dofs]
+    return [1.0] + RF + [0.0] * len(drive_dofs) + U
 
 
 def root_step(J, resid):
