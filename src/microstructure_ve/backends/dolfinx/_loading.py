@@ -10,10 +10,10 @@ Extending the backend to a new loading mode means extending *this* parse; ``can_
 hence the test harness's ``is_fe_green``) then widens automatically. No dolfinx import here,
 so it is usable under the numpy-only env.
 
-Supported now: a single ``Static``/``Dynamic`` step driving one or more *normal* macro
+A periodic sim's steps, ``Static`` or ``Dynamic``, drive one or more *normal* macro
 strains via the periodic reference corners (uniaxial along any axis; compression = several
-normal drives), and off-diagonal (shear) drives via simple shear or, with both corners of the plane driven, pure shear. Multi-step sims raise
-``NotImplementedError`` until those features land.
+normal drives), or off-diagonal (shear) strains via simple shear or, with both corners of the plane driven, pure shear.
+``check_supported`` states the rules for the step sequence and for standard (non-periodic) sims.
 """
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ import numpy as np
 from microstructure_ve.boundary import (
     BoundaryCondition,
     Fixed,
+    PeriodicBoundaryConstraint,
     Prescribed,
 )
 from microstructure_ve.constitutive import (
@@ -34,6 +35,7 @@ from microstructure_ve.constitutive import (
     ReducedPolynomial,
 )
 from microstructure_ve.core import _node_array
+from microstructure_ve.steps import Dynamic, Static
 
 from . import _spec as spec
 
@@ -61,20 +63,15 @@ class MacroLoading:
     drive_value: float        # corner displacement reported as U[primary_dof-1]
     cross_area: float         # area perpendicular to primary_axis
     active: List[Tuple[int, int]] = field(default_factory=list)  # imposed + free components
-    # The NON-symmetric macro displacement gradient the corner drives impose: the corner-
+    # The non-symmetric macro displacement gradient the corner drives impose: the corner-
     # driven PBC constrains u(X + L_a e_a) - u(X) = column a of H (scaled by L_a), so a
     # corner R_a displaced by ``value`` in dof i gives H[i, a] = value / L_a. All other
     # H entries backed by a pinned corner dof are 0 (the zeros are implicit -- only driven
     # entries appear here). Small-strain consumers keep using the symmetrized ``imposed``
     # (see ``imposed`` for shear); the finite-strain solver needs the raw H because simple shear
     # (H[b,a] = gamma, H[a,b] = 0) and pure shear differ at finite strain. ``free`` doubles
-    # as the free DIAGONAL slots of H (a floating lateral corner normal).
+    # as the free diagonal slots of H (a floating lateral corner normal).
     H_imposed: Dict[Tuple[int, int], float] = field(default_factory=dict)
-
-
-def _axis_lengths(nodes):
-    dim = nodes.dim
-    return [(nodes.shape[dim - 1 - i] - 1) * nodes.scale for i in range(dim)]
 
 
 def _ref_corner_key(dim, axis):
@@ -125,17 +122,34 @@ def unconstrained_components(model, step):
 
 
 def macro_loading(sim, step=None):
-    """Parse ``sim`` into a ``MacroLoading`` (raises NotImplementedError if unsupported).
+    """Parse the drives of a periodic ``sim`` into a ``MacroLoading``.
 
-    By default the drive is read from the first step carrying one, which sets the driven and
-    free components of the sim. Pass ``step`` to parse a *specific* step's drive instead, as
-    ``run`` does for every step (steps may drive different amplitudes).
+    Parameters
+    ----------
+    sim : Simulation
+        A periodic sim whose drives are ``Prescribed`` conditions on the reference corners.
+    step : Step, optional
+        The step whose drives are parsed, as ``run`` does for every step (steps may drive
+        different amplitudes). By default the first step carrying a drive is parsed, which
+        sets the driven and free components of the sim.
+
+    Returns
+    -------
+    MacroLoading
+
+    Raises
+    ------
+    ValueError
+        If the parsed step, or every step by default, has no ``Prescribed`` drive.
+    NotImplementedError
+        If a drive constrains more than one dof or targets a node set other than a periodic
+        reference corner.
     """
     model = sim.model
     nodes = model.nodes
     dim = nodes.dim
 
-    L = _axis_lengths(nodes)
+    L = spec.Geometry.from_model(model).L
 
     if step is not None:
         drives = prescribed_bcs(step.subsections)
@@ -208,7 +222,7 @@ def _standard_check(sim):
     """Raise unless ``sim`` is a well-posed standard (non-periodic, direct-Dirichlet) problem.
 
     Requirements:
-    - Exactly one step with at least one ``Prescribed`` drive -- OR several such steps
+    - Exactly one step with at least one ``Prescribed`` drive, or several such steps
       when every material is hyperelastic (the persistent finite-strain solver re-parses
       each Static step's drives and warm-starts from the committed state); the other
       standard paths are single-step.
@@ -223,8 +237,6 @@ def _standard_check(sim):
 
     Pure numpy; no dolfinx import.
     """
-    from microstructure_ve.steps import Static
-
     model = sim.model
     steps = list(sim.steps)
     if len(steps) != 1:
@@ -282,7 +294,8 @@ def check_supported(sim):
         a model-level ``Prescribed`` with a nonzero value, which ABAQUS rejects).
 
     Pure numpy; ``run`` calls this before building a solver and ``can_run`` (hence the test
-    harness's ``is_fe_green``) wraps it, so support widens in both automatically as ``macro_loading`` / the frequency resolution grow.
+    harness's ``is_fe_green``) wraps it, so support widens in both automatically as these
+    checks widen.
 
     Handles two cases:
     - *Periodic* sims: validated by ``macro_loading`` (corner-driven PBC path) and the step
@@ -290,9 +303,6 @@ def check_supported(sim):
     - *Standard* sims (no ``PeriodicBoundaryConstraint``): validated by
       ``_standard_check`` (direct-Dirichlet path, well-posed cells only).
     """
-    from microstructure_ve.boundary import PeriodicBoundaryConstraint
-    from microstructure_ve.steps import Dynamic, Static
-
     etype = sim.model.elements.type
     if etype not in SOLVED_ELEMENT_TYPES:
         raise NotImplementedError(
@@ -302,7 +312,7 @@ def check_supported(sim):
 
     # Hyperelastic (finite-strain) sims: the total-Lagrangian solver handles Static steps
     # only -- steady-state dynamics about a nonlinear preload is unsupported -- and every
-    # phase must be hyperelastic of the SAME model class (an *Elastic phase under NLGEOM
+    # phase must be hyperelastic of the same model class (an *Elastic phase under NLGEOM
     # is hypoelastic in ABAQUS, which the total-Lagrangian energy formulation cannot
     # reproduce; different classes would need distinct coefficient layouts per cell).
     hyper = [m.response for m in sim.model.materials if isinstance(m.response, HYPER_TYPES)]

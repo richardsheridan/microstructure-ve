@@ -23,7 +23,7 @@ def periodic_mpc(space):
     the dof arrays straight to ``add_constraint`` using the structured ``block_of_node`` map
     instead of routing coordinates through ``create_general_constraint`` -- the latter
     re-locates each coordinate geometrically (a per-pair ``sub().collapse()``), which is the
-    dominant cost on 3D meshes. Same constraint, ~100x cheaper to assemble. Serial only,
+    dominant cost on 3D meshes (docs/dolfinx_backend_design.md section 4.4). Serial only,
     matching the backend's serial LU path: masters are owned by this (sole) rank.
     """
     V = space.V

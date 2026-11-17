@@ -1,8 +1,8 @@
 """Parse the solver-neutral spec dataclasses into plain numpy arrays for the FE solve.
 
-This module is **pure numpy** (no dolfinx), so it is importable and unit-testable under
-the numpy-only msve env. It is the seam between ``microstructure_ve``'s dataclasses and
-the dolfinx boilerplate in ``_assembly``/``_constraints``/``_solver``/``_homogenize``.
+This module is pure numpy (no dolfinx), so it is importable and unit-testable under the
+numpy-only msve env. It is the seam between ``microstructure_ve``'s dataclasses and the
+dolfinx modules of this backend.
 """
 from __future__ import annotations
 
@@ -36,11 +36,25 @@ def sweep_frequencies(dyn):
 
 
 def frequencies(sim):
-    """The points the sweep is evaluated at -- the single entry point used by ``run`` and the
-    ``_loading.check_supported`` capability check. Returns the log-spaced ``Dynamic`` sweep of the first step if present;
-    returns ``[1.0]`` for a ``Static``-only sim, the frame value of its one row, which ``run``
-    solves with the real elastic moduli rather than ``complex_modulus`` at 1.0; raises
-    ``ValueError`` if neither subsection is present."""
+    """The frame values of a single-step sim's rows.
+
+    Parameters
+    ----------
+    sim : Simulation
+        Only its first step is read.
+
+    Returns
+    -------
+    numpy.ndarray
+        The log-spaced ``Dynamic`` sweep of the first step if it has one, else ``[1.0]`` for a
+        ``Static`` first step: the frame value of its one row, which ``run`` solves with the
+        real elastic moduli rather than ``complex_modulus`` at 1.0.
+
+    Raises
+    ------
+    ValueError
+        If the first step has neither a ``Dynamic`` nor a ``Static`` subsection.
+    """
     dyn = find(sim.steps[0].subsections, Dynamic)
     if dyn is not None:
         return sweep_frequencies(dyn)
@@ -53,7 +67,13 @@ def frequencies(sim):
 
 
 def drive_displacement(sim):
-    """The applied drive displacement amplitude (real part) from any step."""
+    """The real part of the first drive's ``Prescribed`` value, scanning steps in order.
+
+    Raises
+    ------
+    ValueError
+        If no step carries a drive; model-level conditions are not read.
+    """
     for step in sim.steps:
         sub = find_drive(step.subsections)
         if sub is not None:
@@ -66,11 +86,19 @@ def drive_displacement(sim):
 
 
 def material_cell_maps(model):
-    """Per-cell material index, per-material Poisson ratios, and complex_modulus fns.
+    """Per-cell material index and the per-material elastic constants of ``model``.
 
-    ``mat_of_cell[c]`` is the material index of cell ``c`` (raveled pixel order, the FE
-    cell order before dolfinx's reordering). ``modulus_fns[m]`` is material ``m``'s
-    ``complex_modulus`` callable.
+    Returns
+    -------
+    mat_of_cell : numpy.ndarray of int
+        ``mat_of_cell[c]`` is the material index of cell ``c`` in raveled pixel order, the FE
+        cell order before dolfinx's reordering.
+    poissons : numpy.ndarray
+        Poisson's ratio of each material.
+    youngs : numpy.ndarray
+        Real ``*Elastic`` Young's modulus of each material, used by ``Static`` steps.
+    modulus_fns : list of callable
+        ``modulus_fns[m]`` is material ``m``'s ``complex_modulus``.
     """
     ncells = int(np.prod([d - 1 for d in model.nodes.shape]))
     mat_of_cell = np.empty(ncells, dtype=int)
@@ -78,7 +106,7 @@ def material_cell_maps(model):
     for mi, mat in enumerate(model.materials):
         mat_of_cell[np.asarray(mat.elset.elements) - 1] = mi
         poissons.append(mat.response.poisson)
-        youngs.append(mat.response.youngs)  # *Elastic real modulus (used by Static steps)
+        youngs.append(mat.response.youngs)
         modulus_fns.append(mat.response.complex_modulus)
     return mat_of_cell, np.array(poissons), np.array(youngs), modulus_fns
 
@@ -119,7 +147,7 @@ class Geometry:
 
     @classmethod
     def from_model(cls, model, sim=None):
-        """The geometry of ``model``'s node grid. ``sim`` is not read."""
+        """The geometry of ``model``'s node grid. ``sim`` is unused."""
         nodes = model.nodes
         dim = nodes.dim
         scale = nodes.scale

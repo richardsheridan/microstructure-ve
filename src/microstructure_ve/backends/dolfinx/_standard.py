@@ -14,9 +14,8 @@ residual at constrained nodes is the reaction force). Summing over the primary d
 nodeset per component reproduces the ABAQUS ``readODB`` summation.
 
 No MPC or center-pin -- standard cells are clamped BVPs, not periodic fluctuation
-problems.  The solver kind (LU vs iterative crossover) follows the same prediction as
-the periodic path; only the LU path is implemented, so large meshes fall back to LU
-with a warning (same as the periodic ``build_solver`` does).
+problems. The standard path always solves with LU; the ``solver`` and ``petsc_options``
+of ``run`` do not apply to it.
 """
 from __future__ import annotations
 
@@ -32,6 +31,15 @@ from microstructure_ve.backends.dolfinx._loading import (
     prescribed_bcs,
     unconstrained_components,
 )
+
+from ._solver import lu_ksp
+
+
+def drive_dofs(space, nodes):
+    """Per displacement component, the flat V dofs of the 1-indexed grid ``nodes``."""
+    bs = space.V.dofmap.index_map_bs
+    blocks = space.block_of_node[nodes]
+    return [blocks * bs + c for c in range(space.dim)]
 
 
 def _build_dof_maps(space):
@@ -60,6 +68,9 @@ def _build_dof_maps(space):
 def _make_dirichlet_bc(space, Vc_spaces, inv_maps, nodes_1indexed, comp, value):
     """Build one ``fem.dirichletbc`` for ``comp`` (0-indexed) on the given 1-indexed nodes.
 
+    Returns ``(bc, flat_dofs, vc_dofs)``: the condition and the dofs it constrains, in the
+    flat V array and in the collapsed sub-space ``Vc``.
+
     ``nodes_1indexed`` are 1-indexed grid node numbers.  ``comp`` is the 0-indexed
     displacement component (0=x, 1=y, 2=z).  ``value`` is the prescribed displacement
     (real; complex support not needed -- Dirichlet values are always real amplitudes).
@@ -79,7 +90,7 @@ def _make_dirichlet_bc(space, Vc_spaces, inv_maps, nodes_1indexed, comp, value):
     fbc.x.array[:] = 0.0
     if value != 0.0:
         fbc.x.array[vc_dofs] = value
-    return fem.dirichletbc(fbc, [flat_dofs, vc_dofs], V.sub(comp))
+    return fem.dirichletbc(fbc, [flat_dofs, vc_dofs], V.sub(comp)), flat_dofs, vc_dofs
 
 
 def _parse_bcs_ex(sim, space, Vc_spaces, inv_maps, step=None):
@@ -102,11 +113,7 @@ def _parse_bcs_ex(sim, space, Vc_spaces, inv_maps, step=None):
     entries = []
 
     def add(nodes, comp, value):
-        bc = _make_dirichlet_bc(space, Vc_spaces, inv_maps, nodes, comp, value)
-        bs = space.V.dofmap.index_map_bs
-        blocks = space.block_of_node[np.asarray(nodes)].astype(np.int32)
-        flat_dofs = (blocks * bs + comp).astype(np.int32)
-        entries.append((bc, flat_dofs, inv_maps[comp][flat_dofs].astype(np.int32)))
+        entries.append(_make_dirichlet_bc(space, Vc_spaces, inv_maps, nodes, comp, value))
 
     drives = prescribed_bcs(step.subsections)
     driven = {}
@@ -158,9 +165,12 @@ def build_solver(sim, prob):
     drive-nodeset dofs per component, mirroring ABAQUS's ``RF`` summed over the drive
     nodeset. ``U`` is the solved displacement summed over the drive nodeset per component.
 
-    Raises ``NotImplementedError`` if any spatial component is unconstrained (free-lateral
-    cell): the stiffness matrix would be singular (rigid-body-translation null space) and
-    the solved displacement is non-unique, so the oracle U values cannot be reproduced.
+    Raises
+    ------
+    NotImplementedError
+        If any spatial component is unconstrained (free-lateral cell): the stiffness matrix
+        would be singular (rigid-body-translation null space) and the solved displacement
+        non-unique, so the oracle U values cannot be reproduced.
     """
     model = sim.model
     dim = model.nodes.dim
@@ -182,10 +192,7 @@ def build_solver(sim, prob):
     # Parse BCs -- values are real and don't change with frequency
     dirichlet_bcs, drive_nodes = _parse_bcs(sim, space, Vc_spaces, inv_maps)
 
-    V = space.V
-    bs = V.dofmap.index_map_bs
-    block_of_node = space.block_of_node
-    blocks_drive = block_of_node[drive_nodes]
+    drive_flat = drive_dofs(space, drive_nodes)
 
     # The matrices/vectors/KSP have mesh-only sparsity (Dirichlet BCs only zero rows and set
     # the diagonal, which is always allocated), so they are cached on ``prob`` and reused
@@ -201,10 +208,7 @@ def build_solver(sim, prob):
         # as one vector assembly per frequency instead of a second matrix assembly
         u_sol = fem.Function(space.V)
         react_form = fem.form(ufl.action(forms.a_ufl, u_sol))
-        ksp = PETSc.KSP().create(space.mesh.comm)
-        ksp.setOperators(A_bc)
-        ksp.setType("preonly")
-        ksp.getPC().setType("lu")
+        ksp = lu_ksp(A_bc, space.mesh.comm)
         prob.std_mats = (A_bc, A_bc.createVecRight(), A_bc.createVecRight(),
                          u_sol, react_form, A_bc.createVecRight(), ksp)
     A_bc, b, x, u_sol, react_form, f_int, ksp = prob.std_mats
@@ -244,8 +248,7 @@ def build_solver(sim, prob):
 
         RF = np.zeros(dim, dtype=complex)
         U = np.zeros(dim, dtype=complex)
-        for c in range(dim):
-            flat_dofs = blocks_drive * bs + c
+        for c, flat_dofs in enumerate(drive_flat):
             RF[c] = f_arr[flat_dofs].sum()
             U[c] = u_arr[flat_dofs].sum()
 

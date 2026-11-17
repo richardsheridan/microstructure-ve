@@ -1,7 +1,7 @@
 """The linear solve: one native-LU factorization reused across frequencies and RHS.
 
-PETSc's built-in serial LU is used (MUMPS is ~25x slower on these small complex
-systems). The matrix is re-assembled per frequency (same sparsity -> LU re-factors
+PETSc's built-in serial LU is used (MUMPS is much slower on these small complex systems,
+docs/dolfinx_backend_design.md section 0). The matrix is re-assembled per frequency (same sparsity -> LU re-factors
 values only); the per-unit-strain right-hand sides are cheap back-substitutions.
 
 Cancellation. A direct LU ``ksp.solve()`` is a single C call with no Python breakpoint
@@ -30,9 +30,9 @@ class ConvergenceError(RuntimeError):
 
 # --- LU cost model -----------------------------------------------------------------
 # Sparse-direct factorization under nested dissection scales with dimension: 2D fill
-# ~O(ndof^1.5), 3D fill ~O(ndof^2). Constants calibrated to the single-core steady
-# times in tools/bench_solvers.py (2x Xeon Gold 6148, one core; rerun that benchmark to
-# recalibrate on other hardware). ndof = n_nodes * dim for the vector P1 space.
+# ~O(ndof^1.5), 3D fill ~O(ndof^2). Constants are fit to the single-core steady times of
+# tools/bench_solvers.py; rerun it to recalibrate on other hardware.
+# ndof = n_nodes * dim for the vector P1 space.
 LU_TIME_S = 10.0  # crossover budget: above this predicted LU time, prefer the iterative solver
 _COST = {2: (3.98e-7, 1.5), 3: (1.92e-7, 2.0)}  # dim -> (coefficient, exponent)
 
@@ -51,16 +51,15 @@ def predict_lu_seconds(ndof, dim):
 
 
 def select_solver_kind(ndof, dim):
-    """Pick ``"lu"`` or ``"iterative"`` for ``solver="auto"``. Benchmarking (LU vs GMRES+ILU,
-    per-frequency solve, one BLAS thread) splits sharply by dimension:
+    """Pick ``"lu"`` or ``"iterative"`` for ``solver="auto"``.
 
-    - **2D -> always LU.** Sparse nested-dissection LU is excellent and completes to >500k ndof
-      (~184s at 526k); GMRES+ILU is 1.6-4.6x slower where it converges and *diverges* above
-      ~120k ndof (burns all GMRES iterations, KSP reason DIVERGED_ITS). It is not a viable 2D
-      solver, so ``auto`` never picks it here.
-    - **3D -> iterative above the LU budget.** LU fill explodes (~ndof^2) and is infeasible past
-      ~30k ndof (~150s+), while GMRES+ILU stays cheap (2.6x faster at ndof~2k, 16x at ~15k).
+    - **2D -> always LU.** GMRES+ILU is slower where it converges and diverges on large 2D
+      meshes, so ``auto`` never picks it here.
+    - **3D -> iterative above the LU budget** ``LU_TIME_S``, where LU fill explodes and
+      GMRES+ILU stays cheap.
 
+    The benchmark behind both rules is in
+    docs/dolfinx_backend_design.md#10-iterative-solver-gmresilu-crossover-for-large-3d-adopted.
     The complex-symmetric system has no AMG (GAMG/hypre are real-only), so iterative is
     ILU-preconditioned; callers wanting it in 2D anyway can force ``solver="iterative"``.
     """
@@ -70,7 +69,7 @@ def select_solver_kind(ndof, dim):
 
 
 def lu_ksp(A, comm):
-    """A direct solver for ``A``: PETSc's native serial LU (~25x faster than MUMPS here)."""
+    """A direct solver for ``A``: PETSc's native serial LU (see the module docstring)."""
     ksp = PETSc.KSP().create(comm)
     ksp.setOperators(A)
     ksp.setType("preonly")
@@ -79,6 +78,9 @@ def lu_ksp(A, comm):
 
 
 class LuSolver:
+    """Native-LU solve of the periodic fluctuation per unit macro strain, refactored per
+    frequency."""
+
     def __init__(self, space, forms, matfields, mpc, bcs):
         self.space = space
         self.forms = forms

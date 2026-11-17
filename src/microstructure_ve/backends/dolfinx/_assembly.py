@@ -132,7 +132,7 @@ class MaterialFields:
 
         This is what a ``Static`` step uses: the frequency-domain ``*Viscoelastic`` table
         applies only to steady-state dynamics, so a static step sees the real long-term
-        modulus and produces zero loss. Used for the static steps of multi-step sims.
+        modulus and produces zero loss.
         """
         self._fill(self.youngs_cell.astype(complex))
 
@@ -147,7 +147,7 @@ class Forms:
     a 1 on the diagonal; shear: 1 in *both* off-diagonal slots, so its coefficient is the
     tensor strain component ``E_ij``), and ``L_forms[k]`` its RHS source. The homogenizer
     selects the active subset per loading; building the full basis here keeps the forms
-    mode-agnostic (shear modes are ready without touching this file).
+    mode-agnostic.
     """
 
     a_form: Any
