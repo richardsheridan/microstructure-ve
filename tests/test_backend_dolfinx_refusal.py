@@ -62,6 +62,19 @@ def _with_nonzero_baselines(sim, value):
     return sim
 
 
+def _without_drives_in_step(sim, index):
+    """Remove step ``index``'s own drives, leaving the other steps as built."""
+    step = sim.steps[index]
+    step.subsections = [s for s in step.subsections if not isinstance(s, BoundaryCondition)]
+    return sim
+
+
+def _driveless_first_step(sim):
+    """Put a copy of the first step with no drive of its own ahead of the built steps."""
+    sim.steps = [copy.deepcopy(sim.steps[0])] + list(sim.steps)
+    return _without_drives_in_step(sim, 0)
+
+
 def _standard_two_static_elastic():
     sim = matrix_simulation(test_type="elastic", n=_N, **_STANDARD)
     sim.steps = [sim.steps[0], copy.deepcopy(sim.steps[0])]
@@ -156,6 +169,27 @@ def rejected_sims():
          lambda: _without_drives(matrix_simulation(test_type="elastic", n=_N, **_PERIODIC)),
          ValueError),
         ("periodic step with neither static nor dynamic", _periodic_step_without_procedure,
+         ValueError),
+        ("periodic dynamic step without a drive of its own",
+         lambda: _without_drives_in_step(
+             matrix_simulation(test_type="viscoelastic_sd", n=_N, **_PERIODIC), 1),
+         NotImplementedError),
+        ("periodic plastic dynamic step without a drive of its own",
+         lambda: _without_drives_in_step(
+             matrix_simulation(test_type="hyperelastic_plastic_sd", n=_N,
+                               **_PERIODIC_CONFINED), 1),
+         NotImplementedError),
+        ("periodic driveless first static step",
+         lambda: _driveless_first_step(
+             matrix_simulation(test_type="elastic", n=_N, **_PERIODIC)),
+         ValueError),
+        ("periodic plastic driveless first step",
+         lambda: _driveless_first_step(
+             matrix_simulation(test_type="hyperelastic_plastic", n=_N, **_PERIODIC_CONFINED)),
+         ValueError),
+        ("periodic hyperelastic driveless first step",
+         lambda: _driveless_first_step(
+             matrix_simulation(test_type="reduced_polynomial", n=_N, **_PERIODIC)),
          ValueError),
         ("periodic nonzero model-level Prescribed on an undriven dof",
          lambda: hold_by_prescribed(matrix_simulation(test_type="elastic", n=_N,

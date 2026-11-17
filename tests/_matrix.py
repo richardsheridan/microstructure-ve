@@ -70,6 +70,16 @@ MULTISTEP_PATTERNS = {
 }
 MULTISTEP_CELL = {"mode": "uniaxial_x", "traction": "free", "bc": "periodic", "dim": 2}
 
+# Multi-step viscoelastic test types whose steps drive different amplitudes, on the same cell.
+# Each step is ``(kind, drive_scale)``; a scale of ``None`` gives the step no drive of its own
+# (what such a step reports: ``microstructure_ve.backends.dolfinx.run``).
+SCALED_MULTISTEP_PATTERNS = {
+    "viscoelastic_halved_ss": (("S", 1.0), ("S", 0.5)),
+    "viscoelastic_halved_sd": (("S", 1.0), ("D", 0.5)),
+    "viscoelastic_inherited_ss": (("S", 1.0), ("S", None)),
+    "viscoelastic_inherited_sds": (("S", 1.0), ("D", 0.5), ("S", None)),
+}
+
 # Single-Static viscoelastic test type: the tabular phase under one *STATIC step, which solves
 # with each material's real *Elastic modulus and so reports zero loss. Appended (via
 # matrix_cases) only to the cells below, one periodic and one standard.
@@ -89,11 +99,12 @@ PLASTIC_YIELD_STRESS = [40.0, 70.0]      # MPa, monotonic hardening
 PLASTIC_PLASTIC_STRAIN = [0.0, 0.05]
 PLASTIC_DISPLACEMENT = 5.0e-4
 
-# Multi-step *plastic* test types on one robust periodic cell. Unlike the viscoelastic patterns
+# Multi-step *plastic* test types on one robust periodic cell. Unlike ``MULTISTEP_PATTERNS``
 # these carry a per-step drive *scale*: a plastic Static step (``"S"``) drives ``value*scale``
 # (so a reversal/cyclic pattern exercises cross-step plastic hysteresis), while Dynamic steps
 # (``"D"``) and the first step stay at the reference (+1) drive. ``_sd``/``_ds`` exercise step
-# ordering + dispatch; ``_reversal``/``_cyclic`` exercise persistent plastic state across steps.
+# ordering + dispatch; ``_reversal``/``_cyclic`` exercise persistent plastic state across steps;
+# ``_inherited`` ends on a Static step with no drive of its own.
 PLASTIC_MULTISTEP_CELL = {"mode": "uniaxial_x", "traction": "confined_slip",
                           "bc": "periodic", "dim": 2}
 PLASTIC_MULTISTEP_PATTERNS = {
@@ -101,6 +112,7 @@ PLASTIC_MULTISTEP_PATTERNS = {
     "hyperelastic_plastic_ds": (("D", 1.0), ("S", 1.0)),
     "hyperelastic_plastic_reversal": (("S", 1.0), ("S", -1.0)),
     "hyperelastic_plastic_cyclic": (("S", 1.0), ("S", -1.0), ("S", 1.0)),
+    "hyperelastic_plastic_inherited": (("S", 1.0), ("S", None)),
 }
 
 # Hyperelastic constants.
@@ -128,7 +140,7 @@ _AXES = ("x", "y", "z")
 def _is_viscoelastic(test_type):
     """True for the test types whose second phase is the tabular viscoelastic material."""
     return (test_type in ("viscoelastic", VISCOELASTIC_STATIC)
-            or test_type in MULTISTEP_PATTERNS)
+            or test_type in MULTISTEP_PATTERNS or test_type in SCALED_MULTISTEP_PATTERNS)
 
 
 def _is_plastic(test_type):
@@ -149,7 +161,8 @@ def _resolve_displacement(test_type, displacement):
 
 
 def _step_plan(test_type):
-    """Ordered ``[(step_kind, drive_scale)]`` for ``test_type`` ('S'=Static, 'D'=Dynamic)."""
+    """Ordered ``[(step_kind, drive_scale)]`` for ``test_type`` ('S'=Static, 'D'=Dynamic);
+    a ``drive_scale`` of ``None`` is a step with no drive of its own."""
     if test_type in ("elastic", "hyperelastic_plastic", VISCOELASTIC_STATIC):
         return [("S", 1.0)]
     if _is_hyperelastic(test_type):
@@ -158,6 +171,8 @@ def _step_plan(test_type):
         return [("D", 1.0)]
     if test_type in MULTISTEP_PATTERNS:
         return [(kind, 1.0) for kind in MULTISTEP_PATTERNS[test_type]]
+    if test_type in SCALED_MULTISTEP_PATTERNS:
+        return list(SCALED_MULTISTEP_PATTERNS[test_type])
     if test_type in PLASTIC_MULTISTEP_PATTERNS:
         return list(PLASTIC_MULTISTEP_PATTERNS[test_type])
     raise ValueError(f"unknown test_type {test_type!r}")
@@ -205,6 +220,8 @@ def matrix_cases():
         for test_type in ("elastic", "viscoelastic", "hyperelastic_plastic", "reduced_polynomial"):
             yield cell, test_type
     for test_type in MULTISTEP_PATTERNS:
+        yield dict(MULTISTEP_CELL), test_type
+    for test_type in SCALED_MULTISTEP_PATTERNS:
         yield dict(MULTISTEP_CELL), test_type
     for cell in VISCOELASTIC_STATIC_CELLS:
         yield dict(cell), VISCOELASTIC_STATIC
@@ -586,8 +603,10 @@ def matrix_simulation(mode, traction, bc, dim, test_type="elastic", n=None, scal
     # at value*scale (so plastic state accumulates/reverses across steps).
     make_step = {"S": static_step, "D": dynamic_step}
     steps = []
-    for kind, scale in plan:
-        dr = [BoundaryCondition(ns, Prescribed([d], value * scale)) for ns, d in drive_specs]
+    for kind, drive_scale in plan:
+        dr = ([] if drive_scale is None else
+              [BoundaryCondition(ns, Prescribed([d], value * drive_scale))
+               for ns, d in drive_specs])
         steps.append(make_step[kind](dr))
 
     heading = Heading(f"matrix {dim}d {mode} {traction} {bc} {test_type}")

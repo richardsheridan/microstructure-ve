@@ -485,7 +485,7 @@ Design decisions and rationale:
   into one serial unit; intervening `Dynamic` steps stay *linear* perturbations about the base state
   (their steady-state reaction is unaffected by the plastic prestress) and use the existing
   `solve_one`. Steps may drive different magnitudes, so the drive is parsed per step
-  (`_loading.macro_loading(sim, step=...)`).
+  (`_loading.macro_loading(sim, step=...)`); which drive a step reports is stated by `run`.
 - **Standard (non-periodic) plasticity.** Macro loading enters as prescribed face displacements
   (total strain = `eps(u)`, no fluctuation/macro-strain split); the reaction is the internal-force
   vector `∫ sig:eps(v)` summed at the drive face — the nonlinear analogue of the linear path's

@@ -226,6 +226,10 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     ``Fixed`` does (``_loading.model_holds``) and a nonzero one is refused. The remaining
     kwargs are execution knobs only.
 
+    Each step's rows report that step's own drive and the reaction to it. A periodic ``Static``
+    step with no drive of its own reports the drive of the last ``Static`` step that carried
+    one; a ``Dynamic`` step with no drive of its own, or a driveless first step, is refused.
+
     Each row is ``[frame_value, RF_Real_1..d, RF_Imag_1..d, U_1..d]`` (same columns as the
     ABAQUS readODB tsv; ``frame_value`` is the frequency for a Dynamic sweep, the step time
     for a Static/transient step), where ``RF`` is the complex reaction on the +x face and ``U`` the
@@ -382,8 +386,8 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
     step, then per frame): a ``Static`` step contributes one row (zero loss) at frame value 1.0
     -- elastic (real ``*Elastic`` moduli) or, if a ``Plastic`` response is present, the nonlinear
     J2 return-mapping solve (``_plastic``) -- and a ``Dynamic`` step one row per swept frequency
-    (ascending). The FE problem (mesh/MPC/forms) is built once and reused across steps. The
-    multi-step cells drive the same macro loading each step, so one solver serves all.
+    (ascending). The FE problem (mesh/MPC/forms) is built once and reused across steps.
+    Each step's drive follows ``run``; every step drives the components the first drive sets.
 
     ``collect_energy=True`` returns ``(rows, energies)`` with one strain-energy scalar per
     row -- assembled by the hyperelastic solver after its step converges, ``np.nan`` for
@@ -424,19 +428,29 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
 
     rows = []
     energies = []
+    general_loading = None   # drive of the last general (Static) step that carried one
     for step in sim.steps:
         if cancel is not None and cancel():
             raise Cancelled("cancelled by callback")
         dyn = spec.find(step.subsections, Dynamic)
+        loading = None
+        if has_pbc:
+            # a step's own drive; a driveless Static step keeps the last general drive
+            # (check_supported refuses a driveless Dynamic step and a driveless first step)
+            if loadingmod.prescribed_bcs(step.subsections):
+                loading = loadingmod.macro_loading(sim, step=step)
+            else:
+                loading = general_loading
+            if dyn is None:
+                general_loading = loading
+        # the standard solve_one reads its BCs from the sim and takes no step drive
+        step_kw = {} if loading is None else {"step_loading": loading}
         if dyn is not None:
             freqs = np.logspace(np.log10(dyn.f_initial), np.log10(dyn.f_final), dyn.f_count)
-            rows.extend(solve_one(float(f)) for f in freqs)
+            rows.extend(solve_one(float(f), **step_kw) for f in freqs)
             energies.extend([np.nan] * len(freqs))
         elif spec.find(step.subsections, Static) is not None:
             if has_plastic and has_pbc:
-                # parse this step's own drive (steps may drive different magnitudes -- e.g. a
-                # harmonic step then a plastic load, or a load then a reversal)
-                loading = loadingmod.macro_loading(sim, step=step)
                 step_incr = 1 if n_incr is None else n_incr
                 rows.append(plastic_solver.solve(loading, step_incr))
                 energies.append(np.nan)
@@ -444,7 +458,6 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
                 rows.append(plastic_solver.solve())            # standard: BCs parsed from sim
                 energies.append(np.nan)
             elif has_hyper and has_pbc:
-                loading = loadingmod.macro_loading(sim, step=step)
                 step_incr = n_incr
                 # a few increments even when fully prescribed: Newton globalization at
                 # ~30-50% strain (the answer is increment-independent -- path-independent
@@ -459,7 +472,8 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
                 rows.append(hyper_solver.solve(n_incr if n_incr is not None else 5))
                 energies.append(hyper_solver.strain_energy())
             else:
-                rows.append(solve_one(1.0, elastic=True))  # frame value 1.0, real *Elastic
+                # frame value 1.0, real *Elastic
+                rows.append(solve_one(1.0, elastic=True, **step_kw))
                 energies.append(np.nan)
     if collect_energy:
         return np.array(rows), np.array(energies)

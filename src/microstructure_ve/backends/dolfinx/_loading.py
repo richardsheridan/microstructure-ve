@@ -125,10 +125,9 @@ def unconstrained_components(model, step):
 def macro_loading(sim, step=None):
     """Parse ``sim`` into a ``MacroLoading`` (raises NotImplementedError if unsupported).
 
-    By default the drive is read from the first step carrying one; most multi-step cells drive
-    the same macro loading every step, so one ``MacroLoading`` describes them all. Pass ``step``
-    to parse a *specific* step's drive instead -- needed when steps drive different magnitudes
-    (e.g. a harmonic Dynamic step at one amplitude followed by a larger Static plastic load).
+    By default the drive is read from the first step carrying one, which sets the driven and
+    free components of the sim. Pass ``step`` to parse a *specific* step's drive instead, as
+    ``run`` does for every step (steps may drive different amplitudes).
     """
     model = sim.model
     nodes = model.nodes
@@ -280,14 +279,16 @@ def check_supported(sim):
     NotImplementedError
         ``sim`` is well formed but uses a feature the backend does not support.
     ValueError
-        ``sim`` is malformed (for example no drive, a step with neither Static nor Dynamic, or
+        ``sim`` is malformed (for example no drive, a periodic first step with no drive, a step
+        with neither Static nor Dynamic, or
         a model-level ``Prescribed`` with a nonzero value, which ABAQUS rejects).
 
     Pure numpy; ``run`` calls this before building a solver and ``can_run`` (hence the test
     harness's ``is_fe_green``) wraps it, so support widens in both automatically as ``macro_loading`` / the frequency resolution grow.
 
     Handles two cases:
-    - *Periodic* sims: validated by ``macro_loading`` (corner-driven PBC path).
+    - *Periodic* sims: validated by ``macro_loading`` (corner-driven PBC path) and the step
+      drive rules of ``run``.
     - *Standard* sims (no ``PeriodicBoundaryConstraint``): validated by
       ``_standard_check`` (direct-Dirichlet path, well-posed cells only).
     """
@@ -330,6 +331,16 @@ def check_supported(sim):
     has_pbc = any(isinstance(bc, PeriodicBoundaryConstraint) for bc in sim.model.bcs)
     if has_pbc:
         macro_loading(sim)
+        steps = list(sim.steps)
+        if steps and not prescribed_bcs(steps[0].subsections):
+            raise ValueError("the first step has no Prescribed drive to inherit")
+        for i, step in enumerate(steps):
+            if (spec.find(step.subsections, Dynamic) is not None
+                    and not prescribed_bcs(step.subsections)):
+                raise NotImplementedError(
+                    f"Dynamic step {i} has no Prescribed drive of its own; a perturbation "
+                    "step does not inherit a drive"
+                )
         # every step must be a resolvable analysis (Static or Dynamic); the run loop
         # sweeps each step in turn (multi-step = several such steps)
         for i, step in enumerate(sim.steps):
