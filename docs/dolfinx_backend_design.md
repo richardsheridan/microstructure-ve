@@ -556,7 +556,7 @@ zeroes the vector it is given before assembling, unlike `dolfinx.fem.petsc.assem
 which adds into it. Two forms assembled into one vector through `dolfinx_mpc` keep only the
 second, and nothing warns: with the deviatoric residual dropped, Newton converged against the
 volumetric part alone and the periodic hyperelastic cells missed their ABAQUS oracles.
-Assemble each form into its own vector and add them (`_HyperelasticSolver._newton`).
+Assemble each form into its own vector and add them (`_HyperelasticSolver._residual`).
 
 ### Standard-BC drive through lifting
 

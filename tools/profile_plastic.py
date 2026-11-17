@@ -233,7 +233,7 @@ def profile_variant(variant_name, n_incr, grid, use_cprofile):
     solver.eps_expr.eval = _timed_eps_eval
 
     try:
-        # Patch module attributes (affects _plastic._newton which reads them at call time)
+        # Patch module attributes (the solver reads them at call time)
         _plastic_mod._return_map = _make_timer_wrapper(_orig_return_map, "return_map")
         _mpc_mod.assemble_vector = _make_timer_wrapper(_orig_assemble_vector, "assemble_vector")
         _mpc_mod.assemble_matrix = _make_timer_wrapper(_orig_assemble_matrix, "assemble_matrix")

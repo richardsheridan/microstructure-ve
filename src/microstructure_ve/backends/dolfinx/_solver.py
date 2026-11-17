@@ -14,7 +14,6 @@ monitor *can* poll the callback (sub-second latency).
 """
 from __future__ import annotations
 
-import numpy as np
 from petsc4py import PETSc
 from dolfinx import fem
 import dolfinx.fem.petsc as fempetsc
@@ -27,20 +26,6 @@ class Cancelled(RuntimeError):
 
 class ConvergenceError(RuntimeError):
     """Raised when a solve ends without meeting its convergence test; no result is returned."""
-
-
-def root_step(J, resid):
-    """Newton step ``J^{-1} resid`` of a free-lateral root-find.
-
-    Raises
-    ------
-    ConvergenceError
-        If ``J`` is singular, so the root-find cannot take its step.
-    """
-    try:
-        return np.linalg.solve(J, resid)
-    except np.linalg.LinAlgError as e:
-        raise ConvergenceError(f"free-lateral root-find did not converge: {e}") from e
 
 
 # --- LU cost model -----------------------------------------------------------------

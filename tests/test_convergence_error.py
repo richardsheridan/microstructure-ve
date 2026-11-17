@@ -77,11 +77,11 @@ class ConvergenceErrorTests(unittest.TestCase):
     def test_periodic_plastic_newton_failure_raises(self):
         """A fully prescribed periodic plastic cell whose Newton solve is cut short of
         convergence raises instead of returning a row."""
-        from microstructure_ve.backends.dolfinx import ConvergenceError, _plastic, run
+        from microstructure_ve.backends.dolfinx import ConvergenceError, _nonlinear, run
 
         sim = matrix_simulation(mode="uniaxial_x", traction="confined_slip", bc="periodic",
                                 dim=2, test_type="hyperelastic_plastic")
-        with mock.patch.object(_plastic, "_MAX_NEWTON", 1):
+        with mock.patch.object(_nonlinear, "_MAX_NEWTON", 1):
             with self.assertRaises(ConvergenceError):
                 run(sim)
 
@@ -89,11 +89,11 @@ class ConvergenceErrorTests(unittest.TestCase):
         """A periodic plastic cell with a free lateral face whose root-find for zero lateral
         traction is cut short of convergence raises, although each of its Newton solves
         converges."""
-        from microstructure_ve.backends.dolfinx import ConvergenceError, _plastic, run
+        from microstructure_ve.backends.dolfinx import ConvergenceError, _nonlinear, run
 
         sim = matrix_simulation(mode="uniaxial_x", traction="free", bc="periodic", dim=2,
                                 test_type="hyperelastic_plastic")
-        with mock.patch.object(_plastic, "_MAX_OUTER", 1):
+        with mock.patch.object(_nonlinear, "_MAX_OUTER", 1):
             with self.assertRaises(ConvergenceError):
                 run(sim)
 
