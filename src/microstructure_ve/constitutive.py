@@ -259,6 +259,7 @@ class ReducedPolynomial:
     K0 = 2*mu0*(1+nu) / (3*(1-2*nu))); higher Di (i>1) are set to zero, giving an
     ``effective d`` of length N = [D1, 0, ..., 0].  When ``d`` is supplied it is used
     verbatim and must have length N.
+    Its D1 must be a positive finite number; higher Di may be zero.
 
     ``poisson`` is required even when ``d`` is given: it feeds the small-strain
     duck-typed backend interface (``youngs``, ``complex_modulus``).
@@ -336,6 +337,7 @@ class Polynomial:
     parameter is illegal with data lines; compressibility is encoded through Di.  When ``d``
     is not given, D1 = 3*(1-2*nu) / (mu0*(1+nu)) and higher Di are zero (length N).  When
     ``d`` is supplied it must have length N.
+    Its D1 must be a positive finite number; higher Di may be zero.
 
     ``poisson`` is required even when ``d`` is given: it feeds ``youngs``/``complex_modulus``.
 
@@ -420,7 +422,7 @@ class ArrudaBoyce:
     **Compressibility:** the ABAQUS ``POISSON`` parameter is illegal with data lines.
     When ``d`` is not given, D1 = 3*(1-2*nu) / (mu0*(1+nu)) and the effective d is [D1]
     (single entry; ArrudaBoyce always has N=1 for the volumetric term).  When ``d`` is
-    supplied it must be a single-element list.
+    supplied it must be a single-element list whose D1 is a positive finite number.
 
     ``poisson`` is required even when ``d`` is given.
 
