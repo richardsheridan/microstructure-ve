@@ -4,9 +4,12 @@ Tests 1-4 are self-contained analytic checks needing no ABAQUS: mesh/dof constru
 the periodic MPC, and homogeneous closed-form uniaxial stresses. ABAQUS-parity tests
 live in test_backend_dolfinx_parity once the oracles are committed.
 """
+import copy
 import unittest
 
 import numpy as np
+
+from microstructure_ve.constitutive import NeoHookean
 
 from tests._helpers import (
     SCALE,
@@ -14,6 +17,7 @@ from tests._helpers import (
     oracle_simulation_prony,
     synthetic_simulation,
 )
+from tests._matrix import matrix_simulation
 
 try:
     import dolfinx  # noqa: F401
@@ -199,6 +203,46 @@ class PronyViscoelasticBehaviorTests(unittest.TestCase):
         self.assertLess(loss[0], 1e-3 * storage[0])
         self.assertLess(loss[-1], 1e-3 * storage[-1])
         self.assertTrue(np.all(loss >= -1e-6 * storage.mean()))
+
+
+@needs_dolfinx
+class NeoHookeanZeroLambdaTests(unittest.TestCase):
+    """With every phase ``NeoHookean(poisson=0)`` the Lame lambda is zero in every cell; ``run``
+    still solves the sim and, at small strain, reproduces the linear ``Elastic(poisson=0)`` solve.
+    """
+
+    # Nominal drive strain. The finite-strain correction to the reaction is first order in the
+    # strain, so at this drive it sits well inside RTOL.
+    STRAIN = 1e-4
+    RTOL = 1e-3
+
+    def _check_small_strain_matches_linear(self, bc):
+        from microstructure_ve.backends.dolfinx import run
+
+        n = 6
+        # A homogeneous cell, so the finite-strain correction is the only difference from the
+        # linear reference: on a heterogeneous cell the two solvers' quadratures also differ.
+        lin = matrix_simulation("uniaxial_x", "free", bc, 2, test_type="elastic", n=n,
+                                displacement=self.STRAIN * n * SCALE, homogeneous=True, nu=0.0)
+        hyper = copy.deepcopy(lin)
+        for m in hyper.model.materials:
+            m.response = NeoHookean(poisson=0.0, youngs=m.response.youngs)
+        for s in hyper.steps:
+            s.nlgeom = True
+
+        fe = run(hyper)
+        ref = run(lin)
+        self.assertEqual(fe.shape, ref.shape)
+        self.assertTrue(np.all(np.isfinite(fe)), msg=f"non-finite row {fe}")
+        # the drive-direction reaction sets the scale for the near-zero lateral columns
+        np.testing.assert_allclose(fe[0], ref[0], rtol=self.RTOL,
+                                   atol=self.RTOL * abs(ref[0, 1]))
+
+    def test_periodic_zero_lambda_solves_and_matches_linear(self):
+        self._check_small_strain_matches_linear("periodic")
+
+    def test_standard_zero_lambda_solves_and_matches_linear(self):
+        self._check_small_strain_matches_linear("standard")
 
 
 @needs_dolfinx
