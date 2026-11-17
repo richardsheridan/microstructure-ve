@@ -9,10 +9,12 @@ Modules that are import-gated on optional/abaqus-only dependencies are excluded
 """
 import doctest
 import importlib
+import unittest
 
-# Pure, numpy-only submodules whose docstrings carry doctests. The abaqus odb reader
+# Pure, numpy-only modules whose docstrings carry doctests. The abaqus odb reader
 # is excluded (it is import-gated on odbAccess).
 DOCTEST_MODULES = [
+    "microstructure_ve",
     "microstructure_ve.core",
     "microstructure_ve.constitutive",
     "microstructure_ve.boundary",
@@ -26,3 +28,23 @@ def load_tests(loader, tests, ignore):
         mod = importlib.import_module(name)
         tests.addTests(doctest.DocTestSuite(mod))
     return tests
+
+
+def _flatten(suite):
+    for test in suite:
+        if isinstance(test, unittest.TestSuite):
+            yield from _flatten(test)
+        else:
+            yield test
+
+
+class PackageDocstringDoctestTest(unittest.TestCase):
+    def test_package_import_example_runs_as_a_doctest(self):
+        """The import example in the package docstring runs in the doctest suite.
+
+        ``DocTestSuite`` drops docstrings without examples, so a literal-block example that
+        nothing executes fails here instead of passing vacuously.
+        """
+        suite = load_tests(unittest.TestLoader(), unittest.TestSuite(), None)
+        ids = {test.id() for test in _flatten(suite)}
+        self.assertIn("microstructure_ve", ids)
