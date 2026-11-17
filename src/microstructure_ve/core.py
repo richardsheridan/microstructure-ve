@@ -12,7 +12,7 @@ from typing import Dict, List, Literal, Tuple, Union
 import numpy as np
 from dataclasses import dataclass, field
 
-# NOTE: every "1 +" you see is correcting the array indexing mismatch between
+# Every "1 +" you see is correcting the array indexing mismatch between
 # python and abaqus (python has zero-indexed, abaqus has one-indexed arrays)
 # however "+ 1" actually indicates an extra step
 
@@ -22,7 +22,7 @@ Sides_3d = {
     # labels below). Every backend's coordinate emission reverses the index axes --
     # np.indices(shape)[::-1] -- so nodes come out at physical (x, y, z) and the
     # microstructure array itself is never transposed.
-    # FACES
+    # Faces
     "X0": np.s_[1:-1, 1:-1, 0],   # Left (Face)
     "X1": np.s_[1:-1, 1:-1, -1],  # Right (Face)
     "Y0": np.s_[1:-1, 0, 1:-1],   # Bottom (Face)
@@ -30,7 +30,7 @@ Sides_3d = {
     "Z0": np.s_[0, 1:-1, 1:-1],   # Back (Face)
     "Z1": np.s_[-1, 1:-1, 1:-1],  # Front (Face)
 
-    # EDGES
+    # Edges
     # on x axis
     "Y0Z0": np.s_[0, 0, 1:-1],    # Bottom Back (Edge)
     "Y0Z1": np.s_[-1, 0, 1:-1],   # Bottom Front (Edge)
@@ -43,13 +43,13 @@ Sides_3d = {
     "X1Z0": np.s_[0, 1:-1, -1],   # Right Back (Edge)
     "X1Z1": np.s_[-1, 1:-1, -1],  # Right Front (Edge)
 
-    # on x axis
+    # on z axis
     "X0Y0": np.s_[1:-1, 0, 0],    # Left Bottom (Edge)
     "X0Y1": np.s_[1:-1, -1, 0],   # Left Top (Edge)
     "X1Y0": np.s_[1:-1, 0, -1],   # Right Bottom (Edge)
     "X1Y1": np.s_[1:-1, -1, -1],  # Right Top (Edge)
 
-    # VERTICES
+    # Vertices
     "X0Y0Z0": np.s_[0, 0, 0],     # Left Bottom Back (Vertex)
     "X0Y1Z0": np.s_[0, -1, 0],    # Left Top Back (Vertex)
     "X1Y0Z0": np.s_[0, 0, -1],    # Right Bottom Back (Vertex)
@@ -64,7 +64,7 @@ Sides_3d = {
 Sides_2d = {
 
     # 2D
-    # EDGES
+    # Edges
     # on x axis
     "Y0": np.s_[0, 1:-1],   # Bottom (Edge)
     "Y1": np.s_[-1, 1:-1],  # Top (Edge)
@@ -73,7 +73,7 @@ Sides_2d = {
     "X0": np.s_[1:-1, 0],   # Left (Edge)
     "X1": np.s_[1:-1, -1],  # Right (Edge)
 
-    # VERTICES
+    # Vertices
     "X0Y0": np.s_[0, 0],    # Left Bottom (Vertex)
     "X0Y1": np.s_[-1, 0],   # Left Top (Vertex)
     "X1Y0": np.s_[0, -1],   # Right Bottom (Vertex)
@@ -83,6 +83,16 @@ Sides_2d = {
 
 @dataclass(eq=False)
 class NodeSet:
+    """A named set of nodes; ``str()`` gives its name, the token the ABAQUS deck refers to.
+
+    Parameters
+    ----------
+    name : str
+        The set name.
+    node_inds : ndarray or list of int
+        The 1-indexed node numbers in the set.
+    """
+
     name: str
     node_inds: Union[np.ndarray, List[int]]
 
@@ -90,6 +100,22 @@ class NodeSet:
     def from_slice(cls, name, slice_, nodes):
         """A named node set selecting the (1-indexed) nodes under a numpy slice.
 
+        Parameters
+        ----------
+        name : str
+            The set name.
+        slice_ : slice or tuple of slices
+            Indexes the node grid, axis order as in ``Sides_3d``.
+        nodes : GridNodes
+            The node grid whose ``shape`` is sliced.
+
+        Returns
+        -------
+        NodeSet
+            Node numbers in raveled grid order, 1-indexed.
+
+        Examples
+        --------
         >>> import numpy as np
         >>> from microstructure_ve.core import GridNodes, NodeSet, Sides_2d
         >>> nodes = GridNodes(np.array([2, 2]), 1.0)
@@ -119,6 +145,8 @@ def _node_array(token):
     existing ndarray); a 1-element array for a bare int. Used to enumerate the DOFs
     a constraint eliminates/prescribes without materializing per-node Python lists.
 
+    Examples
+    --------
     >>> from microstructure_ve.core import _node_array
     >>> _node_array(5)
     array([5])
@@ -131,6 +159,25 @@ def _node_array(token):
 
 @dataclass
 class GridNodes:
+    """A structured grid of nodes with the boundary node sets of its sides.
+
+    Nodes are numbered from 1 in raveled grid order; ``virtual_node`` is the number one
+    past the last real node. ``nsets`` maps each name of ``Sides_2d`` or ``Sides_3d`` to its
+    ``NodeSet``.
+
+    Parameters
+    ----------
+    shape : tuple of int
+        Nodes per axis, axis order as in ``Sides_3d``; canonicalized to a tuple of int.
+    scale : float
+        Node spacing.
+
+    Raises
+    ------
+    ValueError
+        If the grid is neither 2D nor 3D.
+    """
+
     shape: Tuple[int, ...]
     scale: float
     nsets: Dict[str, NodeSet] = field(init=False)
@@ -140,6 +187,19 @@ class GridNodes:
         """Build the node grid for a material/pixel image: one more node than pixels
         per axis, scaled by ``scale``.
 
+        Parameters
+        ----------
+        matl_img : ndarray
+            The 2D or 3D material image, one pixel per element.
+        scale : float
+            Node spacing.
+
+        Returns
+        -------
+        GridNodes
+
+        Examples
+        --------
         >>> import numpy as np
         >>> from microstructure_ve.core import GridNodes
         >>> nodes = GridNodes.from_matl_img(np.zeros((2, 3)), scale=0.5)
@@ -179,10 +239,22 @@ class GridNodes:
 class GridElements:
     """One structured-grid element per pixel, of a given ABAQUS element ``type``.
 
-    2D types: ``CPE4R`` (plane strain, reduced integration), ``CPS4R`` (plane stress,
-    reduced), ``CPE4`` (plane strain, full integration). 3D: ``C3D8R`` (reduced),
-    ``C3D8`` (full). The ``*R`` variants are reduced-integration. The DOLFINx backend solves
-    only the types in ``backends.dolfinx._loading.SOLVED_ELEMENT_TYPES``.
+    Elements are numbered from 1 in raveled pixel order. The DOLFINx backend solves only
+    the types in ``backends.dolfinx._loading.SOLVED_ELEMENT_TYPES``.
+
+    Parameters
+    ----------
+    nodes : GridNodes
+        The node grid; it has one more node than elements per axis.
+    type : str
+        2D: ``CPE4R`` (plane strain, reduced integration), ``CPS4R`` (plane stress,
+        reduced), ``CPE4`` (plane strain, full integration). 3D: ``C3D8R`` (reduced),
+        ``C3D8`` (full).
+
+    Raises
+    ------
+    ValueError
+        If ``type`` does not match the dimension of ``nodes``.
     """
 
     nodes: GridNodes
@@ -190,8 +262,6 @@ class GridElements:
 
     def __post_init__(self):
         dim = self.nodes.dim
-        # CPE4 / C3D8 (full integration) added for tight parity with a full-integration
-        # FE backend; the *R variants are reduced-integration.
         if dim == 2:
             if self.type not in {"CPE4R", "CPS4R", "CPE4"}:
                 raise ValueError("Need a 2D element type, got:", self.type)
@@ -205,6 +275,16 @@ class GridElements:
 
 @dataclass
 class ElementSet:
+    """The elements of one material, emitted to ABAQUS as elset ``SET-<matl_code>``.
+
+    Parameters
+    ----------
+    matl_code : int
+        The pixel value the set was built from.
+    elements : ndarray
+        The 1-indexed element numbers in the set.
+    """
+
     matl_code: int
     elements: np.ndarray
 
@@ -216,8 +296,19 @@ class ElementSet:
         So unpacking follows the sorted values -- for an image valued {0, 1, 2},
         ``a, b, c = ElementSet.from_matl_img(img)`` gives ``a`` = value 0, etc. Mind this
         order when pairing elsets with materials: a mismatch is silent, not an error.
-        Element numbers are 1-indexed in raveled pixel order.
 
+        Parameters
+        ----------
+        matl_img : ndarray
+            The material image, one pixel per element.
+
+        Returns
+        -------
+        list of ElementSet
+            Element numbers are 1-indexed in raveled pixel order.
+
+        Examples
+        --------
         >>> import numpy as np
         >>> from microstructure_ve.core import ElementSet
         >>> sets = ElementSet.from_matl_img(np.array([[0, 1], [1, 0]]))

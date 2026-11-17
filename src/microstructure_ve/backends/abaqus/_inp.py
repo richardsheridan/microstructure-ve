@@ -1,10 +1,9 @@
 """ABAQUS ``.inp`` emission for the solver-neutral spec dataclasses.
 
-Each spec object is serialized by a ``functools.singledispatch`` ``emit`` handler whose
-body is the verbatim text the corresponding ``to_inp`` method used to write, so output
-is byte-for-byte unchanged. Container objects (Model, Simulation, Step, the periodic
-constraints, the materials) recurse through ``emit`` instead of calling child
-``to_inp`` methods.
+Each spec object is serialized by a ``functools.singledispatch`` ``emit`` handler. Container
+objects (``Simulation``, ``Model``, ``Step``, ``GridNodes``) recurse through ``emit``; a
+``Material`` dispatches on the type of its ``response`` (``emit_response``) and a
+``BoundaryCondition`` on the type of its ``constraint`` (``emit_constraint``).
 """
 from __future__ import annotations
 
@@ -44,12 +43,32 @@ from microstructure_ve.steps import (
 
 @singledispatch
 def emit(obj, f):
-    """Write the ABAQUS ``.inp`` representation of ``obj`` to text file ``f``."""
+    """Write the ABAQUS ``.inp`` representation of ``obj`` to text file ``f``.
+
+    Raises
+    ------
+    NotImplementedError
+        If no handler is registered for ``type(obj)``.
+    """
     raise NotImplementedError(f"no ABAQUS emitter for {type(obj).__name__}")
 
 
 def write_inp(simulation, file_or_path):
-    """Emit ``simulation`` to a path or an already-open text file."""
+    """Write ``simulation`` as an ABAQUS ``.inp`` deck.
+
+    Parameters
+    ----------
+    simulation : Simulation
+        The spec to emit.
+    file_or_path : str, path-like or text file
+        A path, opened for writing as ASCII and closed afterwards, or an already-open text
+        file, which is written to and left open.
+
+    Returns
+    -------
+    str, path-like or text file
+        ``file_or_path``, unchanged.
+    """
     if hasattr(file_or_path, "write"):
         emit(simulation, file_or_path)
         return file_or_path
@@ -133,9 +152,9 @@ def _(obj, f):
 
 
 def _emit_material_header(material, f):
-    """The shared ``*Solid Section`` / ``*Material`` / ``*Density`` header without *Elastic.
+    """Write the elset and the ``*Solid Section`` / ``*Material`` / ``*Density`` header.
 
-    Used by the hyperelastic handlers which replace *Elastic with *Hyperelastic.
+    The hyperelastic handlers follow it with ``*Hyperelastic`` instead of ``*Elastic``.
     ``material`` supplies ``elset`` and ``density``.
     """
     emit(material.elset, f)
@@ -152,12 +171,20 @@ def _emit_material_header(material, f):
 
 
 def _emit_material_base(material, response, f, elastic_moduli=None):
-    """The shared ``*Solid Section`` / ``*Material`` / ``*Elastic`` block.
+    """Write the material header followed by the ``*Elastic`` block.
 
-    ``material`` supplies ``elset``/``density``; ``response`` supplies the elastic constants.
-    ``elastic_moduli`` tags the ``*Elastic`` keyword (e.g. ``"LONG TERM"`` for a Prony response
-    whose ``youngs``/``poisson`` are the relaxed moduli); ``None`` emits the plain ``*Elastic``
-    used by every other response, byte-for-byte unchanged.
+    Parameters
+    ----------
+    material : Material
+        Supplies ``elset`` and ``density``.
+    response
+        Supplies the elastic constants ``youngs`` and ``poisson``.
+    f : text file
+        The deck being written.
+    elastic_moduli : str, optional
+        Tags the keyword as ``*Elastic, moduli=<elastic_moduli>`` (``"LONG TERM"`` for a
+        Prony response, whose ``youngs``/``poisson`` are the relaxed moduli). ``None`` emits
+        the plain ``*Elastic``.
     """
     _emit_material_header(material, f)
     mc = material.elset.matl_code
@@ -218,10 +245,10 @@ def _(response, material, f):
 
 @emit_response.register(PronyViscoelastic)
 def _(response, material, f):
-    # youngs/poisson are the LONG-TERM (relaxed) moduli in this package (see Material), so tag
+    # youngs/poisson are the long-term (relaxed) moduli (see PronyViscoelastic), so tag
     # *Elastic accordingly; ABAQUS then derives the instantaneous moduli from the Prony ratios.
     _emit_material_base(material, response, f, elastic_moduli="LONG TERM")
-    # ABAQUS PRONY ratios g_i = G_i/G_0, k_i = K_i/K_0 are relative to the INSTANTANEOUS moduli
+    # ABAQUS PRONY ratios g_i = G_i/G_0, k_i = K_i/K_0 are relative to the instantaneous moduli
     # G_0 = G_inf + sum(G_i), K_0 = K_inf + sum(K_i), with the relaxed G_inf = E/(2(1+nu)) and
     # K_inf = E/(3(1-2nu)). This matches PronyViscoelastic.complex_modulus exactly.
     g_inf = response.youngs / (2 * (1 + response.poisson))
@@ -321,9 +348,9 @@ def _(constraint, bc, f):
 @emit.register(PeriodicBoundaryConstraint)
 def _(obj, f):
     # One 4-term *Equation (u_dep - u_img = u_refHi - u_refLo) per boundary node per dof,
-    # pair-major dof-minor -- the order (and bytes) the eagerly-built equation objects
-    # used to emit. The reference corners are named nsets; ABAQUS accepts nset tokens
-    # in *Equation terms. The first-listed (dependent) node is the one ABAQUS eliminates.
+    # pair-major dof-minor, the order PeriodicBoundaryConstraint.dependent_dofs reports. The
+    # reference corners are named nsets; ABAQUS accepts nset tokens in *Equation terms. The
+    # first-listed (dependent) node is the one ABAQUS eliminates.
     for dep, img, ref_hi, ref_lo in obj.node_pairs:
         for i in range(obj.nodes.dim):
             dof = i + 1

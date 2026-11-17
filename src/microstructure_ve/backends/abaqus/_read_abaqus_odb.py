@@ -17,15 +17,30 @@ from abaqusConstants import NODAL
 
 
 def read_odb(name, drive_nodeset):
-    """Return a list of [frame_value, RF_Real..., RF_Imag..., U_Real...] rows.
+    """Read the drive node set's summed reaction force and displacement from an ODB.
 
-    ``frame_value`` is the frame's independent coordinate -- frequency (Hz) for a
-    steady-state Dynamic step, step time for a Static (and future transient/plastic) step.
-    One row per loaded frame across every step (the zero base frame -- a perturbation base
-    state, or the unloaded static initial frame -- is skipped); the reaction force and
-    displacement are summed over the nodes of the drive node set. Raises RuntimeError if
-    every frame is at frame value 0 (no loaded frames), or if the drive node set yields
-    no U/RF values (misnamed set or instance mismatch).
+    Parameters
+    ----------
+    name : str
+        The job name; ``<name>.odb`` is opened read-only.
+    drive_nodeset : str
+        The node set of instance ``PART-1-1`` whose RF and U are summed over its nodes.
+
+    Returns
+    -------
+    list of ndarray
+        One ``[frame_value, RF_Real..., RF_Imag..., U_Real...]`` row per loaded frame, in
+        step order. ``frame_value`` is the frame's independent coordinate: frequency (Hz)
+        for a steady-state Dynamic step, step time for a Static step. Frames at frame value
+        0 (a perturbation base state, or the unloaded static initial frame) are skipped. A
+        Dynamic step gives one row per frequency; a Static step gives one row, its final
+        loaded frame. ``RF_Imag`` is zero for frames without conjugate data.
+
+    Raises
+    ------
+    RuntimeError
+        If no step has a loaded frame, or if the drive node set yields no U/RF values
+        (misnamed set or instance mismatch).
     """
     odb = openOdb(name + ".odb", readOnly=True)
     drive_nset = odb.rootAssembly.instances["PART-1-1"].nodeSets[drive_nodeset.upper()]
@@ -34,7 +49,7 @@ def read_odb(name, drive_nodeset):
         frames = [f for f in step.frames if f.frameValue != 0]
         # An auto-incremented *STATIC step (e.g. a finite-strain NLGEOM solve that needed
         # several increments) writes one frame per converged increment; the oracle contract
-        # is ONE row per Static step (the FE side reports only the converged step end), so
+        # is one row per Static step (the FE side reports only the converged step end), so
         # keep the final loaded frame. Dynamic steps keep every frame (one per frequency).
         if frames and step.procedure.upper().startswith("*STATIC"):
             frames = frames[-1:]
@@ -65,7 +80,15 @@ def read_odb(name, drive_nodeset):
 
 
 def write_tsv(name, rows):
-    """Write the reader rows to ``<name>-reaction-force.tsv`` with a column header."""
+    """Write ``read_odb`` rows to ``<name>-reaction-force.tsv`` under a column header.
+
+    Parameters
+    ----------
+    name : str
+        The job name, the stem of the TSV file name.
+    rows : list of ndarray
+        The rows returned by ``read_odb``.
+    """
     ncomp = (len(rows[0]) - 1) // 3  # frame_value + RF_Real + RF_Imag + U per component
     header = ["frame_value"]
     for i in range(1, 1 + ncomp):
@@ -84,6 +107,7 @@ def write_tsv(name, rows):
 
 
 def main(argv):
+    """Write ``<job>-reaction-force.tsv`` for ``argv = [script, job, drive_nodeset]``."""
     # abaqus trims sys.argv until after "python"
     this_script, name, drive_nodeset = argv
     write_tsv(name, read_odb(name, drive_nodeset))

@@ -23,12 +23,23 @@ BANNER = (
 
 
 def reader_source():
-    """The verbatim source of the reader module that gets emitted."""
+    """Return the verbatim source of the ``_read_abaqus_odb`` module, which is emitted."""
     return _SOURCE.read_text(encoding="utf-8")
 
 
 def write_odb_reader(dest):
-    """Write the standalone reader script to ``dest``; return the destination path."""
+    """Write the standalone reader script, ``BANNER`` followed by ``reader_source()``.
+
+    Parameters
+    ----------
+    dest : str or path-like
+        The script path to write, overwritten if present.
+
+    Returns
+    -------
+    pathlib.Path
+        ``dest`` as a path.
+    """
     dest = pathlib.Path(dest)
     dest.write_text(BANNER + reader_source(), encoding="utf-8")
     return dest
