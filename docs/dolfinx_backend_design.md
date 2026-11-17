@@ -487,18 +487,32 @@ Design decisions and rationale:
   well-posed by minimal rigid-body pins), so there is no free-lateral root-find.
 - **Free-lateral (periodic) components** are solved by a small outer scalar root-find (driving the
   conjugate volume-averaged stress to zero); confined cells skip it.
+- **One increment per plastic `Static` step by default**, every cell and every step of a multi-step
+  sim alike; `run(n_incr=...)` overrides it. The emitted `*STATIC` has no increment data line, so
+  ABAQUS starts at an increment of 1.0 and solves each matrix step in one. On a heterogeneous cell
+  the free-lateral strain path is not proportional, and the answer depends on the increment count:
+  on the 3D periodic uniaxial free cell the FE reaction moves by about 2e-4 relative between 1 and
+  80 increments. FE and ABAQUS (field tolerances tightened to 1e-8) agree to 2e-8 when both take
+  one increment and to 3e-9 when both take 20, but the FE at 20 against ABAQUS at one differs by
+  about 2e-4 in the reaction, enough to fail a 3D free cell's parity check. The confined
+  and multi-step cells, which already took one, drift further from their oracles as the FE
+  takes more.
 - **Hardening table** `(plastic_strain, yield_stress)` is piecewise-linear with *constant
   extrapolation* past the last point (perfectly plastic there), matching ABAQUS `*Plastic`.
 
 **Parity fidelity / tolerance carve-outs.** Every cell's homogenized reaction matches ABAQUS at the
-standard `RTOL=1e-4`; the periodic cells match to ~1e-8 because the reported volume-averaged stress is
-insensitive to the B-bar detail. The exceptions, documented in `test_matrix_parity.py`, are all
-*standard*-BC local quantities where the mean-dilatation plastic B-bar is slightly less faithful than
-ABAQUS's CPE4 selective-reduced-integration B-bar: 2D standard compression/shear storage RF (relaxed
-to 1e-3) and the standard plastic drive column (relaxed to 5e-3 — the *driven* displacement is exact
+standard `RTOL=1e-4`. The heterogeneous matrix cells carry a real fluctuation field (one stiff block,
+`_stiff_block` in `tests/_matrix.py`), so the periodic cells test the periodic solve, B-bar and
+tangent as well as the volume average. Their parity errors run from about 1e-8 (3D shear) to
+6e-5 (2D compression), the scale of the noise of ABAQUS's default equilibrium tolerance in the
+committed oracles, which differ from tight-tolerance solves by up to about 5e-5. A 2D residual of about 1e-4 against
+tight-tolerance ABAQUS on the compression cell does not move with increments or tolerance; the
+in-plane mean-dilatation B-bar against CPE4's is the candidate. The exception, documented in `test_matrix_parity.py`, is a
+*standard*-BC local quantity where the mean-dilatation plastic B-bar is slightly less faithful than
+ABAQUS's CPE4 selective-reduced-integration B-bar: the standard plastic drive column (relaxed to 5e-3 — the *driven* displacement is exact
 to ~1e-7, only the loaded face's solved *transverse slip* drifts, ~0.3% on 3D free cells). A fully
-consistent deviatoric/volumetric-split B-bar would tighten these but is a larger refactor with risk to
-the 20 already-exact periodic cells, so it is deferred.
+consistent deviatoric/volumetric-split B-bar would tighten it but is a larger refactor with risk to
+the periodic cells, so it is deferred.
 
 ## 13. Finite-strain hyperelasticity (`_hyperelastic.py`)
 
@@ -527,7 +541,16 @@ The rule: a form with exactly one test function and no trial function that mixes
 quadrature degrees is compiled as one `fem.form` per measure and assembled in as many
 passes (`res_forms` in `_hyperelastic.py`). This applies to any new selective-reduced or
 B-bar residual in `_hyperelastic.py`, `_plastic.py` or `_assembly.py`. The regression
-check is `test_return_energy_clapeyron` in `tests/test_mechanical_mnist.py`.
+check is `test_return_energy_clapeyron` in `tests/test_mechanical_mnist.py`, which runs the standard path only; the periodic path builds the same forms in `_FormsMixin` but has no check of its own.
+
+### Vector assembly into one target
+
+The passes cannot share one vector on the periodic path. `dolfinx_mpc.assemble_vector`
+zeroes the vector it is given before assembling, unlike `dolfinx.fem.petsc.assemble_vector`,
+which adds into it. Two forms assembled into one vector through `dolfinx_mpc` keep only the
+second, and nothing warns: with the deviatoric residual dropped, Newton converged against the
+volumetric part alone and the periodic hyperelastic cells missed their ABAQUS oracles.
+Assemble each form into its own vector and add them (`_HyperelasticSolver._newton`).
 
 ### Standard-BC drive through lifting
 
@@ -541,12 +564,23 @@ both paths and triggers backtracking.
 
 ### Parity fidelity
 
-Every periodic hyperelastic cell matches its ABAQUS oracle at the standard `RTOL=1e-4`
-(observed 1e-9 to 8e-5 over 33 cells). The 16 standard cells differ by 0.4% to 2.4% and
-are relaxed through `_STANDARD_HYPER_RTOL` in `tests/test_matrix_parity.py`, where the
-cause (ABAQUS's F-bar against this backend's selective reduced integration) is explained.
+Every hyperelastic cell, periodic and standard, is held to `_HYPER_RTOL` in
+`tests/test_matrix_parity.py`, where the cause of the gap (ABAQUS's F-bar against this
+backend's selective reduced integration) is explained. The two formulations agree wherever
+`J` is constant within each element and differ where it varies. The 16 standard cells
+differ by 0.4% to 2.4%; their 2D uniaxial gap halves from n=6 to n=12. The periodic cells
+show the same gap since the matrix image became one stiff block (`_stiff_block` in
+`tests/_matrix.py`), which gives them a fluctuation field. The earlier checkerboard had none,
+so `F` was uniform and the periodic cells matched at 1e-9 to 8e-5.
+
+Across the 32 periodic cells the gap runs from about 5e-4 to 2.2e-2 (3D compression,
+`polynomial`). It is a discretization difference, not a disagreement in the answer: upsampling
+the image of the 2D periodic `reduced_polynomial` stiff-block cell to halve the mesh twice,
+the FE-ABAQUS gap falls from 9.1e-3 to 2.9e-3 to 1.0e-3 (uniaxial_x free) and from 2.6e-3
+to 1.1e-3 to 3.8e-4 (shear_xy no_slip).
+
 Closing the gap means reproducing ABAQUS's in-plane F-bar pairing, which needs
-per-iteration DG0 `Jbar`/`pbar` coefficient fields.
+per-iteration DG0 `Jbar`/`pbar` coefficient fields (the TODO in `_FormsMixin._build_forms`).
 
 ### One oracle row per Static step
 

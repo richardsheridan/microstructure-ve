@@ -234,8 +234,8 @@ class _FormsMixin:
         P_dev = ufl.diff(psi_dev, F)
         P_vol = ufl.diff(psi_vol, F)
 
-        # TODO: reproduce ABAQUS's in-plane F-bar pairing to close the standard-cell parity
-        # gap (_STANDARD_HYPER_RTOL in tests/test_matrix_parity.py); it needs per-iteration
+        # TODO: reproduce ABAQUS's in-plane F-bar pairing to close the hyperelastic parity
+        # gap (_HYPER_RTOL in tests/test_matrix_parity.py); it needs per-iteration
         # DG0 Jbar/pbar coefficient fields in place of this selective reduced integration.
         dx2 = ufl.dx(metadata={"quadrature_degree": 2})
         dx1 = ufl.dx(metadata={"quadrature_degree": 1})  # centroid: SRI ~ B-bar mean dilatation
@@ -244,14 +244,11 @@ class _FormsMixin:
         gv = _grad3(v, dim)
         R_dev = ufl.inner(P_dev, gv) * dx2
         R_vol = ufl.inner(P_vol, gv) * dx1
-        # TRAP: a single 1-form combining dx integrals with different quadrature metadata
-        # silently merges to ONE rule in this ffcx version (verified: the combined vector
-        # equals dev@1+vol@1 bit-for-bit, i.e. uniform reduced integration -- no SRI).
-        # 0-forms and 2-forms keep their per-integral rules, so only the residual must be
-        # compiled as two forms and assembled in two passes. The merge raises nothing and
-        # Newton still converges; the Clapeyron energy-vs-work identity in
-        # tests/test_mechanical_mnist.py is the check that catches it
-        # (docs/dolfinx_backend_design.md, section 13).
+        # Trap: a 1-form mixing quadrature degrees compiles to one rule, so the residual is
+        # two forms assembled in two passes, see
+        # docs/dolfinx_backend_design.md#quadrature-merge-in-1-forms.
+        # The Clapeyron identity in tests/test_mechanical_mnist.py catches the merge on the
+        # standard path only; the periodic path shares these forms but has no such check.
         self.res_forms = (fem.form(R_dev), fem.form(R_vol))
         self.jac_form = fem.form(ufl.derivative(R_dev + R_vol, self.disp, du))
         # total strain energy on the residual's own SRI measures (so the reported energy
@@ -297,7 +294,7 @@ class _HyperelasticSolver(_FormsMixin):
         self.A = dolfinx_mpc.assemble_matrix(self.jac_form, self.mpc, bcs=self.bcs)
         self.A.assemble()
         self.b = dolfinx_mpc.assemble_vector(self.res_forms[0], self.mpc)
-        dolfinx_mpc.assemble_vector(self.res_forms[1], self.mpc, self.b)
+        self._b_vol = dolfinx_mpc.assemble_vector(self.res_forms[1], self.mpc)
         self.x = self.A.createVecRight()
         self.du = fem.Function(self.V)
         self.ksp = PETSc.KSP().create(self.mesh.comm)
@@ -322,10 +319,12 @@ class _HyperelasticSolver(_FormsMixin):
         last_du = None
         halvings = 0
         for _ in range(_MAX_NEWTON):
-            with self.b.localForm() as bl:
-                bl.set(0.0)
+            # each part gets its own vector: dolfinx_mpc.assemble_vector zeroes its target
+            # (docs/dolfinx_backend_design.md#vector-assembly-into-one-target)
             dolfinx_mpc.assemble_vector(self.res_forms[0], self.mpc, self.b)
-            dolfinx_mpc.assemble_vector(self.res_forms[1], self.mpc, self.b)
+            dolfinx_mpc.assemble_vector(self.res_forms[1], self.mpc, self._b_vol)
+            with self.b.localForm() as bl, self._b_vol.localForm() as vl:
+                bl.array[:] += vl.array
             dolfinx_mpc.apply_lifting(self.b, [self.jac_form], [self.bcs], self.mpc)
             self.b.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
             fempetsc.set_bc(self.b, self.bcs)

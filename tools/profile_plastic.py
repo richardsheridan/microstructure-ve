@@ -87,7 +87,7 @@ import numpy as np  # noqa: E402  (imported after thread-env pins)
 
 RESULTS_PATH = pathlib.Path(__file__).with_name("profile_plastic_results.json")
 
-# Default n_incr per variant (mirrors _run.py hard-codes)
+# Default n_incr per variant: the workloads of the Results table (``run`` defaults to one)
 _DEFAULT_N_INCR = {"confined": 12, "free_lateral": 20}
 _QUICK_N_INCR = 4
 _DEFAULT_GRID = 50
