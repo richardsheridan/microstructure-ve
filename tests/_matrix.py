@@ -391,8 +391,20 @@ def _standard_face_bcs(nodes, mode, traction):
 # ---------------------------------------------------------------------------
 # materials / geometry
 # ---------------------------------------------------------------------------
-def _checkerboard(n, dim):
-    return np.indices((n,) * dim).sum(0) % 2
+_BLOCK_EDGE = 2
+_BLOCK_START = {2: (1, 0), 3: (0, 2, 0)}
+
+
+def _stiff_block(n, dim):
+    """Phase image: phase 0 holding one cubic phase-1 block of edge ``_BLOCK_EDGE``.
+
+    At the default grid sizes the block sits off every axis mirror plane of the cell (in 2D
+    off the diagonal ones too), so a uniform macro strain leaves a nonzero periodic
+    fluctuation field and no mirror symmetry of the cell hides a normal-shear coupling.
+    """
+    img = np.zeros((n,) * dim, dtype=int)
+    img[tuple(slice(s, s + _BLOCK_EDGE) for s in _BLOCK_START[dim])] = 1
+    return img
 
 
 # The tabular table is defined on this log-uniform grid, and the viscoelastic sweep
@@ -461,7 +473,7 @@ def _hyper_response(test_type, stiff=False):
 def _build_geometry(dim, n, scale, homogeneous, E, nu, test_type):
     """Mesh + materials. ``viscoelastic`` cells use a tabular phase; ``elastic`` use flat
     elastic phases. Heterogeneous cells mix an elastic filler with the second phase."""
-    img = np.zeros((n,) * dim, dtype=int) if homogeneous else _checkerboard(n, dim)
+    img = np.zeros((n,) * dim, dtype=int) if homogeneous else _stiff_block(n, dim)
     nodes = GridNodes.from_matl_img(img, scale)
     etype = "CPE4" if dim == 2 else "C3D8"
     elements = GridElements(nodes, type=etype)
@@ -518,7 +530,7 @@ def matrix_simulation(mode, traction, bc, dim, test_type="elastic", n=None, scal
     Raises ``ValueError`` for a pruned/invalid cell and ``NotImplementedError`` for the
     stub test types (so callers can assert the guard). ``homogeneous=True`` builds a
     single-material RVE (for the FE analytic invariants); otherwise a two-material
-    checkerboard.
+    RVE with one stiff block (``_stiff_block``).
     """
     _validate_cell(mode, traction, bc, dim)
     if test_type in STUB_TEST_TYPES:
