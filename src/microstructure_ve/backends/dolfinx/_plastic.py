@@ -39,7 +39,7 @@ import dolfinx_mpc
 from microstructure_ve.constitutive import Plastic
 
 from ._nonlinear import FreeLateralRamp, modified_newton
-from ._solver import ConvergenceError
+from ._solver import ConvergenceError, lu_ksp
 
 _QUAD_DEGREE = 2          # 2x2(x2) Gauss = ABAQUS CPE4 (4 pts) / C3D8 (8 pts)
 _FD_STEP = 1e-7           # finite-difference step for the (consistent) algorithmic tangent
@@ -347,10 +347,7 @@ class _PlasticSolver(_J2Solver):
         self.A.assemble()
         self.b = dolfinx_mpc.assemble_vector(self.L_form, self.mpc)
         self.x = self.A.createVecRight()
-        self.ksp = PETSc.KSP().create(self.mesh.comm)
-        self.ksp.setOperators(self.A)
-        self.ksp.setType("preonly")
-        self.ksp.getPC().setType("lu")
+        self.ksp = lu_ksp(self.A, self.mesh.comm)
 
     def _assemble_jacobian(self):
         dolfinx_mpc.assemble_matrix(self.a_form, self.mpc, bcs=self.bcs, A=self.A)
@@ -443,10 +440,7 @@ class _StandardPlasticSolver(_J2Solver):
         self.A.assemble()
         self.r = fempetsc.assemble_vector(self.L_form)
         self.x = self.A.createVecRight()
-        self.ksp = PETSc.KSP().create(self.mesh.comm)
-        self.ksp.setOperators(self.A)
-        self.ksp.setType("preonly")
-        self.ksp.getPC().setType("lu")
+        self.ksp = lu_ksp(self.A, self.mesh.comm)
 
     def _assemble_jacobian(self):
         fempetsc.assemble_matrix(self.A, self.a_form, bcs=self.bcs)

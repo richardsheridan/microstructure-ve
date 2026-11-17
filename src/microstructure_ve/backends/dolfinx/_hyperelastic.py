@@ -56,7 +56,7 @@ from microstructure_ve.constitutive import (
 )
 
 from ._nonlinear import FreeLateralRamp, modified_newton
-from ._solver import ConvergenceError
+from ._solver import ConvergenceError, lu_ksp
 
 # Arruda-Boyce Langevin-expansion coefficients C_i, i = 1..5
 _AB_C = (0.5, 1.0 / 20.0, 11.0 / 1050.0, 19.0 / 7000.0, 519.0 / 673750.0)
@@ -297,10 +297,7 @@ class _HyperelasticSolver(_FormsMixin):
         self.b = dolfinx_mpc.assemble_vector(self.res_forms[0], self.mpc)
         self._b_vol = dolfinx_mpc.assemble_vector(self.res_forms[1], self.mpc)
         self.x = self.A.createVecRight()
-        self.ksp = PETSc.KSP().create(self.mesh.comm)
-        self.ksp.setOperators(self.A)
-        self.ksp.setType("preonly")
-        self.ksp.getPC().setType("lu")
+        self.ksp = lu_ksp(self.A, self.mesh.comm)
 
         self.H_current = np.zeros((self.dim, self.dim))
         self._ramp = FreeLateralRamp(lambda axis: (axis, axis))
@@ -399,10 +396,7 @@ class _StandardHyperelasticSolver(_FormsMixin):
         self.A.assemble()
         self.r = fempetsc.assemble_vector(self.res_forms[0])
         self.x = self.A.createVecRight()
-        self.ksp = PETSc.KSP().create(self.mesh.comm)
-        self.ksp.setOperators(self.A)
-        self.ksp.setType("preonly")
-        self.ksp.getPC().setType("lu")
+        self.ksp = lu_ksp(self.A, self.mesh.comm)
 
     def set_step(self, step):
         """Re-parse ``step``'s BCs; the next ``solve`` ramps from the committed state.

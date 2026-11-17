@@ -30,6 +30,11 @@ def find_drive(items):
     return None
 
 
+def sweep_frequencies(dyn):
+    """The log-spaced excitation frequencies of the ``Dynamic`` subsection ``dyn``."""
+    return np.logspace(np.log10(dyn.f_initial), np.log10(dyn.f_final), dyn.f_count)
+
+
 def frequencies(sim):
     """The points the sweep is evaluated at -- the single entry point used by ``run`` and the
     ``_loading.check_supported`` capability check. Returns the log-spaced ``Dynamic`` sweep of the first step if present;
@@ -38,7 +43,7 @@ def frequencies(sim):
     ``ValueError`` if neither subsection is present."""
     dyn = find(sim.steps[0].subsections, Dynamic)
     if dyn is not None:
-        return np.logspace(np.log10(dyn.f_initial), np.log10(dyn.f_final), dyn.f_count)
+        return sweep_frequencies(dyn)
     if find(sim.steps[0].subsections, Static) is not None:
         return np.array([1.0])
     raise ValueError(

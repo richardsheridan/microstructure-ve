@@ -446,7 +446,7 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
         # the standard solve_one reads its BCs from the sim and takes no step drive
         step_kw = {} if loading is None else {"step_loading": loading}
         if dyn is not None:
-            freqs = np.logspace(np.log10(dyn.f_initial), np.log10(dyn.f_final), dyn.f_count)
+            freqs = spec.sweep_frequencies(dyn)
             rows.extend(solve_one(float(f), **step_kw) for f in freqs)
             energies.extend([np.nan] * len(freqs))
         elif spec.find(step.subsections, Static) is not None:

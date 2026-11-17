@@ -69,6 +69,15 @@ def select_solver_kind(ndof, dim):
     return "lu" if predict_lu_seconds(ndof, dim) <= LU_TIME_S else "iterative"
 
 
+def lu_ksp(A, comm):
+    """A direct solver for ``A``: PETSc's native serial LU (~25x faster than MUMPS here)."""
+    ksp = PETSc.KSP().create(comm)
+    ksp.setOperators(A)
+    ksp.setType("preonly")
+    ksp.getPC().setType("lu")
+    return ksp
+
+
 class LuSolver:
     def __init__(self, space, forms, matfields, mpc, bcs):
         self.space = space
@@ -84,10 +93,7 @@ class LuSolver:
         self.A.assemble()
         self.b = dolfinx_mpc.assemble_vector(forms.L_forms[0], mpc)
         self.x = self.A.createVecRight()
-        self.ksp = PETSc.KSP().create(space.mesh.comm)
-        self.ksp.setOperators(self.A)
-        self.ksp.setType("preonly")
-        self.ksp.getPC().setType("lu")  # native serial LU (~25x faster than MUMPS here)
+        self.ksp = lu_ksp(self.A, space.mesh.comm)
 
     def _refactor(self):
         self.A.zeroEntries()

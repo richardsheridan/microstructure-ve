@@ -2,8 +2,10 @@
 
 ``modified_newton`` equilibrates the field at a fixed macro state; ``FreeLateralRamp`` ramps the
 macro state over increments and finds the free lateral entries by a root-find on the average
-stress. Each solver supplies its residual, Jacobian and average stress; the iteration, its
-tolerances and its failure raises live here.
+stress. Each solver supplies its residual, Jacobian refresh and average stress; the iteration
+and its tolerances live here. ``FreeLateralRamp`` raises when an increment fails;
+``modified_newton`` reports convergence and leaves the raise to its caller, and the standard
+solvers, which have no free lateral entries, run their own increments around it.
 """
 from __future__ import annotations
 
@@ -34,10 +36,9 @@ def modified_newton(residual, refresh_jacobian, ksp, x, field, *, mpc=None, real
                     r_ref=0.0):
     """Drive ``residual`` to zero by modified Newton on ``field``, with step halving.
 
-    Each iteration solves ``J du = R`` and updates ``field <- field - du``. The Jacobian and
-    its LU factorization are refreshed on the first correcting iteration and whenever an
-    iteration shrinks the residual by less than ``_FROZEN_RATIO``; in between, iterations
-    reuse the factorization. A step that grows the residual is halved back, at most
+    Each iteration solves ``J du = R`` and updates ``field <- field - du``. ``refresh_jacobian``
+    is called on the first correcting iteration and whenever an iteration shrinks the residual
+    by less than ``_FROZEN_RATIO``; in between, iterations reuse the current factorization. A step that grows the residual is halved back, at most
     ``_MAX_HALVINGS`` times in a row: return-map branch switching can trap an undamped Newton
     in a two-cycle. The converged answer is set by the residual and tolerance alone.
 
@@ -47,8 +48,8 @@ def modified_newton(residual, refresh_jacobian, ksp, x, field, *, mpc=None, real
         ``residual() -> PETSc.Vec``, the residual at the current ``field`` with its Dirichlet
         rows set to the correction they impose.
     refresh_jacobian : callable
-        ``refresh_jacobian()`` refills the operator of ``ksp`` at the iterate of the last
-        ``residual`` call.
+        ``refresh_jacobian()`` brings the operator of ``ksp`` up to date with the iterate of the
+        last ``residual`` call, or leaves it alone when it would not change.
     ksp : PETSc.KSP
         The linear solver of ``J du = R``.
     x : PETSc.Vec
