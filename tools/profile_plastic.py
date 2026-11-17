@@ -15,7 +15,7 @@ CLI::
 Default (full mode): grid=50, n_incr=12 (confined) / 20 (free_lateral).
 --quick: n_incr=4 both variants, grid=50.
 
-Writes tools/profile_plastic_results.json.
+Prints the section tables to stdout and writes no file.
 
 Results
 -------
@@ -26,6 +26,32 @@ multistep run took 16 minutes; "after" is the solver with the four changes below
     variant                  before                  after
     confined, 12 incr        75 s, 301 solves        3.96 s, 99 solves
     free-lateral, 20 incr    694 s, 4548 solves      19.2 s, 411 solves
+
+Per-section breakdown after the changes (default full mode, grid 50, no cProfile):
+
+    confined, 12 incr: wall 3.964 s, 99 ksp.solve calls, 12 _newton calls, mean 8.25 iters
+    section            total s   %wall   calls
+    return_map           0.496    12.5     208
+    eps_eval             0.159     4.0     136
+    assemble_vector      0.095     2.4     111
+    assemble_matrix      0.162     4.1      18
+    apply_lifting        0.085     2.2     111
+    ksp_solve            2.744    69.2      99
+    [sum] 3.742 s (94.4%); other 0.222 s (5.6%)
+
+    free-lateral, 20 incr: wall 19.167 s, 411 ksp.solve calls, 73 _newton calls, mean 5.63 iters
+    section            total s   %wall   calls
+    return_map           2.302    12.0     958
+    eps_eval             0.676     3.5     578
+    assemble_vector      0.403     2.1     484
+    assemble_matrix      0.831     4.3      95
+    apply_lifting        0.384     2.0     484
+    ksp_solve           13.602    71.0     411
+    [sum] 18.198 s (94.9%); other 0.969 s (5.1%)
+
+Residual decay of the last _newton call (a warm-started re-solve) in each variant: confined
+0.0120 to 1.2e-7 over 6 iterations (geometric-mean ratio 0.041); free-lateral 1.3e-3 to
+3.8e-8 over 1 iteration (ratio 2.8e-5).
 
 The changes, in the order they were made:
 
@@ -61,7 +87,6 @@ for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXP
 
 import argparse
 import cProfile
-import json
 import math
 import pathlib
 import pstats
@@ -85,7 +110,6 @@ from bench_hyperelastic_estimate import make_image, build_sim, build_plastic_sol
 
 import numpy as np  # noqa: E402  (imported after thread-env pins)
 
-RESULTS_PATH = pathlib.Path(__file__).with_name("profile_plastic_results.json")
 
 # Default n_incr per variant: the workloads of the Results table (``run`` defaults to one)
 _DEFAULT_N_INCR = {"confined": 12, "free_lateral": 20}
@@ -427,21 +451,6 @@ def main():
         print_table(vname, r)
 
     meta["run_end"] = time.time()
-
-    # Write JSON results
-    # newton_meta lists residuals which may be large; keep them but convert to plain lists.
-    def _serialise(obj):
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        if isinstance(obj, (np.integer,)):
-            return int(obj)
-        if isinstance(obj, (np.floating,)):
-            return float(obj)
-        raise TypeError(f"Not serialisable: {type(obj)}")
-
-    results = {"meta": meta, "variants": variant_results}
-    RESULTS_PATH.write_text(json.dumps(results, indent=2, default=_serialise))
-    print(f"\nwrote {RESULTS_PATH}")
 
     # -- Quick sanity assertions (non-fatal warnings)
     for vname, r in variant_results.items():

@@ -31,7 +31,7 @@ Run from the fenicsx env::
 
     /home/rjs80/miniconda3/envs/fenicsx/bin/python tools/bench_hyperelastic_estimate.py
 
-Writes ``tools/bench_hyperelastic_estimate_results.json`` and prints a summary table.
+Prints a summary table to stdout and writes no file.
 
 Caveats (also echoed in the output): this is a *proxy* (J2 plasticity, small strain -- not
 true hyperelasticity/NLGEOM); a single 2D ~5k-DOF mesh size; single-core timing with the FE
@@ -57,6 +57,25 @@ within about 1.5x, the gap being the numpy return map. The first free-lateral fi
 inflated by that solver's brute-force macro-Jacobian root-find and does not represent a
 production code. The optimization itself is recorded in ``tools/profile_plastic.py``.
 
+Measured detail of the current solver (macro strain 0.02, 5 timed repeats per variant, cold
+run includes the FFCx form compile; the linear-solve counts were identical in every repeat):
+
+    variant        cold s   steady s (min..max of 5)   solves   model s   CPU-h (5000)
+    confined        3.94    3.75 .. 3.88                 99     14.8      5.37
+    free-lateral   13.15   12.49 .. 12.94               281     42.0     17.46
+
+``model s`` is the calibrated single LU (0.149 s) times the solve count. Implied wall-clock
+for the 5000 runs at perfect core scaling, confined to free-lateral, at the unscaled proxy
+cost (multiply by 1x to 3x for the band):
+
+    cores        1       4       16      80
+    confined     5.37 h  1.34 h  0.34 h  0.067 h
+    free-lateral 17.5 h  4.37 h  1.09 h  0.218 h
+
+Caveats: J2 plasticity stands in for hyperelasticity (small strain, no NLGEOM); one mesh
+size (2D, 5202 dof), 3D is far heavier; single-core timing with the form compile amortized
+over the batch; CPU-hours do not depend on parallelism.
+
 Either way the campaign is a small job: a few hours of wall-clock at most on the 80-core
 box, with no cluster allocation needed.
 """
@@ -68,8 +87,6 @@ import os
 for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
     os.environ.setdefault(_v, "1")
 
-import json
-import pathlib
 import statistics
 import time
 
@@ -105,7 +122,6 @@ FILLER_POISSON = 0.15
 YIELD_STRESS = [40.0, 70.0]             # MPa, monotonic hardening
 PLASTIC_STRAIN = [0.0, 0.05]
 
-RESULTS_PATH = pathlib.Path(__file__).with_name("bench_hyperelastic_estimate_results.json")
 
 
 def make_image(n=GRID, seed=0):
@@ -286,7 +302,6 @@ def main():
             "CPU-hours are parallelism-invariant; wallclock rows assume perfect core scaling.",
         ],
     }
-    RESULTS_PATH.write_text(json.dumps(results, indent=2))
 
     # ---- printed summary ----
     print(f"\nHyperelastic tensile campaign CPU-hour estimate (PROXY: J2 plasticity)")
@@ -312,7 +327,6 @@ def main():
         print(f"      {c:>3d} cores: {lo:8.2f} .. {hi:8.2f} h")
     print(f"\n  cross-check: modeled (LU x lin.solves) vs measured -- "
           f"agreement confirms the cost model.")
-    print(f"  wrote {RESULTS_PATH}")
     return results
 
 
