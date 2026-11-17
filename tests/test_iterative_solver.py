@@ -4,7 +4,7 @@ The iterative solver solves the *same* linear system as the LU path, so it is va
 against ``LuSolver`` (not ABAQUS): on a small periodic cell the homogenized rows must agree.
 The suite's meshes are far below the LU time budget, so ``select_solver_kind`` never picks
 iterative on its own -- we force it with ``solver="iterative"``. Also pins the cancellation
-contract (the KSP monitor raises ``Cancelled`` mid-solve) and the loud non-convergence guard.
+contract (the KSP monitor raises ``Cancelled`` mid-solve) and the ``ConvergenceError`` non-convergence guard.
 """
 import unittest
 
@@ -62,14 +62,6 @@ class IterativeSolverTests(unittest.TestCase):
         sim = matrix_simulation(test_type="viscoelastic", homogeneous=False, **_CELL)
         with self.assertRaises(Cancelled):
             run(sim, solver="iterative", cancel=lambda: True)
-
-    def test_nonconvergence_raises_loudly(self):
-        from microstructure_ve.backends.dolfinx import run
-
-        sim = matrix_simulation(test_type="viscoelastic", homogeneous=False, **_CELL)
-        with self.assertRaises(RuntimeError) as cm:
-            run(sim, solver="iterative", petsc_options={"ksp_max_it": 1, "ksp_rtol": 1e-14})
-        self.assertIn("did not converge", str(cm.exception))
 
     def test_nonconvergence_raises_convergence_error(self):
         """A linear sweep whose Krylov solve does not converge raises the same

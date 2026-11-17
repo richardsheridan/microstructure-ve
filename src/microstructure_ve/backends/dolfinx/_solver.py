@@ -151,7 +151,7 @@ class IterativeSolver(LuSolver):
     The system is **complex-symmetric** (complex moduli), so PETSc's algebraic multigrid
     (GAMG/hypre) is unavailable -- those are real-only -- and CG is invalid. This uses GMRES
     with an ILU preconditioner, which works in complex but does not coarsen like AMG, so it
-    can stagnate on the hardest large-3D cases. ``solve`` raises on non-convergence (it never
+    can stagnate on the hardest large-3D cases. ``solve`` raises ``ConvergenceError`` on non-convergence (it never
     returns silently-wrong numbers); ``petsc_options`` lets a caller swap the preconditioner
     (e.g. ``pc_type='bjacobi'``/``'asm'``, more ILU fill) or one can fall back to ``solver='lu'``.
     """

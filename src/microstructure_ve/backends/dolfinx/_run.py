@@ -252,7 +252,7 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
              meshes above the LU time budget (``select_solver_kind``); ``"lu"``/``"iterative"``
              force one. The complex-symmetric system has no AMG (GAMG/hypre are real-only),
              so the iterative path is GMRES+ILU and may stagnate on the hardest meshes (it
-             raises on non-convergence). Periodic path only; standard BC uses LU.
+             raises ``ConvergenceError`` on non-convergence). Periodic path only; standard BC uses LU.
     petsc_options: dict of PETSc options overriding the iterative KSP/PC (e.g.
              ``{"pc_type": "bjacobi"}``); ignored for LU.
     return_energy: hyperelastic Static sims only (``ValueError`` otherwise). When True the
@@ -269,6 +269,10 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     Refusal: a sim that ``_loading.check_supported`` rejects raises that check's
     ``NotImplementedError`` (unsupported feature) or ``ValueError`` (malformed sim) before
     any solver is built.
+
+    Non-convergence: a hyperelastic or plastic ``Static`` step whose final Newton solve or
+    free-lateral root-find misses its tolerance, or an iterative linear solve that does not
+    converge, raises ``ConvergenceError`` (a ``RuntimeError``) and returns no row.
 
     Thread safety: ``run`` may be called concurrently from multiple threads. Serial
     sweeps and the multistep paths serialize on a process-wide lock held for the whole
