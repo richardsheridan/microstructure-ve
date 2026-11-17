@@ -350,8 +350,9 @@ class _PlasticSolver:
         ``_FROZEN_RATIO``; in between, iterations reuse the factorization (back-substitution
         only, ~3% of a refactor). A step that grows the residual is backtracked (halved,
         residual-only re-check): return-map branch switching can trap an undamped Newton in a
-        two-cycle. The converged answer is set by the residual and tolerance, which are
-        unchanged."""
+        two-cycle (the standard shear_xy no_slip plastic cells of ``MatrixParityTests`` cycle
+        without it, in ``_StandardPlasticSolver.solve``'s copy of this loop). The converged
+        answer is set by the residual and tolerance, which are unchanged."""
         r0 = rprev = None
         last_du = None
         halvings = 0
@@ -484,7 +485,11 @@ class _StandardPlasticSolver:
     Macro loading enters through the prescribed face displacements (so the total strain is just
     ``eps(u)``, no fluctuation/E split); the reaction is the internal force ``int sig:eps(v)``
     summed at the drive face -- the nonlinear analogue of the linear path's ``K_full * u``.
-    Standard cells are fully confined (single Static step), so there is no free root-find."""
+    Standard cells are fully confined (single Static step), so there is no free root-find.
+
+    TODO: share the quadrature setup, ``_fill_coeffs`` and the Newton loop with
+    ``_PlasticSolver``. Until then a change to ``_tangent``, ``_return_map`` or the loop has
+    to be made in both classes."""
 
     def __init__(self, prob, model, sim):
         from . import _standard

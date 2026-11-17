@@ -234,6 +234,9 @@ class _FormsMixin:
         P_dev = ufl.diff(psi_dev, F)
         P_vol = ufl.diff(psi_vol, F)
 
+        # TODO: reproduce ABAQUS's in-plane F-bar pairing to close the standard-cell parity
+        # gap (_STANDARD_HYPER_RTOL in tests/test_matrix_parity.py); it needs per-iteration
+        # DG0 Jbar/pbar coefficient fields in place of this selective reduced integration.
         dx2 = ufl.dx(metadata={"quadrature_degree": 2})
         dx1 = ufl.dx(metadata={"quadrature_degree": 1})  # centroid: SRI ~ B-bar mean dilatation
         v = ufl.TestFunction(self.V)
@@ -245,7 +248,10 @@ class _FormsMixin:
         # silently merges to ONE rule in this ffcx version (verified: the combined vector
         # equals dev@1+vol@1 bit-for-bit, i.e. uniform reduced integration -- no SRI).
         # 0-forms and 2-forms keep their per-integral rules, so only the residual must be
-        # compiled as two forms and assembled in two passes.
+        # compiled as two forms and assembled in two passes. The merge raises nothing and
+        # Newton still converges; the Clapeyron energy-vs-work identity in
+        # tests/test_mechanical_mnist.py is the check that catches it
+        # (docs/dolfinx_backend_design.md, section 13).
         self.res_forms = (fem.form(R_dev), fem.form(R_vol))
         self.jac_form = fem.form(ufl.derivative(R_dev + R_vol, self.disp, du))
         # total strain energy on the residual's own SRI measures (so the reported energy

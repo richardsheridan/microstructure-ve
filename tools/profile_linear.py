@@ -18,6 +18,23 @@ Usage::
 
 Default: n=50 (50x50 grid), F=20 frequencies, 2D two-phase viscoelastic, uniaxial_x free lateral.
 Writes tools/profile_linear_results.json.
+
+Results
+-------
+Defaults above (5202 dof), one core of the shared 2x Xeon Gold 6148 host.
+
+    path        wall, 20 freqs    per frequency
+    periodic    2.92 s            146 ms
+    standard    1.13 s            56 ms
+
+The standard path was 66 ms per frequency while it assembled a second stiffness matrix
+for the reactions; it now takes them from the action of the unreduced form on the
+solution, one vector assembly.
+
+Both paths are bound by the per-frequency factorization, which is inherent to a direct
+solve. What is left is small: batching the stress-averaging forms is worth 2 to 3
+percent, and the periodic path does one back-substitution per active macro-strain mode
+(two per frequency for free-lateral uniaxial loading).
 """
 from __future__ import annotations
 

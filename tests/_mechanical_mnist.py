@@ -12,6 +12,11 @@ reproduced -- this builder uses the package's structured Q1 grid with piecewise-
 per-pixel E, optionally ``refine``-times finer than the bitmap (``refine_matl_img``, which
 keeps the domain 28x28 length units), so agreement is mesh-convergence-limited.
 
+``NeoHookean`` cells are deliberately absent from the ABAQUS parity matrix
+(``tests/_matrix.py``): the DOLFINx backend solves the coupled form exactly while the
+ABAQUS emitter writes a moduli-matched isochoric neo-Hooke, so the two backends solve
+different models at finite strain. This benchmark is the finite-strain check instead.
+
 ``load_bitmap``/``load_psi`` read the committed data excerpts under
 ``tests/data/mechanical_mnist/`` (see the README there for provenance).
 """

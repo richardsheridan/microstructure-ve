@@ -16,6 +16,41 @@ Default (full mode): grid=50, n_incr=12 (confined) / 20 (free_lateral).
 --quick: n_incr=4 both variants, grid=50.
 
 Writes tools/profile_plastic_results.json.
+
+Results
+-------
+50x50 grid (5202 dof), stiff elastic filler in a plastic matrix, one core of the shared
+2x Xeon Gold 6148 host. "Before" is the solver as it stood when a 50x50 free-lateral
+multistep run took 16 minutes; "after" is the solver with the four changes below.
+
+    variant                  before                  after
+    confined, 12 incr        75 s, 301 solves        3.96 s, 99 solves
+    free-lateral, 20 incr    694 s, 4548 solves      19.2 s, 411 solves
+
+The changes, in the order they were made:
+
+1. Broyden macro-Jacobian. The free-lateral outer root-find re-ran a finite-difference
+   macro Jacobian every outer iteration (n + 3 inner Newton solves). It is now
+   bootstrapped by finite differences once and kept current by rank-1 secant updates
+   across increments and steps. About 2.4x on its own.
+2. B-bar-consistent Jacobian. The residual used the B-bar strain while the Jacobian form
+   used the raw strain, which left Newton converging linearly at a ratio near 0.34, about
+   25 iterations per solve. With the consistent form it takes about 4.5. Judging
+   convergence against the largest initial residual seen (``_r_ref``) instead of each
+   call's own first residual removed a further 8 to 17 wasted iterations from every
+   warm-started re-solve.
+3. Modified Newton. At this size an LU factorization costs 137 ms against 4 ms for a
+   back-substitution, so the tangent and factorization are refreshed only when the
+   frozen-tangent rate stalls (``_FROZEN_RATIO``). A real-valued scipy ``splu`` is only
+   about 12 percent cheaper than the complex PETSc LU, so the complex build is kept.
+4. Backtracking. Frozen steps, and full Newton steps too, can chatter in a two-cycle when
+   Gauss points switch between the elastic and plastic branches of the return map. The
+   standard shear_xy no_slip plastic cell oscillated between residuals 0.2296 and 0.2113
+   indefinitely and reported an answer 10x off. A step that grows the residual is now
+   halved.
+
+Remaining headroom is small: the return map is about 12 percent of wall time in both
+variants, and the rest is assembly and the linear solves.
 """
 from __future__ import annotations
 

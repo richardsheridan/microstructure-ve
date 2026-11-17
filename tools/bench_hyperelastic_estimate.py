@@ -4,9 +4,11 @@ Target scenario (scoping question): a tensile test of a hyperelastic composite t
 **12 extensions** (i.e. 12 load increments per stress-strain curve) across **5000
 microstructures**.
 
-This package has **no hyperelastic / large-deformation (NLGEOM) material** -- its nonlinear
-capability is the small-strain J2 (von Mises) plasticity solver in
-``backends/dolfinx/_plastic.py``. At ~5k DOF the per-increment cost is dominated by the FE
+This script was written when the package had no hyperelastic / large-deformation (NLGEOM)
+material, only the small-strain J2 (von Mises) plasticity solver in
+``backends/dolfinx/_plastic.py``. The finite-strain solver (``_hyperelastic.py``) now
+exists, so a campaign can be timed directly; this script remains the proxy estimate.
+At ~5k DOF the per-increment cost is dominated by the FE
 *linear solve* inside each Newton iteration, and that cost is essentially independent of the
 constitutive law (a neo-Hookean/Ogden tangent assembles differently but factors/solves the
 same sparse system). So we use the J2 Newton solver as a **proxy** for hyperelastic per-solve
@@ -35,6 +37,28 @@ Caveats (also echoed in the output): this is a *proxy* (J2 plasticity, small str
 true hyperelasticity/NLGEOM); a single 2D ~5k-DOF mesh size; single-core timing with the FE
 form-compilation (FFCx) warmed up and thus amortized over the 5000-run batch as it would be in
 a real campaign.
+
+Results
+-------
+50x50 grid (5202 dof), 12 increments, single core of the shared 2x Xeon Gold 6148 host.
+The linear-solve counts are deterministic and independent of machine load; the calibrated
+single LU is 0.149 s (``predict_lu_seconds(5202, 2)``). CPU-hours are for the 5000-run
+campaign; the band multiplies by the 1x to 3x hyperelastic-vs-proxy cost factor.
+
+    solver                   variant        solves/run    CPU-h      band
+    before the plastic       confined       301           60-105     60-300
+      solver optimization    free-lateral   2980          600-950    not an estimate
+    current                  confined       99            5.4        5.4-16
+                             free-lateral   281           17.5       17.5-52
+
+The first confined range runs from the cost model (62 CPU-h, LU time x solves) to the
+measured run (104 CPU-h, taken with the box at load 56 of 80, so inflated); the two agree
+within about 1.5x, the gap being the numpy return map. The first free-lateral figure was
+inflated by that solver's brute-force macro-Jacobian root-find and does not represent a
+production code. The optimization itself is recorded in ``tools/profile_plastic.py``.
+
+Either way the campaign is a small job: a few hours of wall-clock at most on the 80-core
+box, with no cluster allocation needed.
 """
 from __future__ import annotations
 

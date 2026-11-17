@@ -71,6 +71,15 @@ class PeriodicBoundaryConstraint:
     On construction it builds ``node_pairs`` -- ``[dependent, image, refHi, refLo]``
     per boundary group -- which the ABAQUS backend emits as ``*Equation`` blocks
     (the DOLFINx backend applies its own equivalent MPC pairing).
+
+    The constraint never eliminates a reference corner (the far corner, e.g. X1Y1, is a
+    dependent node), so the loading is decided entirely by how the caller fixes or drives
+    those corners: the same constraint serves confined and free-lateral loading. Each
+    equation's coefficients (1, -1, -1, 1) sum to zero, so a rigid translation satisfies
+    it. The reaction work-conjugate to a corner drive is carried by the driven corner and
+    dof alone (X1Y0, dof 1 for an x drive); the lateral reactions sit on other corners and
+    are not comparable between formulations of the same loading
+    (``docs/pbc_verification.md``).
     """
 
     nodes: GridNodes

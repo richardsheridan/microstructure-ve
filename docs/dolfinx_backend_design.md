@@ -351,6 +351,20 @@ amortized over the sweep length (N=30) for a fair comparison against the (instan
 `(spawn+init+first)/30 + steady/4`; speedup@4 = steady ÷ P@4 amort/f; N\* = sweep length at which
 ProcessPool overtakes ThreadPool.)
 
+Amortized seconds per frequency by worker count W (same runs, N=30), with the measured
+8-frequency sweep at W=4 and the spread of the steady time:
+
+| size | steady ± std | W=1 | W=2 | W=4 | W=8 | W=16 | P@4 measured |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 2D 64² | 0.285 ± 0.011 | 0.383 | 0.240 | 0.169 | 0.133 | 0.116 | 0.427 |
+| 2D 128² | 2.245 ± 0.035 | 2.520 | 1.398 | 0.837 | 0.556 | 0.416 | 1.498 |
+| 2D 256² | 19.10 (one rep) | 20.83 | 11.28 | 6.50 | 4.11 | 2.92 | — |
+| 3D 16³ | 41.66 ± 0.044 | 43.82 | 22.99 | 12.57 | 7.36 | 4.76 | 14.36 |
+
+The thread and measured-process columns were skipped above 80k dof. The 3D 24³ run took
+about 7.5 minutes per solve before it timed out. `bench_dolfinx.py` and its raw
+`bench_dolfinx_results.json` live on the `dolfinx` branch.
+
 **Findings:**
 1. **ProcessPool is the lever.** At W=4 the amortized speedup is 1.7–3.3×, approaching the ideal 4×
    as the mesh grows (startup amortizes — steady dominates for big solves; per-freq → `steady/W` as
@@ -485,3 +499,85 @@ to 1e-3) and the standard plastic drive column (relaxed to 5e-3 — the *driven*
 to ~1e-7, only the loaded face's solved *transverse slip* drifts, ~0.3% on 3D free cells). A fully
 consistent deviatoric/volumetric-split B-bar would tighten these but is a larger refactor with risk to
 the 20 already-exact periodic cells, so it is deferred.
+
+## 13. Finite-strain hyperelasticity (`_hyperelastic.py`)
+
+Total-Lagrangian hyperelasticity for `Static` steps with `nlgeom`, for the `ArrudaBoyce`,
+`Polynomial`, `ReducedPolynomial` and `NeoHookean` responses, on periodic and standard
+BCs in 2D plane strain and 3D. The design decisions (energy formulation differentiated by
+UFL, the non-symmetric macro gradient `H`, selective reduced integration, the real-valued
+fluctuation, nominal reactions) are stated in the module docstring of `_hyperelastic.py`
+and are not repeated here. This section records what the code cannot say for itself.
+
+### Quadrature merge in 1-forms
+
+Under dolfinx 0.10, ffcx merges the `dx` integrals of a **1-form** (a vector, such as a
+residual) that carry different `quadrature_degree` metadata into a single rule. 0-forms
+and 2-forms keep one rule per integral. A residual written as one form with the
+deviatoric energy on the degree-2 rule and the volumetric energy on the centroid rule
+therefore assembles bit-identically to the all-centroid residual: uniform reduced
+integration, with no selective reduced integration at all.
+
+The merge is invisible. Nothing warns, Newton converges (to the equilibria of the
+one-point discretization), and ABAQUS parity stayed inside the standard-cell tolerance.
+It was exposed by a Clapeyron identity: for a small linear-regime step the strain energy
+must equal half the reaction times the displacement, and it was off by a constant 0.34%.
+
+The rule: a form with exactly one test function and no trial function that mixes
+quadrature degrees is compiled as one `fem.form` per measure and assembled in as many
+passes (`res_forms` in `_hyperelastic.py`). This applies to any new selective-reduced or
+B-bar residual in `_hyperelastic.py`, `_plastic.py` or `_assembly.py`. The regression
+check is `test_return_energy_clapeyron` in `tests/test_mechanical_mnist.py`.
+
+### Standard-BC drive through lifting
+
+On the standard path the increment's change in Dirichlet values is applied through
+Newton's lifting, not by pre-setting the face dofs before the first iteration. A face
+displacement imposed directly against an interior that has not moved inverts the first
+row of elements; `J` goes negative and the fractional powers of `J` leave the real
+branch. With lifting the first iterate is the smooth linearized response to the change.
+An imaginary part in the assembled residual is used as the element-inversion detector on
+both paths and triggers backtracking.
+
+### Parity fidelity
+
+Every periodic hyperelastic cell matches its ABAQUS oracle at the standard `RTOL=1e-4`
+(observed 1e-9 to 8e-5 over 33 cells). The 16 standard cells differ by 0.4% to 2.4% and
+are relaxed through `_STANDARD_HYPER_RTOL` in `tests/test_matrix_parity.py`, where the
+cause (ABAQUS's F-bar against this backend's selective reduced integration) is explained.
+Closing the gap means reproducing ABAQUS's in-plane F-bar pairing, which needs
+per-iteration DG0 `Jbar`/`pbar` coefficient fields.
+
+### One oracle row per Static step
+
+An auto-incremented NLGEOM `*STATIC` step writes one odb frame per converged increment.
+The reader (`_read_abaqus_odb.py`) keeps only the final loaded frame of a Static step,
+because the FE side reports the converged step end. Before that rule the two standard
+compression oracles held four rows each and the comparison silently used the first, a
+partial load, which made a correct FE answer look 3.4x wrong.
+
+### Matrix test data
+
+The hyperelastic cells use two phases of the same model class at a 5x stiffness contrast
+with `poisson = 0.45`, which reaches ABAQUS through `D1` because the `*HYPERELASTIC`
+`POISSON` parameter is illegal with coefficients on data lines. An `*Elastic` phase is
+never mixed in: under NLGEOM it is hypoelastic in ABAQUS, which a total-Lagrangian energy
+cannot match. `reduced_polynomial` (N=1) crosses the full matrix; `arruda_boyce` and
+`polynomial` (N=2) run on eight focused periodic cells. Drives are about 33% strain in 2D
+and 50% in 3D.
+
+### Mechanical-MNIST
+
+`NeoHookean` is the coupled compressible form with the full first invariant, which the
+DOLFINx backend solves exactly and for which ABAQUS has no exact `*HYPERELASTIC`
+equivalent (the emitter writes a moduli-matched isochoric neo-Hooke and says so in the
+deck). It is therefore checked against the Mechanical-MNIST uniaxial-extension benchmark
+instead of the parity matrix: `tests/test_mechanical_mnist.py` in the suite,
+`tools/mechanical_mnist_parity.py` for the 20-bitmap study, and the results table in
+`tests/data/mechanical_mnist/README.md`. `run(sim, return_energy=True)` supplies the
+strain energy the benchmark reports.
+
+### Campaign cost
+
+The CPU-hour estimate for a 5000-microstructure, 12-extension tensile campaign is in the
+module docstring of `tools/bench_hyperelastic_estimate.py`.
