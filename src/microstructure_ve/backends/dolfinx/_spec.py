@@ -101,27 +101,23 @@ def periodic_pairs(shape):
 
 @dataclass
 class Geometry:
-    """Macro geometry for x-uniaxial loading: axis lengths, cross-section, drive strain.
+    """Macro geometry of the node grid: dimension, pixel scale, grid shape and axis lengths.
 
     ``shape`` is the node grid ``(.., ny+1, nx+1)`` so coordinate axis ``i`` maps to grid
-    axis ``dim - 1 - i``. ``L = [Lx, Ly, (Lz)]``; ``cross_area`` is perpendicular to the
-    x drive; ``exx = drive_displacement / Lx`` (delta == exx * Lx).
+    axis ``dim - 1 - i``. ``L = [Lx, Ly, (Lz)]``.
     """
 
     dim: int
     scale: float
     shape: tuple
     L: list
-    Lx: float
-    cross_area: float
-    exx: float
 
     @classmethod
-    def from_model(cls, model, sim):
+    def from_model(cls, model, sim=None):
+        """The geometry of ``model``'s node grid. ``sim`` is not read."""
         nodes = model.nodes
         dim = nodes.dim
         scale = nodes.scale
         shape = nodes.shape
         L = [(shape[dim - 1 - i] - 1) * scale for i in range(dim)]
-        cross_area = float(np.prod(L[1:]))
-        return cls(dim, scale, shape, L, L[0], cross_area, drive_displacement(sim) / L[0])
+        return cls(dim, scale, shape, L)

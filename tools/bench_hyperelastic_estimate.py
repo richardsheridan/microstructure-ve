@@ -181,7 +181,7 @@ def build_plastic_solver(sim, bbar=True):
     )
 
     model = sim.model
-    geom = spec.Geometry.from_model(model, sim)
+    geom = spec.Geometry.from_model(model)
     prob = run_mod._fe_problem(geom, model, bbar)
     if prob.mpc is None:                                   # populate periodic MPC once (cached)
         prob.mpc = constraints.periodic_mpc(prob.space)

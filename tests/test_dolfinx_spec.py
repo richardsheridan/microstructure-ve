@@ -50,15 +50,12 @@ class SpecParsingTests(unittest.TestCase):
         self.assertTrue(dataclasses.is_dataclass(spec.Geometry))
         g = spec.Geometry.from_model(self.model, self.sim)
         self.assertEqual(g.dim, 2)
-        self.assertAlmostEqual(g.exx, 0.005 / (6 * 0.0025))
 
     def test_geometry(self):
         g = spec.Geometry.from_model(self.model, self.sim)
         self.assertEqual(g.dim, 2)
         np.testing.assert_array_equal(g.shape, [7, 7])
-        self.assertAlmostEqual(g.Lx, 6 * 0.0025)
-        self.assertAlmostEqual(g.cross_area, 6 * 0.0025)
-        self.assertAlmostEqual(g.exx, 0.005 / (6 * 0.0025))
+        np.testing.assert_allclose(g.L, [6 * 0.0025, 6 * 0.0025])
 
     def test_material_cell_maps_partition(self):
         mat_of_cell, poissons, youngs, modulus_fns = spec.material_cell_maps(self.model)
