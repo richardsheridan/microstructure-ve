@@ -336,13 +336,17 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
 
 
 def _run_serial_sweep(sim, freqs, bbar, cancel, solver, petsc_options):
+    from microstructure_ve.steps import Dynamic
+
     solve_one, _ = build_solver(sim, bbar, cancel=cancel,
                                 petsc_options=petsc_options, solver=solver)
+    # A step without a Dynamic subsection is Static (spec.frequencies): real *Elastic moduli.
+    elastic = spec.find(sim.steps[0].subsections, Dynamic) is None
     rows = []
     for f in freqs:
         if cancel is not None and cancel():
             raise Cancelled("cancelled by callback")
-        rows.append(solve_one(f))
+        rows.append(solve_one(f, elastic=elastic))
     return np.array(rows)
 
 

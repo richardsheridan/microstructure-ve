@@ -211,9 +211,13 @@ def build_solver(sim, prob):
                          u_sol, react_form, A_bc.createVecRight(), ksp)
     A_bc, b, x, u_sol, react_form, f_int, ksp = prob.std_mats
 
-    def solve_one(f):
-        # Update complex moduli and reassemble (in-place: pass A as first arg to dispatch)
-        matfields.set_moduli(f)
+    def solve_one(f, elastic=False):
+        # elastic=True: a Static step -> real *Elastic moduli (zero loss); else the
+        # frequency-domain complex moduli at f. Reassemble in place.
+        if elastic:
+            matfields.set_moduli_elastic()
+        else:
+            matfields.set_moduli(f)
         A_bc.zeroEntries()
         fempetsc.assemble_matrix(A_bc, forms.a_form, bcs=dirichlet_bcs)
         A_bc.assemble()
