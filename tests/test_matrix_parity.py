@@ -32,15 +32,8 @@ needs_dolfinx = unittest.skipUnless(HAS_DOLFINX, "needs the fenicsx env (dolfinx
 DATA = pathlib.Path(__file__).resolve().parent / "data"
 RTOL = 1e-4  # robust to ABAQUS .dat frequency rounding
 
-# Per-case relaxations. A couple of 2D *standard* (direct-Dirichlet) multi-axial plastic cells
-# land just above 1e-4: the plastic mean-dilatation B-bar (applied to the constitutive strain)
-# differs slightly from ABAQUS's CPE4 selective-reduced-integration B-bar on these multi-axial
-# standard fields. The discrepancy is sub-0.1% and only here -- every periodic plastic cell and
-# the 3D standard analogues match at 1e-4 -- so these two are relaxed rather than carved deeper.
-_RTOL_OVERRIDES = {
-    "test_2d_compression_confined_slip_standard_hyperelastic_plastic": 1e-3,
-    "test_2d_shear_xy_no_slip_standard_hyperelastic_plastic": 1e-3,
-}
+# Per-case relaxations, test name -> rtol, each entry commented with its discretization reason.
+_RTOL_OVERRIDES = {}
 
 # The finite-strain (hyperelastic) responses, periodic and standard cells alike. ABAQUS
 # CPE4/C3D8 use the F-bar average-dilatation modification F_bar = F*(Jbar/J)^(1/n) with n the

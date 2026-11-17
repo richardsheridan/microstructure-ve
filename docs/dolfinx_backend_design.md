@@ -507,12 +507,11 @@ tangent as well as the volume average. Their parity errors run from about 1e-8 (
 6e-5 (2D compression), the scale of the noise of ABAQUS's default equilibrium tolerance in the
 committed oracles, which differ from tight-tolerance solves by up to about 5e-5. A 2D residual of about 1e-4 against
 tight-tolerance ABAQUS on the compression cell does not move with increments or tolerance; the
-in-plane mean-dilatation B-bar against CPE4's is the candidate. The exceptions, documented in `test_matrix_parity.py`, are all
-*standard*-BC local quantities where the mean-dilatation plastic B-bar is slightly less faithful than
-ABAQUS's CPE4 selective-reduced-integration B-bar: 2D standard compression/shear storage RF (relaxed
-to 1e-3) and the standard plastic drive column (relaxed to 5e-3 — the *driven* displacement is exact
+in-plane mean-dilatation B-bar against CPE4's is the candidate. The exception, documented in `test_matrix_parity.py`, is a
+*standard*-BC local quantity where the mean-dilatation plastic B-bar is slightly less faithful than
+ABAQUS's CPE4 selective-reduced-integration B-bar: the standard plastic drive column (relaxed to 5e-3 — the *driven* displacement is exact
 to ~1e-7, only the loaded face's solved *transverse slip* drifts, ~0.3% on 3D free cells). A fully
-consistent deviatoric/volumetric-split B-bar would tighten these but is a larger refactor with risk to
+consistent deviatoric/volumetric-split B-bar would tighten it but is a larger refactor with risk to
 the periodic cells, so it is deferred.
 
 ## 13. Finite-strain hyperelasticity (`_hyperelastic.py`)
