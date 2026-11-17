@@ -1,7 +1,7 @@
 """Extract viscoelastic response from an ABAQUS output ODB to a TSV.
 
 This module is the single source of truth for the standalone reader script that
-``microstructure_ve.backends.write_odb_reader`` emits. It is written to run under the
+``microstructure_ve.backends.abaqus.write_odb_reader`` emits. It is written to run under the
 ABAQUS python interpreter (no f-strings, no package imports, numpy + odbAccess only);
 ``odbAccess``/``abaqusConstants`` are imported at module top, so importing it outside
 ABAQUS requires those names to be stubbed in ``sys.modules`` first (the test does this).
