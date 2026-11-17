@@ -12,7 +12,7 @@ so it is usable under the numpy-only env.
 
 Supported now: a single ``Static``/``Dynamic`` step driving one or more *normal* macro
 strains via the periodic reference corners (uniaxial along any axis; compression = several
-normal drives), and off-diagonal (shear) drives via simple shear. Multi-step sims raise
+normal drives), and off-diagonal (shear) drives via simple shear or, with both corners of the plane driven, pure shear. Multi-step sims raise
 ``NotImplementedError`` until those features land.
 """
 from __future__ import annotations
@@ -45,7 +45,9 @@ class MacroLoading:
     """The macro strain the FE solve imposes and how to report it.
 
     ``imposed``/``free`` are keyed by a symmetric component ``(i, j)`` with ``i <= j``
-    (tensor strain). ``imposed`` gives driven components and their values; ``free`` lists
+    (tensor strain). ``imposed`` gives driven components and their values; a shear drive of
+    corner R_a in dof b contributes gamma/2 = value / (2 L_a) to E_ab, summed over both corners of
+    the plane when both are driven (pure shear), as ABAQUS does. ``free`` lists
     components solved so the conjugate volume-averaged stress is zero. The reported readODB
     row is ``RF = sigma-bar[:, primary_axis] * cross_area`` with ``U[primary_dof-1] =
     drive_value`` (the corner displacement), matching the ABAQUS reaction at the drive corner.
@@ -64,7 +66,7 @@ class MacroLoading:
     # corner R_a displaced by ``value`` in dof i gives H[i, a] = value / L_a. All other
     # H entries backed by a pinned corner dof are 0 (the zeros are implicit -- only driven
     # entries appear here). Small-strain consumers keep using the symmetrized ``imposed``
-    # (shear E_ab = gamma/2); the finite-strain solver needs the raw H because simple shear
+    # (see ``imposed`` for shear); the finite-strain solver needs the raw H because simple shear
     # (H[b,a] = gamma, H[a,b] = 0) and pure shear differ at finite strain. ``free`` doubles
     # as the free DIAGONAL slots of H (a floating lateral corner normal).
     H_imposed: Dict[Tuple[int, int], float] = field(default_factory=dict)
@@ -167,22 +169,16 @@ def macro_loading(sim, step=None):
         a = _corner_axis(d.target, dim)
         i = drive_dof - 1  # 0-indexed component
         H_imposed[(i, a)] = value / L[a]  # raw macro gradient: corner R_a moved in dof i
-        if i != a:
-            # Off-diagonal (shear) drive: R_a displaced in dof i (= b), imposing H[b,a] = γ.
-            # Each corner contributes γ/2 to the symmetric strain E_{ab}; a drive on the other
-            # corner of the plane (pure shear) adds its own half.
-            b = i
-            gamma = value / L[a]
-            key = (min(a, b), max(a, b))
-            imposed[key] = imposed.get(key, 0.0) + gamma / 2.0
-            driven_axes.add(a)
-            if primary is None:
-                primary = (a, drive_dof, value)
-            continue
-        imposed[(a, a)] = value / L[a]
         driven_axes.add(a)
         if primary is None:
             primary = (a, drive_dof, value)
+        if i == a:
+            imposed[(a, a)] = value / L[a]
+        else:
+            # Shear drive: corner R_a moved in dof i adds its half to the symmetric E (see
+            # ``MacroLoading.imposed``).
+            key = (min(a, i), max(a, i))
+            imposed[key] = imposed.get(key, 0.0) + value / L[a] / 2.0
 
     a0, primary_dof, drive_value = primary
 
