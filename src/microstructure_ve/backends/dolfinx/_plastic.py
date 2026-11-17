@@ -491,12 +491,3 @@ def make_solver(prob, model):
 def make_standard_solver(prob, model, sim):
     """Build a standard (non-periodic) plastic solver for a single plastic Static step."""
     return _StandardPlasticSolver(prob, model, sim)
-
-
-def solve_static_plastic(prob, loading, model, n_incr=1):
-    """Solve one standalone plastic ``Static`` step; return its readODB row.
-
-    ``n_incr`` defaults to one increment, as in ``run``. For multi-step sims build one
-    ``make_solver`` and call ``.solve`` per step.
-    """
-    return make_solver(prob, model).solve(loading, n_incr)

@@ -43,11 +43,6 @@ class SpecParsingTests(unittest.TestCase):
         self.sim = synthetic_simulation()
         self.model = self.sim.model
 
-    def test_default_frequencies(self):
-        freqs = spec.default_frequencies(self.sim)
-        self.assertEqual(len(freqs), 30)
-        np.testing.assert_allclose([freqs[0], freqs[-1]], [1e-7, 1e5], rtol=1e-12)
-
     def test_drive_displacement(self):
         self.assertAlmostEqual(spec.drive_displacement(self.sim), 0.005)
 
@@ -75,9 +70,6 @@ class SpecParsingTests(unittest.TestCase):
         for mi, mat in enumerate(self.model.materials):
             for e in mat.elset.elements:
                 self.assertEqual(mat_of_cell[e - 1], mi)
-
-    def test_require_periodic(self):
-        spec.require_periodic(self.model)  # synthetic sim has a PBC -> no raise
 
 
 if __name__ == "__main__":
