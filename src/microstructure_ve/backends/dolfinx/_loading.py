@@ -249,6 +249,10 @@ def _standard_check(sim):
             )
 
 
+#: Element types the dolfinx backend solves: full-integration plane strain and hexahedra.
+SOLVED_ELEMENT_TYPES = frozenset({"CPE4", "C3D8"})
+
+
 def can_run(sim):
     """True iff the dolfinx backend can solve ``sim``, that is iff ``check_supported`` passes."""
     try:
@@ -278,6 +282,13 @@ def check_supported(sim):
     """
     from microstructure_ve.boundary import PeriodicBoundaryConstraint
     from microstructure_ve.steps import Dynamic, Static
+
+    etype = sim.model.elements.type
+    if etype not in SOLVED_ELEMENT_TYPES:
+        raise NotImplementedError(
+            f"element type {etype!r} is not supported; the dolfinx backend solves "
+            f"{sorted(SOLVED_ELEMENT_TYPES)}"
+        )
 
     # Hyperelastic (finite-strain) sims: the total-Lagrangian solver handles Static steps
     # only -- steady-state dynamics about a nonlinear preload is unsupported -- and every
