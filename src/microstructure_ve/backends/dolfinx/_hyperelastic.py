@@ -371,12 +371,8 @@ class _StandardHyperelasticSolver(_FormsMixin):
     path-independent, so multistep and single-step land on the same converged states."""
 
     def __init__(self, prob, model, sim):
-        from . import _standard
-
         super().__init__(prob, model)  # self.disp is the full displacement u
 
-        if prob.vc_spaces is None:
-            prob.vc_spaces, prob.inv_maps = _standard._build_dof_maps(space)
         self._prob = prob
         self._sim = sim
         self.set_step(sim.steps[0])
@@ -396,7 +392,7 @@ class _StandardHyperelasticSolver(_FormsMixin):
         from . import _standard
 
         entries, drive_nodes = _standard._parse_bcs_ex(
-            self._sim, self.space, self._prob.vc_spaces, self._prob.inv_maps, step)
+            self._sim, self.space, *_standard.dof_maps(self._prob), step)
         self.bcs = [bc for bc, _, _ in entries]
         self._drive_flat = _standard.drive_dofs(self.space, drive_nodes)
         # (bc, g_start, g_target) per bc: each increment interpolates the bc Function in
