@@ -1,7 +1,6 @@
 """Exact-block-text assertions for hyperelastic material emission and nlgeom Step flag.
 
-Part A of the hyperelastic TDD suite. These tests must run RED before the implementation
-lands (Part B). Each test emits a single Material or Step into an in-memory buffer and
+Each test emits a single Material or Step into an in-memory buffer and
 checks exact keyword/data-line text.
 """
 import io
@@ -47,7 +46,7 @@ class ArrudaBoyceEmissionTests(unittest.TestCase):
         self.assertIn("*Hyperelastic, arruda-boyce", self.text)
 
     def test_no_elastic_keyword(self):
-        # hyperelastic materials must NOT emit *Elastic
+        # hyperelastic materials must not emit *Elastic
         self.assertNotIn("*Elastic", self.text)
 
     def test_no_poisson_keyword(self):

@@ -90,7 +90,7 @@ def mm_simulation(bitmap, disp_vals=DISP_VALS, refine=1, flip=True):
         for elset in ElementSet.from_matl_img(img)
     ]
 
-    # full-edge node sets INCLUDING corners (the stock "Y0"/"Y1" nsets are interior-only)
+    # full-edge node sets including corners (the stock "Y0"/"Y1" nsets are interior-only)
     y0 = NodeSet.from_slice("Y0ALL", (0, slice(None)), nodes)
     y1 = NodeSet.from_slice("Y1ALL", (-1, slice(None)), nodes)
     bcs = [

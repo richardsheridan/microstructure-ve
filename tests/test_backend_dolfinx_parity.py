@@ -56,7 +56,7 @@ class AbaqusParityTests(unittest.TestCase):
     def test_prony_confined_cpe4(self):
         # PRONY is evaluated analytically in the frequency domain (no table to interpolate)
         # and the RVE is homogeneous+confined (FE stress is exact), so agreement is near
-        # machine precision (measured ~1.6e-7), like the 3D elastic case.
+        # machine precision, like the 3D elastic case.
         self._check(oracle_simulation_prony(),
                     "oracle_prony_2d.tsv", dim=2, rtol=1e-5)
 

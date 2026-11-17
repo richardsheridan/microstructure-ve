@@ -79,17 +79,17 @@ class _OracleParity:
         # Drive (U) column. Normally U is an exactly-reproduced imposed quantity (the periodic
         # corner displacement, or a prescribed face displacement) -> tight 1e-6. For a *standard*
         # plastic cell the reported U also sums the loaded face's transverse SLIP, which is a
-        # solved output: the driven component stays exact (~1e-7) but the transverse slip is
+        # solved output: the driven component stays exact but the transverse slip is
         # discretization-sensitive (the mean-dilatation plastic B-bar vs ABAQUS's CPE4 B-bar),
-        # matching to ~0.3% on 3D free cells while the homogenized reaction above still matches at
-        # 1e-4. Relax the U column there (the periodic volume-averaged reaction is insensitive).
+        # agreeing only to the relaxed tolerance below while the homogenized reaction above still
+        # matches at the default tolerance. Relax the U column there (the periodic volume-averaged reaction is insensitive).
         if cell["bc"] == "standard" and tt.startswith("hyperelastic_plastic"):
             dscale = float(np.max(np.abs(oracle[:, drive])))
             np.testing.assert_allclose(fe[:, drive], oracle[:, drive],
                                        rtol=5e-3, atol=dscale * 5e-3)
         elif cell["bc"] == "standard" and tt in _HYPER_TYPES:
             # finite-strain transverse slip: same discretization sensitivity, amplified by
-            # the ~33-50% strain (see _HYPER_RTOL above); the driven component
+            # the finite strain (see _HYPER_RTOL above); the driven component
             # itself still reproduces exactly
             dscale = float(np.max(np.abs(oracle[:, drive])))
             np.testing.assert_allclose(fe[:, drive], oracle[:, drive],
