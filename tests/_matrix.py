@@ -134,6 +134,16 @@ HYPER_FOCUSED_CELLS = [
     ]
 ]
 
+# Pure-shear cells: both reference corners of the xy plane driven by the same signed value,
+# each corner's normal dof held (the no-slip analogue of the single-corner shear cells).
+# Periodic only, appended (via matrix_cases) rather than crossed over the matrix; each is run
+# for every test type in PURE_SHEAR_TEST_TYPES.
+PURE_SHEAR_CELLS = [
+    {"dim": dim, "mode": "pure_shear_xy", "traction": "no_slip", "bc": "periodic"}
+    for dim in (2, 3)
+]
+PURE_SHEAR_TEST_TYPES = ("elastic", "viscoelastic", "hyperelastic_plastic", "reduced_polynomial")
+
 _AXES = ("x", "y", "z")
 
 
@@ -211,7 +221,8 @@ def matrix_cases():
     """Yield ``(cell, test_type)`` for the whole suite: every cell x {elastic, viscoelastic,
     hyperelastic_plastic, reduced_polynomial}, plus the appended multi-step viscoelastic cases on
     ``MULTISTEP_CELL``, the single-Static viscoelastic case on ``VISCOELASTIC_STATIC_CELLS``, the multi-step plastic orderings on ``PLASTIC_MULTISTEP_CELL``, and
-    polynomial/arruda_boyce over ``HYPER_FOCUSED_CELLS``.
+    polynomial/arruda_boyce over ``HYPER_FOCUSED_CELLS``, and ``PURE_SHEAR_TEST_TYPES`` over
+    ``PURE_SHEAR_CELLS``.
 
     The single enumerator every consumer (abaqus structural / dolfinx red / parity / oracle
     generation) iterates, so the multi-step cases are added in exactly one place.
@@ -230,6 +241,9 @@ def matrix_cases():
     for cell in HYPER_FOCUSED_CELLS:
         for test_type in ("arruda_boyce", "polynomial"):
             yield dict(cell), test_type
+    for cell in PURE_SHEAR_CELLS:
+        for test_type in PURE_SHEAR_TEST_TYPES:
+            yield dict(cell), test_type
 
 
 def _validate_cell(mode, traction, bc, dim):
@@ -237,6 +251,8 @@ def _validate_cell(mode, traction, bc, dim):
         raise ValueError(f"unsupported dim {dim!r}")
     if bc not in BCS:
         raise ValueError(f"unknown bc {bc!r}")
+    if {"dim": dim, "mode": mode, "traction": traction, "bc": bc} in PURE_SHEAR_CELLS:
+        return
     if (mode, traction) not in _kept_mode_tractions(dim):
         raise ValueError(
             f"pruned/invalid cell: ({mode!r}, {traction!r}) is not a meaningful "
@@ -263,7 +279,8 @@ def _drive_specs(mode, dim):
     """Ordered ``[(axis_letter, drive_dof)]``; the first entry is the primary drive.
 
     Normal mode along axis ``a`` -> drive ``R_a`` in dof ``a``. Shear in plane ``(a, b)``
-    -> drive ``R_a`` in dof ``b`` (engineering simple shear). Compression -> drive every
+    -> drive ``R_a`` in dof ``b`` (engineering simple shear). Pure shear in plane ``(a, b)``
+    -> drive ``R_a`` in dof ``b`` and ``R_b`` in dof ``a``. Compression -> drive every
     ``R_a`` in dof ``a``.
     """
     table = {
@@ -273,6 +290,7 @@ def _drive_specs(mode, dim):
         "shear_xy": [("x", 2)],
         "shear_yz": [("y", 3)],
         "shear_xz": [("x", 3)],
+        "pure_shear_xy": [("x", 2), ("y", 1)],
         "compression": [("x", 1), ("y", 2)] + ([("z", 3)] if dim == 3 else []),
     }
     spec = table[mode]
@@ -304,8 +322,8 @@ def _macro_corner_bcs_general(nodes, mode, traction):
 
     Origin pinned. A normal mode drives ``R_a`` in dof ``a`` with its transverse dofs
     pinned; lateral reference corners are fully pinned (``confined_slip``) or have their
-    normal dof floating (``free``). A shear mode drives ``R_a`` in the shear dof and pins
-    everything else (no-slip simple shear). Returns ``(bcs, [(drive_nset, drive_dof)])``.
+    normal dof floating (``free``). A shear mode drives each driven ``R_a`` in its shear dof
+    and pins everything else (no-slip simple or pure shear). Returns ``(bcs, [(drive_nset, drive_dof)])``.
     """
     dim = nodes.dim
     axes = _AXES[:dim]
@@ -319,11 +337,11 @@ def _macro_corner_bcs_general(nodes, mode, traction):
         fixed.setdefault(key, set()).update(dofs)
 
     addfix(_origin_key(dim), all_dofs)
-    if mode.startswith("shear"):
-        a, ddof = drives[0]
-        addfix(_ref_corner_key(dim, a), set(all_dofs) - {ddof})
+    if "shear" in mode:
+        for a, ddof in drives:
+            addfix(_ref_corner_key(dim, a), set(all_dofs) - {ddof})
         for b in axes:
-            if b != a:
+            if b not in driven_axes:
                 addfix(_ref_corner_key(dim, b), all_dofs)
     else:
         for b in axes:
@@ -653,9 +671,10 @@ def cell_expectations(mode, traction, bc, dim, test_type, displacement=DISPLACEM
         drive_name = _ref_corner_key(dim, a0)
         has_periodic = True
         checks = []
-        if mode.startswith("shear"):
-            # the loaded corner's normal dof is clamped (no-slip simple shear)
-            checks.append((_ref_corner_key(dim, a0), _normal_dof(a0), True))
+        if "shear" in mode:
+            # each loaded corner's normal dof is clamped (no-slip simple or pure shear)
+            for a, _ in drives:
+                checks.append((_ref_corner_key(dim, a), _normal_dof(a), True))
         else:
             driven = {a for a, _ in drives}
             for b in _AXES[:dim]:
