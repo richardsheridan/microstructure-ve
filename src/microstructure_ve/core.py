@@ -181,7 +181,8 @@ class GridElements:
 
     2D types: ``CPE4R`` (plane strain, reduced integration), ``CPS4R`` (plane stress,
     reduced), ``CPE4`` (plane strain, full integration). 3D: ``C3D8R`` (reduced),
-    ``C3D8`` (full). The ``*R`` variants are reduced-integration.
+    ``C3D8`` (full). The ``*R`` variants are reduced-integration. The DOLFINx backend solves
+    only the types in ``backends.dolfinx._loading.SOLVED_ELEMENT_TYPES``.
     """
 
     nodes: GridNodes

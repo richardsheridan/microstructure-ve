@@ -172,10 +172,13 @@ The `.inp` emitter and the DOLFINx builder become two consumers of one constrain
 - The ABAQUS virtual node (`GridNodes.virtual_node`) has no dolfinx counterpart and is not needed
   (it only serves `OldPeriodicBoundaryCondition`'s DRIVE scheme).
 
-### 4.2 Elements: CPE4R ↔ Q1 quadrilaterals (see §5 for parity)
+### 4.2 Elements: CPE4 ↔ Q1 quadrilaterals, C3D8 ↔ Q1 hexahedra (see §5 for parity)
 
 Plane strain: the UFL form must use the plane-strain Lamé parameter
-`λ = Eν/((1+ν)(1−2ν))`, `μ = E/(2(1+ν))` ✓ (matches CPE4x semantics; CPS4R would need plane stress).
+`λ = Eν/((1+ν)(1−2ν))`, `μ = E/(2(1+ν))` ✓ (matches CPE4 semantics; CPS4R would need plane stress).
+The backend solves only the full-integration types, `SOLVED_ELEMENT_TYPES` in
+`backends/dolfinx/_loading.py`; `run` refuses every other type with `NotImplementedError`. The
+ABAQUS backend still emits every type.
 
 ### 4.3 Materials: `ElementSet` → DG0 fields; factor `complex_modulus(freqs)` out of `to_inp`
 
@@ -285,8 +288,11 @@ integration. On a coarse RVE these differ beyond solver tolerance, so the tight 
 - generate a CPE4 ABAQUS run of the example as the matched oracle (~30 s solve, license needed
   once);
 - expect near-solver-tolerance agreement of `E*(f)` against DOLFINx Q1 (same discretization);
-- the existing CPE4R results remain a *mesh-converged* comparison only (document the expected
-  small gap rather than chasing it).
+- the CPE4R results remained a *mesh-converged* comparison only (the expected small gap was
+  documented rather than chased).
+
+Reduced integration was never matched, so the backend refuses `CPE4R` and `C3D8R` outright
+instead of solving them at full integration (§4.2).
 
 ## 6. Verification protocol (for the implementation PR)
 
