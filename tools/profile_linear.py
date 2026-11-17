@@ -31,8 +31,8 @@ The standard path was 66 ms per frequency while it assembled a second stiffness 
 for the reactions; it now takes them from the action of the unreduced form on the
 solution, one vector assembly.
 
-Per-section breakdown of the run above (``total s`` over 20 frequencies, ``%wall`` of the
-wall time, ``calls`` and ``ms/call`` per section):
+Per-section breakdown of the run above (``total s`` over 20 frequencies, ``%wall`` of the wall time,
+``calls`` and ``ms/call`` per section):
 
     periodic, wall 2.915 s
     section               total s   %wall   calls   ms/call

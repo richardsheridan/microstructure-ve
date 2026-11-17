@@ -93,13 +93,13 @@ isolates the FE/homogenization as exact, locating the 2D 0.08% residual in the v
 log-frequency table interpolation rather than the discretization.
 
 **Scaling directions** (frequency parallelism is implemented, §9; the others remain open):
-- **Frequency-level parallelism (implemented, §9).** The 30-frequency sweep is
-  embarrassingly parallel — independent serial solves sharing one mesh. Splitting frequencies across
-  cores (`multiprocessing`, or MPI ranks each owning a subset on their *own serial mesh*) gives
+- **Frequency-level parallelism (implemented, §9).** The 30-frequency sweep is embarrassingly
+  parallel — independent serial solves sharing one mesh. Splitting frequencies across cores
+  (`multiprocessing`, or MPI ranks each owning a subset on their *own serial mesh*) gives
   near-linear speedup (~15 s → ~4 s on 4 cores) with **zero distributed-mesh rework**. Note: ABAQUS
-  does *not* do this — `cpus=N` parallelizes each frequency's assembly+direct-solve and steps through
-  frequencies sequentially (the domain/solver axis, not the frequency axis), so this is an axis ABAQUS
-  leaves on the table.
+  does *not* do this — `cpus=N` parallelizes each frequency's assembly+direct-solve and steps
+  through frequencies sequentially (the domain/solver axis, not the frequency axis), so this is an
+  axis ABAQUS leaves on the table.
 - **MPI domain decomposition — low priority until large 3D meshes.** Only pays off for ≫10⁵–10⁶ dofs;
   on the current ~5k-dof system it would add communication overhead for no gain. Requires rework:
   rank-local node↔dof map (the global `ravel_multi_index` assumption breaks), `comm.allreduce` on the
@@ -156,11 +156,12 @@ The `.inp` emitter and the DOLFINx builder become two consumers of one constrain
 
 ### 4.1 Mesh: `GridNodes`/`GridElements` → `dolfinx.mesh.create_mesh` ✓
 
-- Coordinates: `np.indices(shape)[::-1] * scale`, raveled — the same arrays the ABAQUS emitter writes for `GridNodes` (`emit` in `backends/abaqus/_inp.py`).
-- Connectivity: the same slicing the ABAQUS emitter uses for `GridElements`, **without the counterclockwise swap**.
-  DOLFINx quadrilaterals use tensor-product ("zigzag") vertex ordering — exactly what
-  `itertools.product` produces *before* the emitter's swap. Verified: mesh
-  assembles with exact total area `(n·scale)²`.
+- Coordinates: `np.indices(shape)[::-1] * scale`, raveled — the same arrays the ABAQUS emitter
+  writes for `GridNodes` (`emit` in `backends/abaqus/_inp.py`).
+- Connectivity: the same slicing the ABAQUS emitter uses for `GridElements`, **without the
+  counterclockwise swap**. DOLFINx quadrilaterals use tensor-product ("zigzag") vertex ordering —
+  exactly what `itertools.product` produces *before* the emitter's swap. Verified: mesh assembles
+  with exact total area `(n·scale)²`.
 - **dolfinx 0.10 API trap:** `create_mesh(comm, cells, e, x)` — the coordinate element comes
   *before* the coordinates (0.9 had `(comm, cells, x, e)`). Smoke test hit this.
 - **Cells are reordered even in serial** ✓: `mesh.topology.original_cell_index` is *not* the
@@ -174,11 +175,10 @@ The `.inp` emitter and the DOLFINx builder become two consumers of one constrain
 
 ### 4.2 Elements: CPE4 ↔ Q1 quadrilaterals, C3D8 ↔ Q1 hexahedra (see §5 for parity)
 
-Plane strain: the UFL form must use the plane-strain Lamé parameter
-`λ = Eν/((1+ν)(1−2ν))`, `μ = E/(2(1+ν))` ✓ (matches CPE4 semantics; CPS4R would need plane stress).
-The backend solves only the full-integration types, `SOLVED_ELEMENT_TYPES` in
-`backends/dolfinx/_loading.py`; `run` refuses every other type with `NotImplementedError`. The
-ABAQUS backend still emits every type.
+Plane strain: the UFL form must use the plane-strain Lamé parameter `λ = Eν/((1+ν)(1−2ν))`,
+`μ = E/(2(1+ν))` ✓ (matches CPE4 semantics; CPS4R would need plane stress). The backend solves only
+the full-integration types, `SOLVED_ELEMENT_TYPES` in `backends/dolfinx/_loading.py`; `run` refuses
+every other type with `NotImplementedError`. The ABAQUS backend still emits every type.
 
 ### 4.3 Materials: `ElementSet` → DG0 fields; `complex_modulus(freqs)` shared by both backends
 
@@ -207,11 +207,11 @@ ABAQUS backend still emits every type.
 - **Interpolation-scheme parity risk:** ABAQUS interpolates `*VISCOELASTIC, FREQUENCY=TABULAR`
   linearly in frequency between table points. The master curve (R10 data) is dense, and the
   `Dynamic` sweep should be evaluated with the same rule (`np.interp` on linear f, not log-f) to
-  match. Quantify during implementation; if residual disagreement at low f exceeds tolerance,
-  this is the first suspect. The shipped `complex_modulus` interpolates in log10 frequency
-  instead, and §0 attributes the remaining 2D 0.08% to this interpolation.
-- Constant real ν per material (the constant-ν normalization is already the only path
-  the ABAQUS emitter uses); density is not needed (§4.5).
+  match. Quantify during implementation; if residual disagreement at low f exceeds tolerance, this
+  is the first suspect. The shipped `complex_modulus` interpolates in log10 frequency instead, and
+  §0 attributes the remaining 2D 0.08% to this interpolation.
+- Constant real ν per material (the constant-ν normalization is already the only path the ABAQUS
+  emitter uses); density is not needed (§4.5).
 
 ### 4.4 Constraints: PBC equations → `dolfinx_mpc` general constraints ✓
 
@@ -235,12 +235,12 @@ bcs=bcs, petsc_options={"ksp_type": "preonly", "pc_type": "lu"})`; constraint re
 - The reference corners (X0Y0, X1Y0, X0Y1) appear only as masters — same invariant
   `validate_constraints` enforces; a model that passes validation maps cleanly onto an MPC.
 - Constraint assembly cost: the coordinate-bytes dict API (`create_general_constraint`) re-locates
-  every coordinate geometrically (a per-pair `sub().collapse()`), which profiling showed to be
-  ~94% of the matrix-test time and ~1.4 s per 3D `(5,5,5)` build. `periodic_mpc` therefore feeds the
-  dof arrays straight to `mpc.add_constraint(V, slaves, masters, coeffs, owners, offsets)` using
-  the structured `block_of_node` map (serial: master = `local_to_global(block)*bs + comp`,
-  owner 0, one master per slave). Identical constraint (oracle parity unchanged), ~6x faster
-  suite. Serial only — fine, the LU path is serial.
+  every coordinate geometrically (a per-pair `sub().collapse()`), which profiling showed to be ~94%
+  of the matrix-test time and ~1.4 s per 3D `(5,5,5)` build. `periodic_mpc` therefore feeds the dof
+  arrays straight to `mpc.add_constraint(V, slaves, masters, coeffs, owners, offsets)` using the
+  structured `block_of_node` map (serial: master = `local_to_global(block)*bs + comp`, owner 0, one
+  master per slave). Identical constraint (oracle parity unchanged), ~6x faster suite. Serial only —
+  fine, the LU path is serial.
 - Alternative MPC route — `mpc.create_periodic_constraint_geometrical(V, indicator, relation,
   bcs, scale, tol)` (or the `_topological` variant): the purpose-built periodic helpers,
   `u(x)=scale·u(relation(x))` for slaves located by `indicator`. We deliberately do NOT use them
@@ -254,8 +254,10 @@ bcs=bcs, petsc_options={"ksp_type": "preonly", "pc_type": "lu"})`; constraint re
   not a precomputed pairing. Revalidate against the committed ABAQUS oracles if switching.
 - `FixedBoundaryCondition` / `DisplacementBoundaryCondition` → per-component `dirichletbc` via
   `locate_dofs_geometrical((V.sub(c), Vc), pred)` ✓ (or directly via the node↔dof map). The
-  model-level zero baseline + step displacement collapse to one Dirichlet value per frequency
-  sweep (perturbation step semantics: the step value is the harmonic amplitude). On a dof no step drives, a model-level zero displacement holds the dof exactly as a `Fixed` does; a nonzero one is refused, since ABAQUS rejects it.
+  model-level zero baseline + step displacement collapse to one Dirichlet value per frequency sweep
+  (perturbation step semantics: the step value is the harmonic amplitude). On a dof no step drives,
+  a model-level zero displacement holds the dof exactly as a `Fixed` does; a nonzero one is refused,
+  since ABAQUS rejects it.
 - Complex-mode UFL note ✓: `ufl.inner(a, b)` conjugates its second argument itself — do **not**
   add explicit `conj` in forms.
 
@@ -294,8 +296,8 @@ integration. On a coarse RVE these differ beyond solver tolerance, so the tight 
 - the CPE4R results remained a *mesh-converged* comparison only (the expected small gap was
   documented rather than chased).
 
-Reduced integration was never matched, so the backend refuses `CPE4R` and `C3D8R` outright
-instead of solving them at full integration (§4.2).
+Reduced integration was never matched, so the backend refuses `CPE4R` and `C3D8R` outright instead
+of solving them at full integration (§4.2).
 
 ## 6. Verification protocol
 
@@ -442,8 +444,8 @@ frequency-parallel benchmark — spawn/init/steady — unrelated to this LU-vs-i
 ## 11. Multi-step sweep parallelism (deferred)
 
 `run(workers=N)` fans only the **single-step** frequency sweep across processes (§9); the multi-step
-path (`_run_multistep`) is serial. Extending the fan-out is **deferred**: plasticity (§12) runs as one
-sequential chain, and the correct granularity for further history-dependent models (transient
+path (`_run_multistep`) is serial. Extending the fan-out is **deferred**: plasticity (§12) runs as
+one sequential chain, and the correct granularity for further history-dependent models (transient
 viscoelasticity) depends on physics not yet implemented.
 
 Proposed approach:
@@ -487,10 +489,10 @@ Design decisions and rationale:
 - **Multi-step history = one persistent solver per sim (realizes the §11 "sequential chain").** A
   single `_PlasticSolver` is built per simulation; `solve()` ramps the macro strain from the
   previously committed `E_current` to each step's target, committing `(eps_p, p, u~)` between steps,
-  so reversal/cyclic patterns accumulate the correct hysteresis. Plastic `Static` steps thus coalesce
-  into one serial unit; intervening `Dynamic` steps stay *linear* perturbations about the base state
-  (their steady-state reaction is unaffected by the plastic prestress) and use the existing
-  `solve_one`. Steps may drive different magnitudes, so the drive is parsed per step
+  so reversal/cyclic patterns accumulate the correct hysteresis. Plastic `Static` steps thus
+  coalesce into one serial unit; intervening `Dynamic` steps stay *linear* perturbations about the
+  base state (their steady-state reaction is unaffected by the plastic prestress) and use the
+  existing `solve_one`. Steps may drive different magnitudes, so the drive is parsed per step
   (`_loading.macro_loading(sim, step=...)`); which drive a step reports is stated by `run`.
 - **Standard (non-periodic) plasticity.** Macro loading enters as prescribed face displacements
   (total strain = `eps(u)`, no fluctuation/macro-strain split); the reaction is the internal-force
@@ -504,27 +506,27 @@ Design decisions and rationale:
   ABAQUS starts at an increment of 1.0 and solves each matrix step in one. On a heterogeneous cell
   the free-lateral strain path is not proportional, and the answer depends on the increment count:
   on the 3D periodic uniaxial free cell the FE reaction moves by about 2e-4 relative between 1 and
-  80 increments. FE and ABAQUS (field tolerances tightened to 1e-8) agree to 2e-8 when both take
-  one increment and to 3e-9 when both take 20, but the FE at 20 against ABAQUS at one differs by
-  about 2e-4 in the reaction, enough to fail a 3D free cell's parity check. The confined
-  and multi-step cells, which already took one, drift further from their oracles as the FE
-  takes more.
+  80 increments. FE and ABAQUS (field tolerances tightened to 1e-8) agree to 2e-8 when both take one
+  increment and to 3e-9 when both take 20, but the FE at 20 against ABAQUS at one differs by about
+  2e-4 in the reaction, enough to fail a 3D free cell's parity check. The confined and multi-step
+  cells, which already took one, drift further from their oracles as the FE takes more.
 - **Hardening table** `(plastic_strain, yield_stress)` is piecewise-linear with *constant
   extrapolation* past the last point (perfectly plastic there), matching ABAQUS `*Plastic`.
 
 **Parity fidelity / tolerance carve-outs.** Every cell's homogenized reaction matches ABAQUS at the
-standard `RTOL=1e-4`. The heterogeneous matrix cells carry a real fluctuation field (one stiff block,
-`_stiff_block` in `tests/_matrix.py`), so the periodic cells test the periodic solve, B-bar and
-tangent as well as the volume average. Their parity errors run from about 1e-8 (3D shear) to
+standard `RTOL=1e-4`. The heterogeneous matrix cells carry a real fluctuation field (one stiff
+block, `_stiff_block` in `tests/_matrix.py`), so the periodic cells test the periodic solve, B-bar
+and tangent as well as the volume average. Their parity errors run from about 1e-8 (3D shear) to
 6e-5 (2D compression), the scale of the noise of ABAQUS's default equilibrium tolerance in the
-committed oracles, which differ from tight-tolerance solves by up to about 5e-5. A 2D residual of about 1e-4 against
-tight-tolerance ABAQUS on the compression cell does not move with increments or tolerance; the
-in-plane mean-dilatation B-bar against CPE4's is the candidate. The exception, documented in `test_matrix_parity.py`, is a
-*standard*-BC local quantity where the mean-dilatation plastic B-bar is slightly less faithful than
-ABAQUS's CPE4 selective-reduced-integration B-bar: the standard plastic drive column (relaxed to 5e-3 — the *driven* displacement is exact
-to ~1e-7, only the loaded face's solved *transverse slip* drifts, ~0.3% on 3D free cells). A fully
-consistent deviatoric/volumetric-split B-bar would tighten it but is a larger refactor with risk to
-the periodic cells, so it is deferred.
+committed oracles, which differ from tight-tolerance solves by up to about 5e-5. A 2D residual of
+about 1e-4 against tight-tolerance ABAQUS on the compression cell does not move with increments or
+tolerance; the in-plane mean-dilatation B-bar against CPE4's is the candidate. The exception,
+documented in `test_matrix_parity.py`, is a *standard*-BC local quantity where the mean-dilatation
+plastic B-bar is slightly less faithful than ABAQUS's CPE4 selective-reduced-integration B-bar: the
+standard plastic drive column (relaxed to 5e-3 — the *driven* displacement is exact to ~1e-7, only
+the loaded face's solved *transverse slip* drifts, ~0.3% on 3D free cells). A fully consistent
+deviatoric/volumetric-split B-bar would tighten it but is a larger refactor with risk to the
+periodic cells, so it is deferred.
 
 ## 13. Finite-strain hyperelasticity (`_hyperelastic.py`)
 
@@ -549,20 +551,21 @@ one-point discretization), and ABAQUS parity stayed inside the standard-cell tol
 It was exposed by a Clapeyron identity: for a small linear-regime step the strain energy
 must equal half the reaction times the displacement, and it was off by a constant 0.34%.
 
-The rule: a form with exactly one test function and no trial function that mixes
-quadrature degrees is compiled as one `fem.form` per measure and assembled in as many
-passes (`res_forms` in `_hyperelastic.py`). This applies to any new selective-reduced or
-B-bar residual in `_hyperelastic.py`, `_plastic.py` or `_assembly.py`. The regression
-check is `test_return_energy_clapeyron` in `tests/test_mechanical_mnist.py`, which runs the standard path only; the periodic path builds the same forms in `_FormsMixin` but has no check of its own.
+The rule: a form with exactly one test function and no trial function that mixes quadrature degrees
+is compiled as one `fem.form` per measure and assembled in as many passes (`res_forms` in
+`_hyperelastic.py`). This applies to any new selective-reduced or B-bar residual in
+`_hyperelastic.py`, `_plastic.py` or `_assembly.py`. The regression check is
+`test_return_energy_clapeyron` in `tests/test_mechanical_mnist.py`, which runs the standard path
+only; the periodic path builds the same forms in `_FormsMixin` but has no check of its own.
 
 ### Vector assembly into one target
 
-The passes cannot share one vector on the periodic path. `dolfinx_mpc.assemble_vector`
-zeroes the vector it is given before assembling, unlike `dolfinx.fem.petsc.assemble_vector`,
-which adds into it. Two forms assembled into one vector through `dolfinx_mpc` keep only the
-second, and nothing warns: with the deviatoric residual dropped, Newton converged against the
-volumetric part alone and the periodic hyperelastic cells missed their ABAQUS oracles.
-Assemble each form into its own vector and add them (`_HyperelasticSolver._residual`).
+The passes cannot share one vector on the periodic path. `dolfinx_mpc.assemble_vector` zeroes the
+vector it is given before assembling, unlike `dolfinx.fem.petsc.assemble_vector`, which adds into
+it. Two forms assembled into one vector through `dolfinx_mpc` keep only the second, and nothing
+warns: with the deviatoric residual dropped, Newton converged against the volumetric part alone and
+the periodic hyperelastic cells missed their ABAQUS oracles. Assemble each form into its own vector
+and add them (`_HyperelasticSolver._residual`).
 
 ### Standard-BC drive through lifting
 
@@ -577,22 +580,21 @@ both paths and triggers backtracking.
 ### Parity fidelity
 
 Every hyperelastic cell, periodic and standard, is held to `_HYPER_RTOL` in
-`tests/test_matrix_parity.py`, where the cause of the gap (ABAQUS's F-bar against this
-backend's selective reduced integration) is explained. The two formulations agree wherever
-`J` is constant within each element and differ where it varies. The 16 standard cells
-differ by 0.4% to 2.4%; their 2D uniaxial gap halves from n=6 to n=12. The periodic cells
-show the same gap since the matrix image became one stiff block (`_stiff_block` in
-`tests/_matrix.py`), which gives them a fluctuation field. The earlier checkerboard had none,
-so `F` was uniform and the periodic cells matched at 1e-9 to 8e-5.
+`tests/test_matrix_parity.py`, where the cause of the gap (ABAQUS's F-bar against this backend's
+selective reduced integration) is explained. The two formulations agree wherever `J` is constant
+within each element and differ where it varies. The 16 standard cells differ by 0.4% to 2.4%; their
+2D uniaxial gap halves from n=6 to n=12. The periodic cells show the same gap since the matrix image
+became one stiff block (`_stiff_block` in `tests/_matrix.py`), which gives them a fluctuation field.
+The earlier checkerboard had none, so `F` was uniform and the periodic cells matched at 1e-9 to
+8e-5.
 
-Across the 32 periodic cells the gap runs from about 5e-4 to 2.2e-2 (3D compression,
-`polynomial`). It is a discretization difference, not a disagreement in the answer: upsampling
-the image of the 2D periodic `reduced_polynomial` stiff-block cell to halve the mesh twice,
-the FE-ABAQUS gap falls from 9.1e-3 to 2.9e-3 to 1.0e-3 (uniaxial_x free) and from 2.6e-3
-to 1.1e-3 to 3.8e-4 (shear_xy no_slip).
+Across the 32 periodic cells the gap runs from about 5e-4 to 2.2e-2 (3D compression, `polynomial`).
+It is a discretization difference, not a disagreement in the answer: upsampling the image of the 2D
+periodic `reduced_polynomial` stiff-block cell to halve the mesh twice, the FE-ABAQUS gap falls from
+9.1e-3 to 2.9e-3 to 1.0e-3 (uniaxial_x free) and from 2.6e-3 to 1.1e-3 to 3.8e-4 (shear_xy no_slip).
 
-Closing the gap means reproducing ABAQUS's in-plane F-bar pairing, which needs
-per-iteration DG0 `Jbar`/`pbar` coefficient fields (the TODO in `_FormsMixin._build_forms`).
+Closing the gap means reproducing ABAQUS's in-plane F-bar pairing, which needs per-iteration DG0
+`Jbar`/`pbar` coefficient fields (the TODO in `_FormsMixin._build_forms`).
 
 ### One oracle row per Static step
 

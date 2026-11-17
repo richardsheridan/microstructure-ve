@@ -37,10 +37,9 @@ class Material:
     density : float
         Density in kg/micron^3.
     response
-        One of the ``constitutive`` responses (``Elastic``, ``Plastic``,
-        ``TabularViscoelastic``, ``PronyViscoelastic``, ``ReducedPolynomial``,
-        ``Polynomial``, ``ArrudaBoyce``, ``NeoHookean``) carrying the elastic constants and
-        frequency/rate behavior.
+        One of the ``constitutive`` responses (``Elastic``, ``Plastic``, ``TabularViscoelastic``,
+        ``PronyViscoelastic``, ``ReducedPolynomial``, ``Polynomial``, ``ArrudaBoyce``,
+        ``NeoHookean``) carrying the elastic constants and frequency/rate behavior.
     """
 
     elset: ElementSet

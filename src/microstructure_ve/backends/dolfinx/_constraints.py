@@ -18,13 +18,13 @@ from . import _spec as spec
 def periodic_mpc(space):
     """Build the pure-periodic ``MultiPointConstraint`` from the spec node pairs.
 
-    Each ``(slave_node, master_node)`` pair from ``spec.periodic_pairs`` ties every
-    component of the slave to the same component of its min-face image (coeff 1). We feed
-    the dof arrays straight to ``add_constraint`` using the structured ``block_of_node`` map
-    instead of routing coordinates through ``create_general_constraint`` -- the latter
-    re-locates each coordinate geometrically (a per-pair ``sub().collapse()``), which is the
-    dominant cost on 3D meshes (docs/dolfinx_backend_design.md section 4.4). Serial only,
-    matching the backend's serial LU path: masters are owned by this (sole) rank.
+    Each ``(slave_node, master_node)`` pair from ``spec.periodic_pairs`` ties every component of the
+    slave to the same component of its min-face image (coeff 1). We feed the dof arrays straight to
+    ``add_constraint`` using the structured ``block_of_node`` map instead of routing coordinates
+    through ``create_general_constraint`` -- the latter re-locates each coordinate geometrically (a
+    per-pair ``sub().collapse()``), which is the dominant cost on 3D meshes
+    (docs/dolfinx_backend_design.md section 4.4). Serial only, matching the backend's serial LU
+    path: masters are owned by this (sole) rank.
     """
     V = space.V
     bs = V.dofmap.index_map_bs

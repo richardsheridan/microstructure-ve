@@ -1,8 +1,8 @@
 """Parse the solver-neutral spec dataclasses into plain numpy arrays for the FE solve.
 
-This module is pure numpy (no dolfinx), so it is importable and unit-testable under the
-numpy-only msve env. It is the seam between ``microstructure_ve``'s dataclasses and the
-dolfinx modules of this backend.
+This module is pure numpy (no dolfinx), so it is importable and unit-testable under the numpy-only
+msve env. It is the seam between ``microstructure_ve``'s dataclasses and the dolfinx modules of this
+backend.
 """
 from __future__ import annotations
 
@@ -47,8 +47,8 @@ def frequencies(sim):
     -------
     numpy.ndarray
         The log-spaced ``Dynamic`` sweep of the first step if it has one, else ``[1.0]`` for a
-        ``Static`` first step: the frame value of its one row, which ``run`` solves with the
-        real elastic moduli rather than ``complex_modulus`` at 1.0.
+        ``Static`` first step: the frame value of its one row, which ``run`` solves with the real
+        elastic moduli rather than ``complex_modulus`` at 1.0.
 
     Raises
     ------
@@ -91,8 +91,8 @@ def material_cell_maps(model):
     Returns
     -------
     mat_of_cell : numpy.ndarray of int
-        ``mat_of_cell[c]`` is the material index of cell ``c`` in raveled pixel order, the FE
-        cell order before dolfinx's reordering.
+        ``mat_of_cell[c]`` is the material index of cell ``c`` in raveled pixel order, the FE cell
+        order before dolfinx's reordering.
     poissons : numpy.ndarray
         Poisson's ratio of each material.
     youngs : numpy.ndarray
@@ -136,8 +136,8 @@ def periodic_pairs(shape):
 class Geometry:
     """Macro geometry of the node grid: dimension, pixel scale, grid shape and axis lengths.
 
-    ``shape`` is the node grid ``(.., ny+1, nx+1)`` so coordinate axis ``i`` maps to grid
-    axis ``dim - 1 - i``. ``L = [Lx, Ly, (Lz)]``.
+    ``shape`` is the node grid ``(.., ny+1, nx+1)`` so coordinate axis ``i`` maps to grid axis
+    ``dim - 1 - i``. ``L = [Lx, Ly, (Lz)]``.
     """
 
     dim: int

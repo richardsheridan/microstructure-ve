@@ -10,9 +10,9 @@ Extending the backend to a new loading mode means extending *this* parse; ``can_
 hence the test harness's ``is_fe_green``) then widens automatically. No dolfinx import here,
 so it is usable under the numpy-only env.
 
-A periodic sim's steps, ``Static`` or ``Dynamic``, drive one or more *normal* macro
-strains via the periodic reference corners (uniaxial along any axis; compression = several
-normal drives), or off-diagonal (shear) strains via simple shear or, with both corners of the plane driven, pure shear.
+A periodic sim's steps, ``Static`` or ``Dynamic``, drive one or more *normal* macro strains via the
+periodic reference corners (uniaxial along any axis; compression = several normal drives), or
+off-diagonal (shear) strains via simple shear or, with both corners of the plane driven, pure shear.
 ``check_supported`` states the rules for the step sequence and for standard (non-periodic) sims.
 """
 from __future__ import annotations
@@ -46,13 +46,13 @@ HYPER_TYPES = (ArrudaBoyce, ReducedPolynomial, Polynomial, NeoHookean)
 class MacroLoading:
     """The macro strain the FE solve imposes and how to report it.
 
-    ``imposed``/``free`` are keyed by a symmetric component ``(i, j)`` with ``i <= j``
-    (tensor strain). ``imposed`` gives driven components and their values; a shear drive of
-    corner R_a in dof b contributes gamma/2 = value / (2 L_a) to E_ab, summed over both corners of
-    the plane when both are driven (pure shear), as ABAQUS does. ``free`` lists
-    components solved so the conjugate volume-averaged stress is zero. The reported readODB
-    row is ``RF = sigma-bar[:, primary_axis] * cross_area`` with ``U[primary_dof-1] =
-    drive_value`` (the corner displacement), matching the ABAQUS reaction at the drive corner.
+    ``imposed``/``free`` are keyed by a symmetric component ``(i, j)`` with ``i <= j`` (tensor
+    strain). ``imposed`` gives driven components and their values; a shear drive of corner R_a in
+    dof b contributes gamma/2 = value / (2 L_a) to E_ab, summed over both corners of the plane when
+    both are driven (pure shear), as ABAQUS does. ``free`` lists components solved so the conjugate
+    volume-averaged stress is zero. The reported readODB row is
+    ``RF = sigma-bar[:, primary_axis] * cross_area`` with ``U[primary_dof-1] = drive_value`` (the
+    corner displacement), matching the ABAQUS reaction at the drive corner.
     """
 
     dim: int
@@ -110,9 +110,9 @@ def prescribed_bcs(items):
 def unconstrained_components(model, step):
     """Sorted 0-indexed components with no Dirichlet value in ``step``.
 
-    A component is constrained by a model-level hold (``model_holds``) or a drive of ``step``
-    on that dof. A standard cell with an unconstrained component has a rigid-body-translation
-    null space, so its stiffness matrix is singular.
+    A component is constrained by a model-level hold (``model_holds``) or a drive of ``step`` on
+    that dof. A standard cell with an unconstrained component has a rigid-body-translation null
+    space, so its stiffness matrix is singular.
     """
     constrained = {int(dof) - 1 for bc in model.bcs if model_holds(bc)
                    for dof in bc.constraint.dofs}
@@ -129,9 +129,9 @@ def macro_loading(sim, step=None):
     sim : Simulation
         A periodic sim whose drives are ``Prescribed`` conditions on the reference corners.
     step : Step, optional
-        The step whose drives are parsed, as ``run`` does for every step (steps may drive
-        different amplitudes). By default the first step carrying a drive is parsed, which
-        sets the driven and free components of the sim.
+        The step whose drives are parsed, as ``run`` does for every step (steps may drive different
+        amplitudes). By default the first step carrying a drive is parsed, which sets the driven and
+        free components of the sim.
 
     Returns
     -------
@@ -229,11 +229,11 @@ def _standard_check(sim):
     - Frequencies resolve (Static or Dynamic subsection present); for a hyperelastic
       multistep every step must carry a ``Static``.
     - Every spatial component (x, y[, z]) has at least one Dirichlet constraint in every
-      step (``unconstrained_components`` is empty) so the stiffness matrix is
-      non-singular.  Modes with a free lateral direction (no constraint on a transverse
-      component) have a rigid-body-translation null space; those are excluded because
-      the quasi-static FE solver (no mass term) does not uniquely determine the
-      transverse displacement, so the readODB U columns cannot match the ABAQUS oracle.
+      step (``unconstrained_components`` is empty) so the stiffness matrix is non-singular.  Modes
+      with a free lateral direction (no constraint on a transverse component) have a
+      rigid-body-translation null space; those are excluded because the quasi-static FE solver (no
+      mass term) does not uniquely determine the transverse displacement, so the readODB U columns
+      cannot match the ABAQUS oracle.
 
     Pure numpy; no dolfinx import.
     """
@@ -281,21 +281,21 @@ def can_run(sim):
 
 
 def check_supported(sim):
-    """Raise unless the dolfinx backend can solve ``sim`` (element type in
-    ``SOLVED_ELEMENT_TYPES``, drives parse, frequencies resolve).
+    """Raise unless the dolfinx backend can solve ``sim`` (element type in ``SOLVED_ELEMENT_TYPES``,
+    drives parse, frequencies resolve).
 
     Raises
     ------
     NotImplementedError
         ``sim`` is well formed but uses a feature the backend does not support.
     ValueError
-        ``sim`` is malformed (for example no drive, a periodic first step with no drive, a step
-        with neither Static nor Dynamic, or
-        a model-level ``Prescribed`` with a nonzero value, which ABAQUS rejects).
+        ``sim`` is malformed (for example no drive, a periodic first step with no drive, a step with
+        neither Static nor Dynamic, or a model-level ``Prescribed`` with a nonzero value, which
+        ABAQUS rejects).
 
     Pure numpy; ``run`` calls this before building a solver and ``can_run`` (hence the test
-    harness's ``is_fe_green``) wraps it, so support widens in both automatically as these
-    checks widen.
+    harness's ``is_fe_green``) wraps it, so support widens in both automatically as these checks
+    widen.
 
     Handles two cases:
     - *Periodic* sims: validated by ``macro_loading`` (corner-driven PBC path) and the step

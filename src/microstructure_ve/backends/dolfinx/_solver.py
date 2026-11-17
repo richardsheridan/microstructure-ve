@@ -1,8 +1,8 @@
 """The linear solve: one native-LU factorization reused across frequencies and RHS.
 
 PETSc's built-in serial LU is used (MUMPS is much slower on these small complex systems,
-docs/dolfinx_backend_design.md section 0). The matrix is re-assembled per frequency (same sparsity -> LU re-factors
-values only); the per-unit-strain right-hand sides are cheap back-substitutions.
+docs/dolfinx_backend_design.md section 0). The matrix is re-assembled per frequency (same sparsity
+-> LU re-factors values only); the per-unit-strain right-hand sides are cheap back-substitutions.
 
 Cancellation. A direct LU ``ksp.solve()`` is a single C call with no Python breakpoint
 and no monitor callback (PREONLY+LU never fires ``setMonitor``), so it can only be
@@ -59,8 +59,8 @@ def select_solver_kind(ndof, dim):
       GMRES+ILU stays cheap.
 
     The benchmark behind both rules is in
-    docs/dolfinx_backend_design.md#10-iterative-solver-gmresilu-crossover-for-large-3d-adopted.
-    The complex-symmetric system has no AMG (GAMG/hypre are real-only), so iterative is
+    docs/dolfinx_backend_design.md#10-iterative-solver-gmresilu-crossover-for-large-3d-adopted. The
+    complex-symmetric system has no AMG (GAMG/hypre are real-only), so iterative is
     ILU-preconditioned; callers wanting it in 2D anyway can force ``solver="iterative"``.
     """
     if dim == 2:
@@ -142,11 +142,11 @@ class IterativeSolver(LuSolver):
     ``setOperators``, so the ILU is rebuilt per frequency); only the KSP/PC is swapped.
 
     The system is **complex-symmetric** (complex moduli), so PETSc's algebraic multigrid
-    (GAMG/hypre) is unavailable -- those are real-only -- and CG is invalid. This uses GMRES
-    with an ILU preconditioner, which works in complex but does not coarsen like AMG, so it
-    can stagnate on the hardest large-3D cases. ``solve`` raises ``ConvergenceError`` on non-convergence (it never
-    returns silently-wrong numbers); ``petsc_options`` lets a caller swap the preconditioner
-    (e.g. ``pc_type='bjacobi'``/``'asm'``, more ILU fill) or one can fall back to ``solver='lu'``.
+    (GAMG/hypre) is unavailable -- those are real-only -- and CG is invalid. This uses GMRES with an
+    ILU preconditioner, which works in complex but does not coarsen like AMG, so it can stagnate on
+    the hardest large-3D cases. ``solve`` raises ``ConvergenceError`` on non-convergence (it never
+    returns silently-wrong numbers); ``petsc_options`` lets a caller swap the preconditioner (e.g.
+    ``pc_type='bjacobi'``/``'asm'``, more ILU fill) or one can fall back to ``solver='lu'``.
     """
 
     _DEFAULT_OPTS = {

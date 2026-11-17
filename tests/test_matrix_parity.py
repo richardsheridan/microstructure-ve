@@ -5,11 +5,11 @@ For every matrix cell the DOLFINx backend currently supports (``is_fe_green``), 
 require the homogenized reaction-force response (storage ``RF_Real``, loss ``RF_Imag``) and
 the drive displacement ``U`` to match the oracle.
 
-The matrix oracles are generated so this comparison is both interpolation-free (the sweep
-lands exactly on the tabular table nodes) and inertia-free (tiny density), so what remains is the discretization gap, held to ``RTOL`` or to
-a relaxation documented below. As FE features land and ``is_fe_green``
-widens, the corresponding cells join this parity check automatically; a green cell that
-disagrees with ABAQUS fails loudly here.
+The matrix oracles are generated so this comparison is both interpolation-free (the sweep lands
+exactly on the tabular table nodes) and inertia-free (tiny density), so what remains is the
+discretization gap, held to ``RTOL`` or to a relaxation documented below. As FE features land and
+``is_fe_green`` widens, the corresponding cells join this parity check automatically; a green cell
+that disagrees with ABAQUS fails loudly here.
 
 This complements ``test_matrix_dolfinx`` (which checks closed-form physics on a homogeneous
 RVE and tracks the red cells as expected failures); here the RVE is the heterogeneous
@@ -53,8 +53,8 @@ def _oracle_name(cell, tt):
 
 class _OracleParity:
     def assertMatchesOracle(self, sim, cell, tt, rtol):
-        """Solve ``sim`` and hold its rows to the committed ABAQUS oracle of matrix cell
-        ``cell`` under test type ``tt``."""
+        """Solve ``sim`` and hold its rows to the committed ABAQUS oracle of matrix cell ``cell``
+        under test type ``tt``."""
         from microstructure_ve.backends.dolfinx import _run as run
 
         dim = cell["dim"]
@@ -132,19 +132,19 @@ del _cell, _tt
 
 @needs_dolfinx
 class ModelPrescribedHoldsTests(_OracleParity, unittest.TestCase):
-    """A model-level zero ``Prescribed`` on a dof no step drives holds that dof, as a
-    model-level ``Fixed`` there does and as ABAQUS does."""
+    """A model-level zero ``Prescribed`` on a dof no step drives holds that dof, as a model-level
+    ``Fixed`` there does and as ABAQUS does."""
 
     def test_periodic_lateral_corner_held_by_zero_prescribed(self):
-        """The periodic confined cell with its lateral corner's normal held by a model-level
-        zero ``Prescribed`` returns the confined oracle's rows, not the free-lateral ones."""
+        """The periodic confined cell with its lateral corner's normal held by a model-level zero
+        ``Prescribed`` returns the confined oracle's rows, not the free-lateral ones."""
         cell = {"mode": "uniaxial_x", "traction": "confined_slip", "bc": "periodic", "dim": 2}
         sim = hold_by_prescribed(matrix_simulation(test_type="elastic", **cell), "X0Y1", 2, 0.0)
         self.assertMatchesOracle(sim, cell, "elastic", RTOL)
 
     def test_standard_lateral_face_held_by_zero_prescribed(self):
-        """The standard confined cell with its lateral face's normal held by a model-level
-        zero ``Prescribed`` solves and returns the confined oracle's rows."""
+        """The standard confined cell with its lateral face's normal held by a model-level zero
+        ``Prescribed`` solves and returns the confined oracle's rows."""
         cell = {"mode": "uniaxial_x", "traction": "confined_slip", "bc": "standard", "dim": 2}
         sim = hold_by_prescribed(matrix_simulation(test_type="elastic", **cell), "Y0ALL", 2, 0.0)
         self.assertMatchesOracle(sim, cell, "elastic", RTOL)

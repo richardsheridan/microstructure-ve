@@ -15,11 +15,10 @@ processes *outside* that lock, so parallel sweeps launched from several threads 
 The worker path mutates no process-global state (each worker caps its own BLAS threads
 in-process via threadpoolctl). See ``_run``'s module docstring for the full guarantee.
 
-``run`` / ``build_solver`` are resolved lazily so that importing this package -- and its
-pure-numpy ``_spec`` and ``_loading`` submodules -- never pulls in dolfinx. The other
-submodules import
-dolfinx/petsc4py/dolfinx_mpc at module top and are only loaded when ``run`` is used, so
-this package stays importable under the numpy-only msve env.
+``run`` / ``build_solver`` are resolved lazily so that importing this package -- and its pure-numpy
+``_spec`` and ``_loading`` submodules -- never pulls in dolfinx. The other submodules import
+dolfinx/petsc4py/dolfinx_mpc at module top and are only loaded when ``run`` is used, so this package
+stays importable under the numpy-only msve env.
 """
 from __future__ import annotations
 

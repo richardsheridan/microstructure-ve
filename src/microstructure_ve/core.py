@@ -161,9 +161,8 @@ def _node_array(token):
 class GridNodes:
     """A structured grid of nodes with the boundary node sets of its sides.
 
-    Nodes are numbered from 1 in raveled grid order; ``virtual_node`` is the number one
-    past the last real node. ``nsets`` maps each name of ``Sides_2d`` or ``Sides_3d`` to its
-    ``NodeSet``.
+    Nodes are numbered from 1 in raveled grid order; ``virtual_node`` is the number one past the
+    last real node. ``nsets`` maps each name of ``Sides_2d`` or ``Sides_3d`` to its ``NodeSet``.
 
     Parameters
     ----------
@@ -239,17 +238,16 @@ class GridNodes:
 class GridElements:
     """One structured-grid element per pixel, of a given ABAQUS element ``type``.
 
-    Elements are numbered from 1 in raveled pixel order. The DOLFINx backend solves only
-    the types in ``backends.dolfinx._loading.SOLVED_ELEMENT_TYPES``.
+    Elements are numbered from 1 in raveled pixel order. The DOLFINx backend solves only the types
+    in ``backends.dolfinx._loading.SOLVED_ELEMENT_TYPES``.
 
     Parameters
     ----------
     nodes : GridNodes
         The node grid; it has one more node than elements per axis.
     type : str
-        2D: ``CPE4R`` (plane strain, reduced integration), ``CPS4R`` (plane stress,
-        reduced), ``CPE4`` (plane strain, full integration). 3D: ``C3D8R`` (reduced),
-        ``C3D8`` (full).
+        2D: ``CPE4R`` (plane strain, reduced integration), ``CPS4R`` (plane stress, reduced),
+        ``CPE4`` (plane strain, full integration). 3D: ``C3D8R`` (reduced), ``C3D8`` (full).
 
     Raises
     ------

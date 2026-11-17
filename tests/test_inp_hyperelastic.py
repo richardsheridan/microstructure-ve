@@ -1,7 +1,7 @@
 """Exact-block-text assertions for hyperelastic material emission and nlgeom Step flag.
 
-Each test emits a single Material or Step into an in-memory buffer and
-checks exact keyword/data-line text.
+Each test emits a single Material or Step into an in-memory buffer and checks exact
+keyword/data-line text.
 """
 import io
 import unittest

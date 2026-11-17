@@ -1,10 +1,10 @@
 """The GMRES+ILU IterativeSolver path (requires the fenicsx env).
 
-The iterative solver solves the *same* linear system as the LU path, so it is validated
-against ``LuSolver`` (not ABAQUS): on a small periodic cell the homogenized rows must agree.
-The suite's meshes are far below the LU time budget, so ``select_solver_kind`` never picks
-iterative on its own -- we force it with ``solver="iterative"``. Also pins the cancellation
-contract (the KSP monitor raises ``Cancelled`` mid-solve) and the ``ConvergenceError`` non-convergence guard.
+The iterative solver solves the *same* linear system as the LU path, so it is validated against
+``LuSolver`` (not ABAQUS): on a small periodic cell the homogenized rows must agree. The suite's
+meshes are far below the LU time budget, so ``select_solver_kind`` never picks iterative on its own
+-- we force it with ``solver="iterative"``. Also pins the cancellation contract (the KSP monitor
+raises ``Cancelled`` mid-solve) and the ``ConvergenceError`` non-convergence guard.
 """
 import unittest
 
@@ -64,8 +64,8 @@ class IterativeSolverTests(unittest.TestCase):
             run(sim, solver="iterative", cancel=lambda: True)
 
     def test_nonconvergence_raises_convergence_error(self):
-        """A linear sweep whose Krylov solve does not converge raises the same
-        ``ConvergenceError`` as a non-converged nonlinear step."""
+        """A linear sweep whose Krylov solve does not converge raises the same ``ConvergenceError``
+        as a non-converged nonlinear step."""
         from microstructure_ve.backends.dolfinx import ConvergenceError, run
 
         sim = matrix_simulation(test_type="viscoelastic", homogeneous=False, **_CELL)
@@ -74,8 +74,8 @@ class IterativeSolverTests(unittest.TestCase):
         self.assertIn("did not converge", str(cm.exception))
 
     def test_nonconvergence_in_worker_reaches_caller_as_convergence_error(self):
-        """A Krylov solve that does not converge inside a ``workers>1`` sweep reaches the
-        caller as ``ConvergenceError``, not as a broken pool or a bare ``RuntimeError``."""
+        """A Krylov solve that does not converge inside a ``workers>1`` sweep reaches the caller as
+        ``ConvergenceError``, not as a broken pool or a bare ``RuntimeError``."""
         from microstructure_ve.backends.dolfinx import ConvergenceError, run
 
         sim = matrix_simulation(test_type="viscoelastic", homogeneous=False, **_CELL)

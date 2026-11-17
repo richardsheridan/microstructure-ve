@@ -1,10 +1,10 @@
 """Direct-Dirichlet solve path for standard (non-periodic) boundary conditions.
 
-Assembles the B-bar stiffness with complex moduli, imposes Dirichlet BCs from the
-simulation's model-level holds (zero, ``_loading.model_holds``) and step ``Prescribed`` drives
-(prescribed displacement), solves with PETSc serial LU, then reports the readODB-style
-row: ``[f, RF_Real..., RF_Imag..., U_Real...]`` where RF and U are summed over the
-primary drive nodeset nodes for each component.
+Assembles the B-bar stiffness with complex moduli, imposes Dirichlet BCs from the simulation's
+model-level holds (zero, ``_loading.model_holds``) and step ``Prescribed`` drives (prescribed
+displacement), solves with PETSc serial LU, then reports the readODB-style row:
+``[f, RF_Real..., RF_Imag..., U_Real...]`` where RF and U are summed over the primary drive nodeset
+nodes for each component.
 
 Reaction-force computation: after solving for ``u``, assemble the internal-force vector
 ``f_int = K_full * u`` as the *action* of the unreduced bilinear form on the solution
@@ -13,9 +13,9 @@ node is the corresponding entry of ``f_int`` (equilibrium gives zero at free nod
 residual at constrained nodes is the reaction force). Summing over the primary drive
 nodeset per component reproduces the ABAQUS ``readODB`` summation.
 
-No MPC or center-pin -- standard cells are clamped BVPs, not periodic fluctuation
-problems. The standard path always solves with LU; the ``solver`` and ``petsc_options``
-of ``run`` do not apply to it.
+No MPC or center-pin -- standard cells are clamped BVPs, not periodic fluctuation problems. The
+standard path always solves with LU; the ``solver`` and ``petsc_options`` of ``run`` do not apply to
+it.
 """
 from __future__ import annotations
 
@@ -68,8 +68,8 @@ def _build_dof_maps(space):
 def _make_dirichlet_bc(space, Vc_spaces, inv_maps, nodes_1indexed, comp, value):
     """Build one ``fem.dirichletbc`` for ``comp`` (0-indexed) on the given 1-indexed nodes.
 
-    Returns ``(bc, flat_dofs, vc_dofs)``: the condition and the dofs it constrains, in the
-    flat V array and in the collapsed sub-space ``Vc``.
+    Returns ``(bc, flat_dofs, vc_dofs)``: the condition and the dofs it constrains, in the flat V
+    array and in the collapsed sub-space ``Vc``.
 
     ``nodes_1indexed`` are 1-indexed grid node numbers.  ``comp`` is the 0-indexed
     displacement component (0=x, 1=y, 2=z).  ``value`` is the prescribed displacement
@@ -104,9 +104,9 @@ def _parse_bcs_ex(sim, space, Vc_spaces, inv_maps, step=None):
     ``drive_nodes``: 1-indexed node array of the *primary* drive nodeset (the first
     ``Prescribed`` drive in the step's subsections), used for RF and U summation.
 
-    Model-level conditions that ``model_holds`` prescribe zero on their dofs, except on a
-    (node, dof) that a step drive prescribes, where the step's value wins.
-    Step-level ``Prescribed`` drives prescribe the actual drive displacement.
+    Model-level conditions that ``model_holds`` prescribe zero on their dofs, except on a (node,
+    dof) that a step drive prescribes, where the step's value wins. Step-level ``Prescribed`` drives
+    prescribe the actual drive displacement.
     """
     model = sim.model
     step = sim.steps[0] if step is None else step
@@ -168,9 +168,9 @@ def build_solver(sim, prob):
     Raises
     ------
     NotImplementedError
-        If any spatial component is unconstrained (free-lateral cell): the stiffness matrix
-        would be singular (rigid-body-translation null space) and the solved displacement
-        non-unique, so the oracle U values cannot be reproduced.
+        If any spatial component is unconstrained (free-lateral cell): the stiffness matrix would be
+        singular (rigid-body-translation null space) and the solved displacement non-unique, so the
+        oracle U values cannot be reproduced.
     """
     model = sim.model
     dim = model.nodes.dim
