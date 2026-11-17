@@ -233,6 +233,16 @@ _POLYNOMIAL_VALID_LENGTHS = {N * (N + 3) // 2: N for N in range(1, 7)}
 # {2:1, 5:2, 9:3, 14:4, 20:5, 27:6}
 
 
+def _check_supplied_d1(d):
+    """Raise ``ValueError`` unless the supplied ``d`` is absent or its D1 is positive and finite.
+
+    D1 = 2/K0, so a zero, negative or non-finite D1 has no compressible bulk modulus; higher Di
+    may be zero.
+    """
+    if d is not None and not (np.isfinite(d[0]) and d[0] > 0):
+        raise ValueError(f"D1 (d[0]) must be a positive finite number; got D1={d[0]!r}")
+
+
 @dataclass
 class ReducedPolynomial:
     """A reduced polynomial (Rivlin) hyperelastic response.
@@ -276,6 +286,7 @@ class ReducedPolynomial:
                 f"d must have length N={n} for ReducedPolynomial(N={n}); "
                 f"got len(d)={len(self.d)}"
             )
+        _check_supplied_d1(self.d)
 
     @property
     def n(self) -> int:
@@ -353,6 +364,7 @@ class Polynomial:
                 f"d must have length N={n} for Polynomial(N={n}); "
                 f"got len(d)={len(self.d)}"
             )
+        _check_supplied_d1(self.d)
 
     @property
     def n(self) -> int:
@@ -430,6 +442,7 @@ class ArrudaBoyce:
             raise ValueError(
                 f"ArrudaBoyce d must be a single-element list; got len(d)={len(self.d)}"
             )
+        _check_supplied_d1(self.d)
 
     @property
     def mu0(self) -> float:
