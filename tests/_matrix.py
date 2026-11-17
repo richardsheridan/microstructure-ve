@@ -71,8 +71,8 @@ MULTISTEP_PATTERNS = {
 MULTISTEP_CELL = {"mode": "uniaxial_x", "traction": "free", "bc": "periodic", "dim": 2}
 
 # Multi-step viscoelastic test types whose steps drive different amplitudes, on the same cell.
-# Each step is ``(kind, drive_scale)``; a scale of ``None`` gives the step no drive of its own,
-# so a Static step there keeps the drive of the last general step that carried one.
+# Each step is ``(kind, drive_scale)``; a scale of ``None`` gives the step no drive of its own
+# (what such a step reports: ``microstructure_ve.backends.dolfinx.run``).
 SCALED_MULTISTEP_PATTERNS = {
     "viscoelastic_halved_ss": (("S", 1.0), ("S", 0.5)),
     "viscoelastic_halved_sd": (("S", 1.0), ("D", 0.5)),
@@ -99,11 +99,12 @@ PLASTIC_YIELD_STRESS = [40.0, 70.0]      # MPa, monotonic hardening
 PLASTIC_PLASTIC_STRAIN = [0.0, 0.05]
 PLASTIC_DISPLACEMENT = 5.0e-4
 
-# Multi-step *plastic* test types on one robust periodic cell. Unlike the viscoelastic patterns
+# Multi-step *plastic* test types on one robust periodic cell. Unlike ``MULTISTEP_PATTERNS``
 # these carry a per-step drive *scale*: a plastic Static step (``"S"``) drives ``value*scale``
 # (so a reversal/cyclic pattern exercises cross-step plastic hysteresis), while Dynamic steps
 # (``"D"``) and the first step stay at the reference (+1) drive. ``_sd``/``_ds`` exercise step
-# ordering + dispatch; ``_reversal``/``_cyclic`` exercise persistent plastic state across steps.
+# ordering + dispatch; ``_reversal``/``_cyclic`` exercise persistent plastic state across steps;
+# ``_inherited`` ends on a Static step with no drive of its own.
 PLASTIC_MULTISTEP_CELL = {"mode": "uniaxial_x", "traction": "confined_slip",
                           "bc": "periodic", "dim": 2}
 PLASTIC_MULTISTEP_PATTERNS = {

@@ -18,7 +18,11 @@ from ._assembly import eps
 
 
 def build_solve_one(space, forms, solver, loading):
-    """Return ``solve_one(f) -> [freq, RF_Real..., RF_Imag..., U...]`` for one frequency."""
+    """Return ``solve_one(f) -> [freq, RF_Real..., RF_Imag..., U...]`` for one frequency.
+
+    ``solve_one(f, elastic=False, step_loading=None)``: ``step_loading``, a step's own
+    ``MacroLoading``, replaces the amplitudes of ``loading`` and must drive the same components.
+    """
     dim = space.dim
     area = space.area
     sig, unit_E, modes = forms.sig, forms.unit_E, forms.modes
@@ -42,8 +46,7 @@ def build_solve_one(space, forms, solver, loading):
 
     def solve_one(f, elastic=False, step_loading=None):
         # elastic=True: a Static step -> real *Elastic moduli (zero loss); else the
-        # frequency-domain complex moduli at f. step_loading: a step's own drive, which must
-        # drive the same components as ``loading``; it sets the amplitudes only.
+        # frequency-domain complex moduli at f.
         ld = loading if step_loading is None else step_loading
         assert list(ld.active) == active, "a step drives different components"
         imposed = ld.imposed
