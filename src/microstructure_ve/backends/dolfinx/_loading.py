@@ -169,10 +169,12 @@ def macro_loading(sim, step=None):
         H_imposed[(i, a)] = value / L[a]  # raw macro gradient: corner R_a moved in dof i
         if i != a:
             # Off-diagonal (shear) drive: R_a displaced in dof i (= b), imposing H[b,a] = γ.
-            # Simple shear: conjugate H[a,b] = 0, so symmetric tensor strain E_{ab} = γ/2.
+            # Each corner contributes γ/2 to the symmetric strain E_{ab}; a drive on the other
+            # corner of the plane (pure shear) adds its own half.
             b = i
             gamma = value / L[a]
-            imposed[(min(a, b), max(a, b))] = gamma / 2.0
+            key = (min(a, b), max(a, b))
+            imposed[key] = imposed.get(key, 0.0) + gamma / 2.0
             driven_axes.add(a)
             if primary is None:
                 primary = (a, drive_dof, value)
