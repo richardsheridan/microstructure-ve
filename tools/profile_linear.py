@@ -17,7 +17,7 @@ Usage::
     /home/rjs80/miniconda3/envs/fenicsx/bin/python tools/profile_linear.py [--n N] [--freqs F]
 
 Default: n=50 (50x50 grid), F=20 frequencies, 2D two-phase viscoelastic, uniaxial_x free lateral.
-Writes tools/profile_linear_results.json.
+Prints the per-section tables to stdout and writes no file.
 
 Results
 -------
@@ -30,6 +30,27 @@ Defaults above (5202 dof), one core of the shared 2x Xeon Gold 6148 host.
 The standard path was 66 ms per frequency while it assembled a second stiffness matrix
 for the reactions; it now takes them from the action of the unreduced form on the
 solution, one vector assembly.
+
+Per-section breakdown of the run above (``total s`` over 20 frequencies, ``%wall`` of the
+wall time, ``calls`` and ``ms/call`` per section):
+
+    periodic, wall 2.915 s
+    section               total s   %wall   calls   ms/call
+    set_moduli              0.006     0.2      21     0.30
+    mpc_assemble_matrix     0.149     5.1      21     7.11
+    mpc_assemble_vector     0.025     0.9      41     0.60
+    ksp_solve               2.692    92.3      40    67.29
+    sbar_assemble           0.070     2.4     121     0.58
+    [sum] 2.942 s (100.9%); other -0.027 s (the timers overlap slightly)
+
+    standard, wall 1.129 s
+    section               total s   %wall   calls   ms/call
+    set_moduli              0.006     0.6      21     0.30
+    std_assemble_A_bc       0.128    11.4      20     6.42
+    rhs_build               0.010     0.9      20     0.51
+    ksp_solve               0.962    85.2      20    48.12
+    react_assemble          0.015     1.4      20     0.76
+    [sum] 1.123 s (99.4%); other 0.007 s (0.6%)
 
 Both paths are bound by the per-frequency factorization, which is inherent to a direct
 solve. What is left is small: batching the stress-averaging forms is worth 2 to 3
@@ -44,7 +65,6 @@ for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXP
     os.environ.setdefault(_v, "1")
 
 import argparse
-import json
 import pathlib
 import sys
 import time
@@ -60,7 +80,6 @@ if str(_SRC_DIR) not in sys.path:
 
 import numpy as np  # noqa: E402
 
-RESULTS_PATH = pathlib.Path(__file__).with_name("profile_linear_results.json")
 
 _DEFAULT_N = 50
 _DEFAULT_FREQS = 20
@@ -578,19 +597,6 @@ def main():
             pct = 100 * s_sum / wall
             print(f"\n[OK] {path}: sections={pct:.1f}% wall — sanity checks passed")
 
-    # Write JSON
-    def _serial(obj):
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        if isinstance(obj, (np.integer,)):
-            return int(obj)
-        if isinstance(obj, (np.floating,)):
-            return float(obj)
-        raise TypeError(f"Not serialisable: {type(obj)}")
-
-    out = {"n": n, "n_freqs": n_freqs, "results": results}
-    RESULTS_PATH.write_text(json.dumps(out, indent=2, default=_serial))
-    print(f"\nwrote {RESULTS_PATH}")
 
 
 if __name__ == "__main__":

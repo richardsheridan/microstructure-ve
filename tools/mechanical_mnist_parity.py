@@ -11,7 +11,39 @@ relative errors use max(|theirs|, 1e-5) in the denominator.
 
 Run under the fenicsx env::
 
-    python tools/mechanical_mnist_parity.py --refine 1 2 3 --set all --json out.json
+    python tools/mechanical_mnist_parity.py --refine 1 2 3 --set all
+
+``--json PATH`` additionally writes the per-bitmap psi, reference and relative-error rows to
+PATH; pick a path under ``abaqus-work/`` or elsewhere untracked. Nothing is written by default.
+
+Results
+-------
+All 20 bitmaps (10 train, 10 test), run with the defaults for ``--n-incr`` and the flip,
+one run per refinement (the study did not record them). Relative error is
+|dpsi - ref| / max(|ref|, 1e-5) at each displacement step d (columns; the d = 0 step is
+zero by construction). The d = 0.001 column is quantization-limited, so only d >= 0.1
+measures discretization error.
+
+    refine 1: 28x28 elements, 0.42 to 0.6 s per bitmap
+    refine 2: 56x56 elements, 2.14 to 6.19 s per bitmap
+    refine 3: 84x84 elements, 6.93 to 26.47 s per bitmap
+    refine 5: 140x140 elements, 28.3 to 167.81 s per bitmap
+
+Maximum over the 20 bitmaps:
+
+    refine    0.001   0.01    0.1    0.5      1      2      4      6      8     10     12     14
+    1        1.2e-1 5.6e-2 1.5e-2 1.5e-2 1.5e-2 1.5e-2 1.4e-2 1.4e-2 1.4e-2 1.4e-2 1.3e-2 1.3e-2
+    2        1.1e-1 4.6e-2 4.7e-3 4.6e-3 4.5e-3 4.3e-3 4.0e-3 3.9e-3 3.8e-3 3.7e-3 3.5e-3 3.4e-3
+    3        1.1e-1 4.7e-2 1.8e-3 1.8e-3 1.8e-3 1.7e-3 1.5e-3 1.3e-3 1.2e-3 1.1e-3 9.9e-4 1.0e-3
+    5        1.1e-1 4.8e-2 2.1e-3 1.7e-3 1.7e-3 1.8e-3 2.0e-3 2.1e-3 2.2e-3 2.2e-3 2.3e-3 2.4e-3
+
+Median over the 20 bitmaps:
+
+    refine    0.001   0.01    0.1    0.5      1      2      4      6      8     10     12     14
+    1        9.8e-2 1.4e-2 1.0e-2 9.8e-3 9.7e-3 9.5e-3 9.2e-3 9.0e-3 8.9e-3 8.7e-3 8.6e-3 8.5e-3
+    2        9.7e-2 2.0e-2 2.6e-3 2.5e-3 2.5e-3 2.4e-3 2.2e-3 2.1e-3 2.0e-3 1.9e-3 1.8e-3 1.7e-3
+    3        9.7e-2 2.2e-2 6.2e-4 6.3e-4 5.6e-4 5.4e-4 4.9e-4 4.4e-4 4.6e-4 3.9e-4 3.4e-4 3.3e-4
+    5        9.7e-2 2.3e-2 7.4e-4 6.9e-4 7.2e-4 7.7e-4 8.4e-4 9.3e-4 1.0e-3 1.1e-3 1.1e-3 1.2e-3
 """
 import argparse
 import json
