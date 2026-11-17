@@ -297,7 +297,7 @@ class _HyperelasticSolver(_FormsMixin):
         self.A = dolfinx_mpc.assemble_matrix(self.jac_form, self.mpc, bcs=self.bcs)
         self.A.assemble()
         self.b = dolfinx_mpc.assemble_vector(self.res_forms[0], self.mpc)
-        dolfinx_mpc.assemble_vector(self.res_forms[1], self.mpc, self.b)
+        self._b_vol = dolfinx_mpc.assemble_vector(self.res_forms[1], self.mpc)
         self.x = self.A.createVecRight()
         self.du = fem.Function(self.V)
         self.ksp = PETSc.KSP().create(self.mesh.comm)
@@ -322,10 +322,11 @@ class _HyperelasticSolver(_FormsMixin):
         last_du = None
         halvings = 0
         for _ in range(_MAX_NEWTON):
-            with self.b.localForm() as bl:
-                bl.set(0.0)
+            # dolfinx_mpc.assemble_vector zeroes its target, so each part gets its own vector.
             dolfinx_mpc.assemble_vector(self.res_forms[0], self.mpc, self.b)
-            dolfinx_mpc.assemble_vector(self.res_forms[1], self.mpc, self.b)
+            dolfinx_mpc.assemble_vector(self.res_forms[1], self.mpc, self._b_vol)
+            with self.b.localForm() as bl, self._b_vol.localForm() as vl:
+                bl.array[:] += vl.array
             dolfinx_mpc.apply_lifting(self.b, [self.jac_form], [self.bcs], self.mpc)
             self.b.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
             fempetsc.set_bc(self.b, self.bcs)
