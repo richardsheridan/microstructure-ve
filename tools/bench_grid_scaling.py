@@ -36,11 +36,11 @@ The factorization count drifts up with resolution; the cost is the per-factoriza
 grows about as ndof^1.5 (71 s at 400x400, peak memory 2.9 GB). The report's estimate of hours to
 days came from 65d63c0, which ran 20 increments per free-lateral step.
 
-Prototypes, applied as scratch patches that this script does not carry: MUMPS in place of native
-LU; the free-lateral strains solved inside one bordered Newton (Schur complement on the same
-factorization) in place of the nested root-find; and skipping a tangent refresh that changed by
-less than 1e-10 relative, which stands in for an exact tangent. 100x100 rows ran concurrently, so
-their times are indicative; the 400x400 row of all three ran alone.
+Prototypes, applied as scratch patches before the fixes landed, which split the gain between them:
+MUMPS in place of native LU; the free-lateral strains solved inside one bordered Newton (Schur
+complement on the same factorization) in place of the nested root-find; and skipping a tangent
+refresh that changed by less than 1e-10 relative, which stands in for an exact tangent. 100x100
+rows ran concurrently, so their times are indicative; the 400x400 row of all three ran alone.
 
     variant                         100x100 wall   factorizations   400x400 wall   factorizations
     baseline                        92.9 s         74               7,610 s        100
@@ -53,6 +53,34 @@ their times are indicative; the 400x400 row of all three ran alone.
 At 400x400 the MUMPS stresses match the baseline to 7.7e-14 and the bordered ones to 1.7e-9, and
 the stresses lie within +0.05% to +0.15% of ABAQUS at all 13 points (50x50: up to +1.16%). A
 factorization takes 4.6 s under MUMPS against 71 s native at 400x400.
+
+The fixes as landed, at 2f12017 (MUMPS, the free-lateral entries solved in the Newton iteration,
+closed-form J2 tangent), same host; the after rows of both tables below ran concurrently, one core
+each:
+
+    grid      ndof      wall       factorizations   LU time    back-solves   speedup
+    50x50     5,202     2.2 s      15               0.5 s      115           5.3x
+    100x100   20,402    9.9 s      17               2.7 s      128           9.4x
+    200x200   80,802    49.5 s     22               19.0 s     126           18x
+    400x400   321,602   277 s      27               124 s      153           27x
+
+The stresses match the baseline's to 1.8e-9 relative at every grid, and the peak memory at 400x400
+is 2.7 GB. The factorization count falls about 4x at every grid; the speedup grows with the grid
+because MUMPS's lead over native LU per factorization grows, from 3.4x at 50x50 to 15x at 400x400.
+
+Neo-Hookean case, the same points at the default 10 increments per free-lateral step, before at
+657f977 (the solver of e99437f) and after at 2f12017:
+
+    grid      ndof      before wall   factorizations   after wall   factorizations   speedup
+    50x50     5,202     54.9 s        406              10.2 s       130              5.4x
+    100x100   20,402    438 s         406              46.0 s       130              9.5x
+    200x200   80,802    3,658 s       406              213 s        130              17x
+    400x400   321,602   not run                        1,072 s      130
+
+The before run was not taken at 400x400; 406 native factorizations at 71 s each come to about 8 h.
+Peak memory at 400x400 is 2.1 GB. The stresses match the before run's to 2.0e-9. After the fixes
+the run factors once per increment (130 = 13 points x 10 increments); before, about three times
+per increment.
 """
 from __future__ import annotations
 

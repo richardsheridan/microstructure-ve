@@ -16,8 +16,10 @@ Results
 -------
 Calibration run with MUMPS as the direct solver (``_solver.lu_ksp``): 80 logical cores, host load
 average 3 to 7, 3 rounds, LU cap 75 s, uniaxial_x free-traction periodic viscoelastic homogeneous
-cell. Best of the rounds. ``pred`` is ``predict_lu_seconds``, the ``_COST`` power law fit to the
-LU times of two earlier MUMPS passes at the same load, which agree with this column within 7%.
+cell. Best of the rounds. ``LU`` is the direct solver (``lu_ksp``, MUMPS in this table) and
+``iter`` the GMRES+ILU ``IterativeSolver``. ``pred`` is ``predict_lu_seconds``, the ``_COST`` power
+law fit to the LU times of two earlier MUMPS passes at the same load; their LU times agree with this
+table's within 7%.
 
     dim  n    ndof     LU s     pred s   iter s   iter/LU   iterative status
     2    48     4802    0.047    0.048    0.146    3.1x     ok
