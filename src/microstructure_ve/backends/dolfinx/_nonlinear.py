@@ -66,8 +66,8 @@ def modified_newton(residual, refresh_jacobian, ksp, x, field, *, mpc=None, real
     r_ref : float
         The convergence reference before this call. The call's first residual raises it to at least
         that residual, and convergence is ``|R| <= _NEWTON_TOL + _NEWTON_RTOL * r_ref``. A caller
-        that passes the returned reference back in judges a warm-started re-solve, which begins
-        essentially converged, against the largest initial residual seen rather than its own, so it
+        that passes the returned reference back in judges a warm-started solve, which may begin
+        nearly converged, against the largest initial residual seen rather than its own, so it
         does not grind to the absolute floor.
     free : FreeEntries, optional
         Free macro entries to solve together with ``field``; ``residual`` must read them.

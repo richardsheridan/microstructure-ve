@@ -22,7 +22,8 @@ Design constraints (docs/dolfinx_backend_design.md, section 12):
 The macro strain ``E`` enters through the *total* strain ``eps(E.x + u~) = E + eps(u~)`` (the
 fluctuation formulation the linear path also uses); driven components are imposed and any ``free``
 lateral components are solved with the fluctuation in the same Newton iteration
-(``_nonlinear.FreeEntries``) so their volume-averaged stress vanishes. Reported row mirrors the readODB columns:
+(``_nonlinear.FreeEntries``) so their volume-averaged stress vanishes. Reported row mirrors the
+readODB columns:
 ``[1.0, RF_Real..., 0..., U...]`` (zero loss).
 """
 from __future__ import annotations
@@ -322,11 +323,10 @@ class _J2Solver:
         self.eps_expr = fem.Expression(_eps_voigt(self.u, self.dim), self.points)
         self._cells = np.arange(self.ncells, dtype=np.int32)
 
-        v_te = ufl.TestFunction(self.V)
-        dx_q = ufl.dx(metadata={"quadrature_degree": qd, "quadrature_scheme": "default"})
-        ev_v = _eps_voigt(v_te, self.dim)
+        self._dx_q = ufl.dx(metadata={"quadrature_degree": qd, "quadrature_scheme": "default"})
+        self._eps_v = _eps_voigt(ufl.TestFunction(self.V), self.dim)
         self.a_form = _bbar_jacobian_form(self.V, self.dim, qd, self.C_q, self.C_c)
-        self.L_form = fem.form(ufl.inner(self.sig_q, ev_v) * dx_q)
+        self.L_form = fem.form(ufl.inner(self.sig_q, self._eps_v) * self._dx_q)
 
         # committed state (persists across steps)
         self.eps_p = np.zeros((N, 6))
@@ -408,9 +408,7 @@ class _PlasticSolver(_J2Solver):
         self._eps_w = fem.Expression(_eps_voigt(self._w, self.dim), self.points)
         # dR/dE_k = int (C_q e_k) . eps(v): a uniform E is unchanged by the B-bar correction
         self._unit = fem.Constant(self.mesh, np.zeros(self.nv, dtype=PETSc.ScalarType))
-        dx_q = ufl.dx(metadata={"quadrature_degree": _QUAD_DEGREE, "quadrature_scheme": "default"})
-        self._B_form = fem.form(ufl.inner(ufl.dot(self.C_q, self._unit),
-                                          _eps_voigt(ufl.TestFunction(self.V), self.dim)) * dx_q)
+        self._B_form = fem.form(ufl.inner(ufl.dot(self.C_q, self._unit), self._eps_v) * self._dx_q)
 
         self.A = dolfinx_mpc.assemble_matrix(self.a_form, self.mpc, bcs=self.bcs)
         self.A.assemble()
@@ -465,7 +463,7 @@ class _PlasticSolver(_J2Solver):
     def _newton(self, E_voigt, free=None):
         """Equilibrate the fluctuation at macro strain ``E_voigt`` by ``modified_newton``, solving
         the ``free`` entries of ``E_voigt`` in place, judged against the largest initial residual
-        this solver has seen. Returns whether the residual met its tolerance."""
+        this solver has seen. Returns whether the solve met its tolerances."""
         def residual():
             self._eps_total = self._total_strain(E_voigt)
             self._sig = self._fill_coeffs(self._eps_total, commit=False, tangent=False)

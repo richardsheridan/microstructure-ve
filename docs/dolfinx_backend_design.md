@@ -518,9 +518,10 @@ Design decisions and rationale:
   (total strain = `eps(u)`, no fluctuation/macro-strain split); the reaction is the internal-force
   vector `∫ sig:eps(v)` summed at the drive face — the nonlinear analogue of the linear path's
   `K_full·u`. Standard cells are single-step and fully constrained (free-lateral cells are made
-  well-posed by minimal rigid-body pins), so there is no free-lateral root-find.
-- **Free-lateral (periodic) components** are solved by a small outer scalar root-find (driving the
-  conjugate volume-averaged stress to zero); confined cells skip it.
+  well-posed by minimal rigid-body pins), so there are no free lateral entries.
+- **Free-lateral (periodic) components** are solved with the fluctuation in the same Newton
+  iteration (driving the conjugate volume-averaged stress to zero; `_nonlinear.FreeEntries`);
+  confined cells have none.
 - **One increment per plastic `Static` step by default**, every cell and every step of a multi-step
   sim alike; `run(n_incr=...)` overrides it. The emitted `*STATIC` has no increment data line, so
   ABAQUS starts at an increment of 1.0 and solves each matrix step in one. On a heterogeneous cell
@@ -585,7 +586,7 @@ vector it is given before assembling, unlike `dolfinx.fem.petsc.assemble_vector`
 it. Two forms assembled into one vector through `dolfinx_mpc` keep only the second, and nothing
 warns: with the deviatoric residual dropped, Newton converged against the volumetric part alone and
 the periodic hyperelastic cells missed their ABAQUS oracles. Assemble each form into its own vector
-and add them (`_HyperelasticSolver._residual`).
+and add them (`_HyperelasticSolver._assemble_parts`).
 
 ### Standard-BC drive through lifting
 

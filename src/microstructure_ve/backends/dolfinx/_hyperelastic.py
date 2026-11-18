@@ -263,14 +263,9 @@ class _FormsMixin:
         # reported reaction is exactly conjugate to what Newton converged)
         self.P_forms = [[fem.form(P_dev[i, j] * dx2 + P_vol[i, j] * dx1)
                          for j in range(dim)] for i in range(dim)]
-        # F depends on H only through H + grad(disp), so a derivative with respect to H[b, b]
-        # is one with respect to disp along the field x_b e_b. Each part is its own form, as
-        # for the residual.
-        self._dir = fem.Function(self.V)
-        self._dR_forms = [fem.form(ufl.derivative(R, self.disp, self._dir))
-                          for R in (R_dev, R_vol)]
-        self._dP_forms = [[fem.form(ufl.derivative(Pd[b, b] * dx, self.disp, self._dir))
-                           for Pd, dx in ((P_dev, dx2), (P_vol, dx1))] for b in range(dim)]
+        # the parts the periodic solver differentiates with respect to H
+        self._R_parts = (R_dev, R_vol)
+        self._P_parts = ((P_dev, dx2), (P_vol, dx1))
         self.vol0 = prob.space.area
 
     def _refresh_jacobian(self):
@@ -317,18 +312,30 @@ class _HyperelasticSolver(_FormsMixin):
             mode.interpolate(lambda x, b=b: np.stack(
                 [x[b] if c == b else np.zeros_like(x[b]) for c in range(self.dim)]))
             self._modes.append(mode.x.array.real.copy())
+        # F depends on H only through H + grad(disp), so a derivative with respect to H[b, b]
+        # is one with respect to disp along the field x_b e_b. Each part is its own form, as
+        # for the residual.
+        self._dir = fem.Function(self.V)
+        self._dR_forms = [fem.form(ufl.derivative(R, self.disp, self._dir))
+                          for R in self._R_parts]
+        self._dP_forms = [[fem.form(ufl.derivative(P[b, b] * dx, self.disp, self._dir))
+                           for P, dx in self._P_parts] for b in range(self.dim)]
 
     def _assemble_jacobian(self):
         dolfinx_mpc.assemble_matrix(self.jac_form, self.mpc, bcs=self.bcs, A=self.A)
 
-    def _residual(self):
-        """The constrained residual at the current fluctuation, in ``self.b``."""
+    def _assemble_parts(self, forms, target):
+        """Assemble the deviatoric and volumetric parts ``forms`` of a 1-form into ``target``."""
         # each part gets its own vector: dolfinx_mpc.assemble_vector zeroes its target
         # (docs/dolfinx_backend_design.md#vector-assembly-into-one-target)
-        dolfinx_mpc.assemble_vector(self.res_forms[0], self.mpc, self.b)
-        dolfinx_mpc.assemble_vector(self.res_forms[1], self.mpc, self._b_vol)
-        with self.b.localForm() as bl, self._b_vol.localForm() as vl:
-            bl.array[:] += vl.array
+        dolfinx_mpc.assemble_vector(forms[0], self.mpc, target)
+        dolfinx_mpc.assemble_vector(forms[1], self.mpc, self._b_vol)
+        with target.localForm() as tl, self._b_vol.localForm() as vl:
+            tl.array[:] += vl.array
+
+    def _residual(self):
+        """The constrained residual at the current fluctuation, in ``self.b``."""
+        self._assemble_parts(self.res_forms, self.b)
         dolfinx_mpc.apply_lifting(self.b, [self.jac_form], [self.bcs], self.mpc)
         self.b.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
         fempetsc.set_bc(self.b, self.bcs)
@@ -351,11 +358,8 @@ class _HyperelasticSolver(_FormsMixin):
         B, D = [], []
         for c in axes:
             self._dir.x.array[:] = self._modes[c]
-            col, vol = self.b.duplicate(), self._b_vol
-            dolfinx_mpc.assemble_vector(self._dR_forms[0], self.mpc, col)
-            dolfinx_mpc.assemble_vector(self._dR_forms[1], self.mpc, vol)
-            with col.localForm() as cl, vol.localForm() as vl:
-                cl.array[:] += vl.array
+            col = self.b.duplicate()
+            self._assemble_parts(self._dR_forms, col)
             col.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
             fempetsc.set_bc(col, self.bcs)
             col.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
@@ -367,7 +371,7 @@ class _HyperelasticSolver(_FormsMixin):
     def _newton(self, H, free=None):
         """Equilibrate the fluctuation at macro gradient ``H`` by ``modified_newton``, solving
         the ``free`` entries of ``H`` in place, held real and judged against the largest initial
-        residual this solver has seen. Returns whether the residual met its tolerance."""
+        residual this solver has seen. Returns whether the solve met its tolerances."""
         def residual():
             self.H.value[:] = H
             return self._residual()
@@ -394,17 +398,17 @@ class _HyperelasticSolver(_FormsMixin):
         ``H_current``."""
         target = self._target_H(loading)
         axes = [b for (b, _) in loading.free]
+        index = [(b, b) for b in axes]
         tol = free_tol(target, self._E_scale)
 
         def equilibrate(H):
             free = None
             if axes:
-                free = FreeEntries(H, [(b, b) for b in axes], axes, tol, self.vol0,
-                                   self._free_stress, self._free_stress_derivative,
-                                   self._macro_jacobian)
+                free = FreeEntries(H, index, axes, tol, self.vol0, self._free_stress,
+                                   self._free_stress_derivative, self._macro_jacobian)
             return self._newton(H, free)
 
-        Hc = ramp(self.H_current, target, [(b, b) for b in axes], n_incr, equilibrate)
+        Hc = ramp(self.H_current, target, index, n_incr, equilibrate)
         self.H_current = Hc.copy()
         return periodic_row(loading, self._avg_P())
 
@@ -416,8 +420,8 @@ class _StandardHyperelasticSolver(_FormsMixin):
     fluctuation/H split -- ``self.H`` stays zero); the drive ramps over ``n_incr`` increments by
     scaling the Dirichlet values. The reaction is the assembled nonlinear residual (internal nominal
     force) summed at the drive face -- the finite-strain analogue of ``_StandardPlasticSolver``'s
-    internal force. Standard cells are fully confined (``_loading._standard_check``), so there are no
-    free lateral entries.
+    internal force. Standard cells are fully confined (``_loading._standard_check``), so there are
+    no free lateral entries.
 
     Persistent across a sim's Static steps: ``set_step`` re-parses each step's drives and
     the next ``solve`` ramps from the committed (previous converged) boundary values to the

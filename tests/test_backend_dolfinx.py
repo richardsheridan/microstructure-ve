@@ -250,7 +250,7 @@ class NeoHookeanZeroLambdaTests(unittest.TestCase):
 
 
 @needs_dolfinx
-class BelowYieldPlasticFactorizationTests(unittest.TestCase):
+class BelowYieldPlasticLuCountTests(unittest.TestCase):
     """A periodic ``Plastic`` cell driven within its elastic range performs no more numeric LU
     factorizations in a ``run`` than the same cell with ``Elastic`` phases, however many Newton
     solves the run makes, and with a free lateral face no more back-substitutions either.

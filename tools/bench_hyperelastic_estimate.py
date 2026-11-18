@@ -25,7 +25,7 @@ Two loading variants bracket the estimate:
 
 * **confined**  -- lateral macro strain held at 0: a clean 12-increment ramp (lower bound).
 * **free-lateral** -- lateral faces float (Poisson contraction, the physical tensile case):
-  each increment adds an outer macroscopic root-find so lateral stress vanishes (upper bound).
+  each increment also solves the lateral macro strain so lateral stress vanishes (upper bound).
 
 Run from the fenicsx env::
 
