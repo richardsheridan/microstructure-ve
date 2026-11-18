@@ -16,6 +16,7 @@ dependencies:
   - dolfinx_mpc=0.10.*
   - petsc=3.25.*=complex*      # the complex-scalar build is required
   - petsc4py=3.25.*
+  - mumps-mpi                  # the DOLFINx direct solver (backends/dolfinx/_solver.py docstring)
   - mpi4py
   - numpy
   - scipy
