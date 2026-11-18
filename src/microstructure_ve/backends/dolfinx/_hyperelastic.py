@@ -30,8 +30,8 @@ Design notes (mirroring ``_plastic``, the reference for every convention here):
   displacement, ``RF = P-bar[:, a0] * cross_area`` with the volume-average PK1 assembled on the same
   SRI measures as the residual (``dPi/dH[i,a] = V0 * P-bar[i,a]``; the face force ``int P.N dA0`` is
   the physical force ABAQUS reports). A free lateral corner normal means ``P-bar[b,b] = 0``, solved
-  by ``_nonlinear.FreeLateralRamp``, the root-find the plastic path also uses (on average PK1 here,
-  average Cauchy there).
+  with the fluctuation in one Newton iteration by ``_nonlinear.FreeEntries``, as the plastic path
+  does (on average PK1 here, average Cauchy there).
 
 All phases must be hyperelastic of the same model class (``_loading.check_supported`` enforces it:
 an ``*Elastic`` phase under NLGEOM is hypoelastic in ABAQUS, which this formulation cannot
@@ -54,7 +54,7 @@ from microstructure_ve.constitutive import (
     ReducedPolynomial,
 )
 
-from ._nonlinear import FreeLateralRamp, face_row, modified_newton, periodic_row
+from ._nonlinear import FreeEntries, face_row, free_tol, modified_newton, periodic_row, ramp
 from ._solver import ConvergenceError, lu_ksp
 
 # Arruda-Boyce Langevin-expansion coefficients C_i, i = 1..5
@@ -229,7 +229,7 @@ class _FormsMixin:
         # in every phase
         invd_fns = _dg0_fields(mesh, mat_of_cell, oci, invd_cols,
                                keep_zero=kind is NeoHookean)
-        # outer-tolerance stress scale: the mean initial Young's modulus of the materials
+        # free-entry tolerance stress scale: the mean initial Young's modulus of the materials
         self._E_scale = float(np.mean([r.youngs for r in responses]))
 
         self.H = fem.Constant(mesh, np.zeros((dim, dim), dtype=PETSc.ScalarType))
@@ -263,6 +263,14 @@ class _FormsMixin:
         # reported reaction is exactly conjugate to what Newton converged)
         self.P_forms = [[fem.form(P_dev[i, j] * dx2 + P_vol[i, j] * dx1)
                          for j in range(dim)] for i in range(dim)]
+        # F depends on H only through H + grad(disp), so a derivative with respect to H[b, b]
+        # is one with respect to disp along the field x_b e_b. Each part is its own form, as
+        # for the residual.
+        self._dir = fem.Function(self.V)
+        self._dR_forms = [fem.form(ufl.derivative(R, self.disp, self._dir))
+                          for R in (R_dev, R_vol)]
+        self._dP_forms = [[fem.form(ufl.derivative(Pd[b, b] * dx, self.disp, self._dir))
+                           for Pd, dx in ((P_dev, dx2), (P_vol, dx1))] for b in range(dim)]
         self.vol0 = prob.space.area
 
     def _refresh_jacobian(self):
@@ -302,8 +310,13 @@ class _HyperelasticSolver(_FormsMixin):
         self.ksp = lu_ksp(self.A, self.mesh.comm)
 
         self.H_current = np.zeros((self.dim, self.dim))
-        self._ramp = FreeLateralRamp(lambda axis: (axis, axis))
         self._r_ref = 0.0          # largest initial Newton residual seen
+        mode = fem.Function(self.V)
+        self._modes = []           # the field x_b e_b, whose gradient is the unit H[b, b]
+        for b in range(self.dim):
+            mode.interpolate(lambda x, b=b: np.stack(
+                [x[b] if c == b else np.zeros_like(x[b]) for c in range(self.dim)]))
+            self._modes.append(mode.x.array.real.copy())
 
     def _assemble_jacobian(self):
         dolfinx_mpc.assemble_matrix(self.jac_form, self.mpc, bcs=self.bcs, A=self.A)
@@ -322,15 +335,46 @@ class _HyperelasticSolver(_FormsMixin):
         self.b.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
         return self.b
 
-    # -- one Newton solve at a fixed macro gradient ---------------------------
-    def _newton(self, H):
-        """Equilibrate the fluctuation at macro gradient ``H`` by ``modified_newton``, held
-        real and judged against the largest initial residual this solver has seen. Returns
-        whether the residual met its tolerance."""
-        self.H.value[:] = H
-        converged, self._r_ref = modified_newton(self._residual, self._refresh_jacobian,
+    def _free_stress(self, axes):
+        """Average PK1 normal entries on ``axes`` at the current state."""
+        return [complex(fem.assemble_scalar(self.P_forms[b][b])).real / self.vol0 for b in axes]
+
+    def _free_stress_derivative(self, y, axes):
+        """Derivative of ``_free_stress`` along the fluctuation direction ``y``."""
+        self._dir.x.array[:] = y
+        return np.array([sum(complex(fem.assemble_scalar(f)).real for f in self._dP_forms[b])
+                         for b in axes]) / self.vol0
+
+    def _macro_jacobian(self, axes):
+        """``FreeEntries``'s ``(B, D)`` for the macro gradient entries ``H[b, b]``, ``b`` in
+        ``axes``."""
+        B, D = [], []
+        for c in axes:
+            self._dir.x.array[:] = self._modes[c]
+            col, vol = self.b.duplicate(), self._b_vol
+            dolfinx_mpc.assemble_vector(self._dR_forms[0], self.mpc, col)
+            dolfinx_mpc.assemble_vector(self._dR_forms[1], self.mpc, vol)
+            with col.localForm() as cl, vol.localForm() as vl:
+                cl.array[:] += vl.array
+            col.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
+            fempetsc.set_bc(col, self.bcs)
+            col.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
+            B.append(col)
+            D.append(self._free_stress_derivative(self._modes[c], axes))
+        return B, np.column_stack(D)
+
+    # -- one Newton solve at a macro gradient ---------------------------------
+    def _newton(self, H, free=None):
+        """Equilibrate the fluctuation at macro gradient ``H`` by ``modified_newton``, solving
+        the ``free`` entries of ``H`` in place, held real and judged against the largest initial
+        residual this solver has seen. Returns whether the residual met its tolerance."""
+        def residual():
+            self.H.value[:] = H
+            return self._residual()
+
+        converged, self._r_ref = modified_newton(residual, self._refresh_jacobian,
                                                  self.ksp, self.x, self.disp, mpc=self.mpc,
-                                                 real=True, r_ref=self._r_ref)
+                                                 real=True, r_ref=self._r_ref, free=free)
         return converged
 
     # -- public entry ----------------------------------------------------------
@@ -348,9 +392,19 @@ class _HyperelasticSolver(_FormsMixin):
         ``free`` lateral diagonal entries so their average PK1 vanishes. Returns the readODB
         row, whose reaction is the nominal force on the reference cross-section, and advances
         ``H_current``."""
-        Hc = self._ramp.run(self.H_current, self._target_H(loading),
-                            [b for (b, _) in loading.free], n_incr, self._newton,
-                            lambda H: self._avg_P(), self._E_scale)
+        target = self._target_H(loading)
+        axes = [b for (b, _) in loading.free]
+        tol = free_tol(target, self._E_scale)
+
+        def equilibrate(H):
+            free = None
+            if axes:
+                free = FreeEntries(H, [(b, b) for b in axes], axes, tol, self.vol0,
+                                   self._free_stress, self._free_stress_derivative,
+                                   self._macro_jacobian)
+            return self._newton(H, free)
+
+        Hc = ramp(self.H_current, target, [(b, b) for b in axes], n_incr, equilibrate)
         self.H_current = Hc.copy()
         return periodic_row(loading, self._avg_P())
 
@@ -362,8 +416,8 @@ class _StandardHyperelasticSolver(_FormsMixin):
     fluctuation/H split -- ``self.H`` stays zero); the drive ramps over ``n_incr`` increments by
     scaling the Dirichlet values. The reaction is the assembled nonlinear residual (internal nominal
     force) summed at the drive face -- the finite-strain analogue of ``_StandardPlasticSolver``'s
-    internal force. Standard cells are fully confined (``_loading._standard_check``), so there is no
-    free-lateral root-find.
+    internal force. Standard cells are fully confined (``_loading._standard_check``), so there are no
+    free lateral entries.
 
     Persistent across a sim's Static steps: ``set_step`` re-parses each step's drives and
     the next ``solve`` ramps from the committed (previous converged) boundary values to the
