@@ -43,7 +43,6 @@ from ._nonlinear import FreeLateralRamp, face_row, modified_newton, periodic_row
 from ._solver import ConvergenceError, lu_ksp
 
 _QUAD_DEGREE = 2          # 2x2(x2) Gauss = ABAQUS CPE4 (4 pts) / C3D8 (8 pts)
-_FD_STEP = 1e-7           # finite-difference step for the (consistent) algorithmic tangent
 
 # tensor (not engineering) component order used internally: [xx, yy, zz, xy, yz, xz]
 _SHEAR_PAIRS = {2: [(0, 1)], 3: [(0, 1), (1, 2), (0, 2)]}
@@ -96,7 +95,7 @@ def _tensor_stress_to_voigt(s, dim):
 
 
 def _return_map(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim):
-    """Radial-return a vectorized Gauss-point batch (pure -- safe to re-call for the tangent).
+    """Radial-return a vectorized Gauss-point batch (pure).
 
     Parameters
     ----------
@@ -124,6 +123,12 @@ def _return_map(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim):
     p_new : numpy.ndarray
         ``(N,)`` updated equivalent plastic strain.
     """
+    return _radial_return(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim)[:3]
+
+
+def _radial_return(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim):
+    """``_return_map``'s products followed by the trial deviator ``d`` (N,6), its von Mises
+    norm ``q``, the increment ``dp`` and the hardening slope ``H`` at ``p_old + dp``."""
     e = _voigt_to_tensor_strain(eps_v, dim)
     ee = e - eps_p_old
     tr = ee[:, 0] + ee[:, 1] + ee[:, 2]
@@ -142,6 +147,7 @@ def _return_map(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim):
                + 2 * (d[:, 3]**2 + d[:, 4]**2 + d[:, 5]**2)), 0.0))
 
     dp = np.zeros_like(q)
+    slope = np.zeros_like(q)
     for i, mat in enumerate(materials):
         m = mat_id == i
         if not np.any(m):
@@ -161,6 +167,7 @@ def _return_map(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim):
             if np.all(np.abs(g) <= 1e-12 * (float(sig_tab[0]) + 1.0)):
                 break
         dp[idx] = dpb
+        slope[idx] = _sigma_y(pb + dpb, eps_tab, sig_tab)[1]
 
     yielded = dp > 0
     safe_q = np.where(q > 0, q, 1.0)
@@ -171,24 +178,52 @@ def _return_map(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim):
     sig_new[:, 2] += mean
     fac = np.where(yielded, 1.5 * dp / safe_q, 0.0)        # d eps_p = (3/2)(s/q) dp
     eps_p_new = eps_p_old + fac[:, None] * d
-    return _tensor_stress_to_voigt(sig_new, dim), eps_p_new, p_old + dp
+    return _tensor_stress_to_voigt(sig_new, dim), eps_p_new, p_old + dp, d, q, dp, slope
+
+
+# tensor index pair (i, j) of each Voigt component, in the order of ``_tensor_stress_to_voigt``
+_VOIGT_PAIRS = {2: [(0, 0), (1, 1), (0, 1)],
+                3: [(0, 0), (1, 1), (2, 2), (0, 1), (1, 2), (0, 2)]}
+_TENSOR_INDEX = {(0, 0): 0, (1, 1): 1, (2, 2): 2, (0, 1): 3, (1, 2): 4, (0, 2): 5}
 
 
 def _tangent(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim):
-    """Algorithmic tangent ``dsig/deps`` (N,nv,nv) by finite differences of the return map,
-    plus the base return-map products ``(C, sig0, eps_p_new, p_new)``. FD gives the
-    *consistent* tangent (incl. hardening/segment effects); the base state is passed through
-    so callers don't re-run the return map for the same strain."""
-    sig0, eps_p_new, p_new = _return_map(eps_v, mu, lam, eps_p_old, p_old,
-                                         mat_id, materials, dim)
-    nv = eps_v.shape[1]
-    C = np.empty((eps_v.shape[0], nv, nv))
-    for j in range(nv):
-        pert = eps_v.copy()
-        pert[:, j] += _FD_STEP
-        sigj, _, _ = _return_map(pert, mu, lam, eps_p_old, p_old, mat_id, materials, dim)
-        C[:, :, j] = (sigj - sig0) / _FD_STEP
-    return C, sig0, eps_p_new, p_new
+    """Consistent algorithmic tangent of the radial return with the return-map products.
+
+    Returns
+    -------
+    C : numpy.ndarray
+        ``(N, nv, nv)`` derivative of the Voigt stress with respect to the engineering Voigt
+        strain. A point that does not yield gets the elastic stiffness of its ``mu`` and
+        ``lam`` alone, so its tangent is identical between evaluations.
+    sig_v, eps_p_new, p_new : numpy.ndarray
+        ``_return_map``'s products at ``eps_v``.
+    """
+    sig_v, eps_p_new, p_new, d, q, dp, H = _radial_return(eps_v, mu, lam, eps_p_old, p_old,
+                                                          mat_id, materials, dim)
+    pairs = _VOIGT_PAIRS[dim]
+    nv = len(pairs)
+    C = np.zeros((eps_v.shape[0], nv, nv))
+    for a, (i, j) in enumerate(pairs):
+        for b, (k, l) in enumerate(pairs):
+            # lam d_ij d_kl + mu (d_ik d_jl + d_il d_jk); an engineering shear strain carries
+            # both e_kl and e_lk, so the column of a shear component is C_ijkl itself
+            C[:, a, b] = (lam * (i == j) * (k == l)
+                          + mu * ((i == k) * (j == l) + (i == l) * (j == k)))
+    yielded = dp > 0
+    if np.any(yielded):
+        y = np.where(yielded)[0]
+        mu_y, q_y, dp_y, H_y = mu[y], q[y], dp[y], H[y]
+        theta = 1.0 - 3 * mu_y * dp_y / q_y
+        theta_bar = 1.0 / (1.0 + H_y / (3 * mu_y)) - (1.0 - theta)
+        n = d[y] * (np.sqrt(1.5) / q_y)[:, None]     # unit deviator: |n| = 1
+        for a, (i, j) in enumerate(pairs):
+            na = n[:, _TENSOR_INDEX[(i, j)]]
+            for b, (k, l) in enumerate(pairs):
+                nb = n[:, _TENSOR_INDEX[(k, l)]]
+                dev = 0.5 * ((i == k) * (j == l) + (i == l) * (j == k)) - (i == j) * (k == l) / 3.0
+                C[y, a, b] -= 2 * mu_y * ((1.0 - theta) * dev + theta_bar * na * nb)
+    return C, sig_v, eps_p_new, p_new
 
 
 # --------------------------------------------------------------------------- FE driver
@@ -318,8 +353,8 @@ class _J2Solver:
         return eps.reshape(-1, self.nv)
 
     def _fill_coeffs(self, eps_total, commit, tangent=True):
-        """Refresh the residual stress ``sig_q`` (always) and, when ``tangent``, the FD algorithmic
-        tangent ``C_q``/``C_c`` (1+nv return maps instead of 1). Returns the stress (N,nv)."""
+        """Refresh the residual stress ``sig_q`` (always) and, when ``tangent``, the consistent
+        algorithmic tangent ``C_q``/``C_c``. Returns the stress (N,nv)."""
         if tangent:
             C, sig, eps_p_new, p_new = _tangent(eps_total, self.mu, self.lam, self.eps_p,
                                                 self.p, self.mat_id, self.materials, self.dim)
