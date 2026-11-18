@@ -19,7 +19,10 @@ that solves (a serial or single-frequency sweep, a multistep or Static ``run``, 
 lock, every native BLAS/OpenMP thread pool threadpoolctl finds is capped to one thread in
 the calling thread, callbacks it makes (``cancel``) included, and the caller's previous
 limits come back when the call returns or raises (a nested call leaves the outer cap in
-place). The exception is a ``workers>1`` frequency sweep: its worker processes rebuild
+place). An OpenMP cap binds the calling thread only, but a BLAS cap is process-wide: while
+such a call runs, numpy BLAS work in the caller's other threads is single-threaded too, and
+a limit another thread sets meanwhile is overwritten when the call restores its own. The
+exception is a ``workers>1`` frequency sweep: its worker processes rebuild
 everything from the pickled sim and share nothing with this process's cache, so the
 fan-out runs *outside* the lock and parallel sweeps launched from several threads
 genuinely overlap. It runs N single-core worker processes, each capping its own pools for
