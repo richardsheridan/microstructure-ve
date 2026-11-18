@@ -21,8 +21,9 @@ Design constraints (docs/dolfinx_backend_design.md, section 12):
 
 The macro strain ``E`` enters through the *total* strain ``eps(E.x + u~) = E + eps(u~)`` (the
 fluctuation formulation the linear path also uses); driven components are imposed and any ``free``
-lateral components are found by the outer root-find of ``_nonlinear.FreeLateralRamp`` so their
-volume-averaged stress vanishes. Reported row mirrors the readODB columns:
+lateral components are solved with the fluctuation in the same Newton iteration
+(``_nonlinear.FreeEntries``) so their volume-averaged stress vanishes. Reported row mirrors the
+readODB columns:
 ``[1.0, RF_Real..., 0..., U...]`` (zero loss).
 """
 from __future__ import annotations
@@ -39,7 +40,7 @@ import dolfinx_mpc
 
 from microstructure_ve.constitutive import Plastic
 
-from ._nonlinear import FreeLateralRamp, face_row, modified_newton, periodic_row
+from ._nonlinear import FreeEntries, face_row, free_tol, modified_newton, periodic_row, ramp
 from ._solver import ConvergenceError, lu_ksp
 
 _QUAD_DEGREE = 2          # 2x2(x2) Gauss = ABAQUS CPE4 (4 pts) / C3D8 (8 pts)
@@ -322,11 +323,10 @@ class _J2Solver:
         self.eps_expr = fem.Expression(_eps_voigt(self.u, self.dim), self.points)
         self._cells = np.arange(self.ncells, dtype=np.int32)
 
-        v_te = ufl.TestFunction(self.V)
-        dx_q = ufl.dx(metadata={"quadrature_degree": qd, "quadrature_scheme": "default"})
-        ev_v = _eps_voigt(v_te, self.dim)
+        self._dx_q = ufl.dx(metadata={"quadrature_degree": qd, "quadrature_scheme": "default"})
+        self._eps_v = _eps_voigt(ufl.TestFunction(self.V), self.dim)
         self.a_form = _bbar_jacobian_form(self.V, self.dim, qd, self.C_q, self.C_c)
-        self.L_form = fem.form(ufl.inner(self.sig_q, ev_v) * dx_q)
+        self.L_form = fem.form(ufl.inner(self.sig_q, self._eps_v) * self._dx_q)
 
         # committed state (persists across steps)
         self.eps_p = np.zeros((N, 6))
@@ -345,6 +345,11 @@ class _J2Solver:
         eps = np.asarray(ev).real
         if E_voigt is not None:
             eps = eps + E_voigt
+        return self._bbar(eps)
+
+    def _bbar(self, eps):
+        """``(ncells, npts, nv)`` strain with its volumetric part replaced by the cell mean, as
+        ``(N, nv)``."""
         vol = eps[:, :, :self.dim].sum(axis=2)           # volumetric strain (sum of normals)
         w = self.weights
         vbar = (vol * w).sum(axis=1, keepdims=True) / w.sum()
@@ -397,8 +402,13 @@ class _PlasticSolver(_J2Solver):
         self.bcs = prob.center_bcs
         self.E_current = np.zeros(self.nv)
         self._shear_pairs = _SHEAR_PAIRS[self.dim]
-        self._ramp = FreeLateralRamp(lambda axis: axis)
         self._r_ref = 0.0  # largest initial Newton residual seen (convergence reference)
+        self.vol0 = prob.space.area
+        self._w = fem.Function(self.V)        # a direction of the fluctuation
+        self._eps_w = fem.Expression(_eps_voigt(self._w, self.dim), self.points)
+        # dR/dE_k = int (C_q e_k) . eps(v): a uniform E is unchanged by the B-bar correction
+        self._unit = fem.Constant(self.mesh, np.zeros(self.nv, dtype=PETSc.ScalarType))
+        self._B_form = fem.form(ufl.inner(ufl.dot(self.C_q, self._unit), self._eps_v) * self._dx_q)
 
         self.A = dolfinx_mpc.assemble_matrix(self.a_form, self.mpc, bcs=self.bcs)
         self.A.assemble()
@@ -411,24 +421,52 @@ class _PlasticSolver(_J2Solver):
 
     def _average(self, sig_v):
         """Volume-averaged stress tensor (dim,dim) from a (N,nv) Voigt field (uniform grid)."""
+        return _voigt_stress_tensor(self._point_average(sig_v), self.dim)
+
+    def _point_average(self, values):
+        """Volume average of a ``(N, ...)`` per-point field (uniform grid)."""
         w = np.tile(self.weights, self.ncells)
-        denom = self.ncells * self.weights.sum()
-        sbar_v = (w[:, None] * sig_v).sum(axis=0) / denom
-        return _voigt_stress_tensor(sbar_v, self.dim)
+        return np.tensordot(w, values, axes=1) / (self.ncells * self.weights.sum())
 
-    def _average_stress(self, E_voigt):
-        """Volume-averaged stress (dim,dim) of the current fluctuation at ``E_voigt``."""
-        return self._average(self._fill_coeffs(self._total_strain(E_voigt), commit=False,
-                                               tangent=False))
+    def _free_stress(self, axes):
+        """Average normal stress on ``axes`` at the last residual."""
+        return self._point_average(self._sig)[axes]
 
-    # -- one Newton solve at a fixed macro strain ----------------------------
-    def _newton(self, E_voigt):
-        """Equilibrate the fluctuation at macro strain ``E_voigt`` by ``modified_newton``, judged
-        against the largest initial residual this solver has seen. Returns whether the residual met
-        its tolerance."""
+    def _tangent_points(self):
+        """The tangent of the last refresh, ``(N, nv, nv)``."""
+        return self.C_q.x.array.real.reshape(-1, self.nv, self.nv)
+
+    def _free_stress_derivative(self, y, axes):
+        """Derivative of ``_free_stress`` along the fluctuation direction ``y``."""
+        self._w.x.array[:] = y
+        eps = self._bbar(np.asarray(self._eps_w.eval(self.mesh, self._cells)).real.copy())
+        return self._point_average(np.einsum("nij,nj->ni", self._tangent_points(), eps))[axes]
+
+    def _macro_jacobian(self, axes):
+        """``FreeEntries``'s ``(B, D)`` for the normal macro strains on ``axes``."""
+        B = []
+        for k in axes:
+            self._unit.value[:] = 0.0
+            self._unit.value[k] = 1.0
+            col = self.b.duplicate()
+            with col.localForm() as cl:
+                cl.set(0.0)
+            dolfinx_mpc.assemble_vector(self._B_form, self.mpc, col)
+            col.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
+            fempetsc.set_bc(col, self.bcs)
+            col.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
+            B.append(col)
+        D = self._point_average(self._tangent_points())[np.ix_(axes, axes)]
+        return B, D
+
+    # -- one Newton solve at a macro strain ------------------------------------
+    def _newton(self, E_voigt, free=None):
+        """Equilibrate the fluctuation at macro strain ``E_voigt`` by ``modified_newton``, solving
+        the ``free`` entries of ``E_voigt`` in place, judged against the largest initial residual
+        this solver has seen. Returns whether the solve met its tolerances."""
         def residual():
             self._eps_total = self._total_strain(E_voigt)
-            self._fill_coeffs(self._eps_total, commit=False, tangent=False)
+            self._sig = self._fill_coeffs(self._eps_total, commit=False, tangent=False)
             with self.b.localForm() as bl:
                 bl.set(0.0)
             dolfinx_mpc.assemble_vector(self.L_form, self.mpc, self.b)
@@ -439,7 +477,8 @@ class _PlasticSolver(_J2Solver):
             return self.b
 
         converged, self._r_ref = modified_newton(residual, self._refresh_tangent, self.ksp,
-                                                 self.x, self.u, mpc=self.mpc, r_ref=self._r_ref)
+                                                 self.x, self.u, mpc=self.mpc, r_ref=self._r_ref,
+                                                 free=free)
         return converged
 
     # -- public entry --------------------------------------------------------
@@ -461,9 +500,18 @@ class _PlasticSolver(_J2Solver):
         def commit(E):
             self._fill_coeffs(self._total_strain(E), commit=True, tangent=False)
 
-        E = self._ramp.run(self.E_current, self._target_voigt(loading),
-                           [b for (b, _) in loading.free], n_incr, self._newton,
-                           self._average_stress, self.mu.mean() + self.lam.mean(), commit)
+        target = self._target_voigt(loading)
+        axes = [b for (b, _) in loading.free]
+        tol = free_tol(target, self.mu.mean() + self.lam.mean())
+
+        def equilibrate(E):
+            free = None
+            if axes:
+                free = FreeEntries(E, axes, axes, tol, self.vol0, self._free_stress,
+                                   self._free_stress_derivative, self._macro_jacobian)
+            return self._newton(E, free)
+
+        E = ramp(self.E_current, target, axes, n_incr, equilibrate, commit)
         self.E_current = E.copy()
         sbar = self._average(_return_map(self._total_strain(E), self.mu, self.lam, self.eps_p,
                                          self.p, self.mat_id, self.materials, self.dim)[0])
@@ -476,7 +524,7 @@ class _StandardPlasticSolver(_J2Solver):
     Macro loading enters through the prescribed face displacements (so the total strain is just
     ``eps(u)``, no fluctuation/E split); the reaction is the internal force ``int sig:eps(v)``
     summed at the drive face -- the nonlinear analogue of the linear path's ``K_full * u``. Standard
-    cells are fully confined (single Static step), so there is no free root-find."""
+    cells are fully confined (single Static step), so there are no free lateral entries."""
 
     def __init__(self, prob, model, sim):
         from . import _standard

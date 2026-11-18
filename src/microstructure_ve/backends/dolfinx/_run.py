@@ -284,8 +284,8 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     ``NotImplementedError`` (unsupported feature) or ``ValueError`` (malformed sim) before any
     solver is built.
 
-    Non-convergence: a hyperelastic or plastic ``Static`` step whose final Newton solve or
-    free-lateral root-find misses its tolerance, or an iterative linear solve that does not
+    Non-convergence: a hyperelastic or plastic ``Static`` step whose Newton solve, free lateral
+    entries included, misses its tolerance, or an iterative linear solve that does not
     converge, raises ``ConvergenceError`` (a ``RuntimeError``) and returns no row.
 
     Thread safety: ``run`` may be called concurrently from multiple threads; which calls
