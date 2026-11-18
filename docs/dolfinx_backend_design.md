@@ -492,8 +492,11 @@ Design decisions and rationale:
   test) are ill-defined. The radial return + algorithmic tangent are computed in real numpy over a
   flat `(n_quad,)` batch and fed back as Quadrature-space coefficients (`sig_q`, `C_q`); the
   assembled complex matrices carry real values. Quadrature degree 2 (4 pts/quad = CPE4, 8 pts/hex =
-  C3D8). The consistent tangent is obtained by **finite-differencing the return map** (the meshes are
-  tiny, and FD avoids hand-deriving the plane-strain/3D algorithmic modulus).
+  C3D8). The consistent tangent is the **closed-form algorithmic modulus** of the radial return
+  with piecewise-linear hardening, taken at the hardening slope the converged increment sits on. A
+  point that does not yield gets the elastic stiffness of its own moduli, bitwise the same at every
+  evaluation, so a cell that stays elastic leaves the tangent unchanged and the Newton refresh skips
+  reassembly and refactorization.
 - **Hand-rolled Newton, not `dolfinx_mpc.NonlinearProblem`/SNES.** The SNES nonlinear path is
   documented-skipped in complex builds, and a hand-rolled loop is what lets us refresh the return-map
   coefficients between iterations. Periodic assembly reuses the proven `dolfinx_mpc` + complex-LU

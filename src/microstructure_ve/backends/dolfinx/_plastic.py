@@ -122,13 +122,15 @@ def _return_map(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim):
         ``(N, 6)`` updated tensor plastic strain.
     p_new : numpy.ndarray
         ``(N,)`` updated equivalent plastic strain.
+    d : numpy.ndarray
+        ``(N, 6)`` trial stress deviator.
+    q : numpy.ndarray
+        ``(N,)`` von Mises norm of ``d``.
+    dp : numpy.ndarray
+        ``(N,)`` equivalent plastic strain increment, zero where the point does not yield.
+    H : numpy.ndarray
+        ``(N,)`` hardening slope at ``p_new`` where the point yields, zero elsewhere.
     """
-    return _radial_return(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim)[:3]
-
-
-def _radial_return(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim):
-    """``_return_map``'s products followed by the trial deviator ``d`` (N,6), its von Mises
-    norm ``q``, the increment ``dp`` and the hardening slope ``H`` at ``p_old + dp``."""
     e = _voigt_to_tensor_strain(eps_v, dim)
     ee = e - eps_p_old
     tr = ee[:, 0] + ee[:, 1] + ee[:, 2]
@@ -182,9 +184,7 @@ def _radial_return(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim):
 
 
 # tensor index pair (i, j) of each Voigt component, in the order of ``_tensor_stress_to_voigt``
-_VOIGT_PAIRS = {2: [(0, 0), (1, 1), (0, 1)],
-                3: [(0, 0), (1, 1), (2, 2), (0, 1), (1, 2), (0, 2)]}
-_TENSOR_INDEX = {(0, 0): 0, (1, 1): 1, (2, 2): 2, (0, 1): 3, (1, 2): 4, (0, 2): 5}
+_VOIGT_PAIRS = {dim: [(k, k) for k in range(dim)] + shear for dim, shear in _SHEAR_PAIRS.items()}
 
 
 def _tangent(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim):
@@ -197,10 +197,10 @@ def _tangent(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim):
         strain. A point that does not yield gets the elastic stiffness of its ``mu`` and
         ``lam`` alone, so its tangent is identical between evaluations.
     sig_v, eps_p_new, p_new : numpy.ndarray
-        ``_return_map``'s products at ``eps_v``.
+        ``_return_map``'s first three products at ``eps_v``.
     """
-    sig_v, eps_p_new, p_new, d, q, dp, H = _radial_return(eps_v, mu, lam, eps_p_old, p_old,
-                                                          mat_id, materials, dim)
+    sig_v, eps_p_new, p_new, d, q, dp, H = _return_map(eps_v, mu, lam, eps_p_old, p_old,
+                                                       mat_id, materials, dim)
     pairs = _VOIGT_PAIRS[dim]
     nv = len(pairs)
     C = np.zeros((eps_v.shape[0], nv, nv))
@@ -217,10 +217,11 @@ def _tangent(eps_v, mu, lam, eps_p_old, p_old, mat_id, materials, dim):
         theta = 1.0 - 3 * mu_y * dp_y / q_y
         theta_bar = 1.0 / (1.0 + H_y / (3 * mu_y)) - (1.0 - theta)
         n = d[y] * (np.sqrt(1.5) / q_y)[:, None]     # unit deviator: |n| = 1
+        n_v = _tensor_stress_to_voigt(n, dim)
         for a, (i, j) in enumerate(pairs):
-            na = n[:, _TENSOR_INDEX[(i, j)]]
+            na = n_v[:, a]
             for b, (k, l) in enumerate(pairs):
-                nb = n[:, _TENSOR_INDEX[(k, l)]]
+                nb = n_v[:, b]
                 dev = 0.5 * ((i == k) * (j == l) + (i == l) * (j == k)) - (i == j) * (k == l) / 3.0
                 C[y, a, b] -= 2 * mu_y * ((1.0 - theta) * dev + theta_bar * na * nb)
     return C, sig_v, eps_p_new, p_new
@@ -365,7 +366,7 @@ class _J2Solver:
             self.C_c.x.array[:] = Cc.reshape(-1)
         else:
             sig, eps_p_new, p_new = _return_map(eps_total, self.mu, self.lam, self.eps_p,
-                                                self.p, self.mat_id, self.materials, self.dim)
+                                                self.p, self.mat_id, self.materials, self.dim)[:3]
         self.sig_q.x.array[:] = sig.reshape(-1)
         if commit:
             self.eps_p, self.p = eps_p_new, p_new
