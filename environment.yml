@@ -19,7 +19,7 @@ dependencies:
   - mpi4py
   - numpy
   - scipy
-  - threadpoolctl              # caps each parallel worker's BLAS threads (run(workers=N))
+  - threadpoolctl              # DOLFINx backend thread cap (backends/dolfinx/_run.py docstring)
   - pip
   - pip:
       - -e .

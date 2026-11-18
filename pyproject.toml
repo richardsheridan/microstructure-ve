@@ -16,8 +16,8 @@ dependencies = ["numpy", "scipy"]
 # pip-installable in a working complex configuration. Use the conda env in environment.yml
 # (see docs/dolfinx_backend_design.md). The package imports dolfinx lazily, so it stays
 # importable (numpy-only) without that env. That conda env also provides threadpoolctl,
-# which run(workers=N) uses to cap each worker's BLAS threads; it is kept out of the pip
-# dependencies here so base installs stay numpy-only.
+# which the DOLFINx backend requires (backends/dolfinx/_run.py docstring); it is kept out of the
+# pip dependencies here so base installs stay numpy-only.
 
 [tool.setuptools.packages.find]
 where = ["src"]

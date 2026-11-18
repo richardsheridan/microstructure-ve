@@ -6,27 +6,34 @@ and optionally writes a readODB-style tsv, optionally fanning the independent pe
 across a spawn ProcessPool (``workers``). The macro loading is parsed from the sim by
 ``_loading.macro_loading``.
 
-Thread safety (the guarantee): every entry point of this backend -- ``run``,
+Concurrency contract (the guarantee): every entry point of this backend -- ``run``,
 ``build_solver`` plus the ``solve_one`` closures it returns, and ``clear_cache`` --
 is safe to call concurrently from multiple threads. Everything that touches in-process
 FE state (serial and multistep ``run``, ``build_solver``/``solve_one``, ``clear_cache``)
 serializes on one process-wide re-entrant lock (``_BACKEND_LOCK``): the cached
 ``_FEProblem``s and the dolfinx/PETSc objects inside them are shared mutable state
 (material refill, matrix reassembly, factorization reuse), so those calls execute one
-at a time, each seeing a consistent cache -- *safe but not parallel*. The exception is
-a ``workers>1`` frequency sweep: its worker processes rebuild everything from the
-pickled sim and share nothing with this process's cache, so the fan-out runs *outside*
-the lock and parallel sweeps launched from several threads genuinely overlap. That path
-touches no process-global state either -- each worker caps its own BLAS/OpenMP threads
-in-process (threadpoolctl, in ``_init_worker``), so the parent's ``os.environ`` is never
-mutated.
+at a time, each seeing a consistent cache -- *safe but not parallel*. Each of those calls
+that solves (a serial or single-frequency sweep, a multistep or Static ``run``, the
+``build_solver`` build, every ``solve_one`` call) also runs single-core: while it holds the
+lock, every native BLAS/OpenMP thread pool threadpoolctl finds is capped to one thread in
+the calling thread, callbacks it makes (``cancel``) included, and the caller's previous
+limits come back when the call returns or raises (a nested call leaves the outer cap in
+place). The exception is a ``workers>1`` frequency sweep: its worker processes rebuild
+everything from the pickled sim and share nothing with this process's cache, so the
+fan-out runs *outside* the lock and parallel sweeps launched from several threads
+genuinely overlap. It runs N single-core worker processes, each capping its own pools for
+its lifetime (``_init_worker``), while the calling thread, which solves nothing, is not
+capped. No path mutates ``os.environ``.
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import threading
 
 import numpy as np
+import threadpoolctl
 
 from . import (
     _assembly as assembly,
@@ -64,21 +71,29 @@ class _FEProblem:
 # so every access -- and every use of a cached problem -- happens under _BACKEND_LOCK.
 _FE_CACHE = {}
 
-# The backend-wide serialization lock behind the thread-safety guarantee (see the module
-# docstring): held for the full duration of every call that touches in-process FE state --
+# The backend-wide serialization lock behind the concurrency contract (module docstring):
+# held for the full duration of every call that touches in-process FE state --
 # serial/multistep run(), build_solver(), solve_one(), clear_cache(). The workers>1 fan-out
 # runs outside it (nothing in this process is shared with the spawned workers).
 # Re-entrant because run() calls build_solver() (and solve_one) while already holding it.
 _BACKEND_LOCK = threading.RLock()
 
 
-def _locked(fn):
-    """Wrap ``fn`` so each call runs under ``_BACKEND_LOCK`` (re-entrant, so safe within
+@contextlib.contextmanager
+def _single_core():
+    """Hold ``_BACKEND_LOCK`` with the native thread pools capped to one thread, restoring
+    the previous limits on exit (the module docstring's concurrency contract)."""
+    with _BACKEND_LOCK, threadpoolctl.threadpool_limits(limits=1):
+        yield
+
+
+def _single_core_calls(fn):
+    """Wrap ``fn`` so each call runs inside ``_single_core`` (re-entrant, so safe within
     ``run``'s own locked scope)."""
-    def locked(*args, **kwargs):
-        with _BACKEND_LOCK:
+    def single_core(*args, **kwargs):
+        with _single_core():
             return fn(*args, **kwargs)
-    return locked
+    return single_core
 
 
 def clear_cache():
@@ -89,9 +104,8 @@ def clear_cache():
     a mesh shape -- e.g. sweeping many microstructure realizations or loadings on one grid --
     reuse it and skip the dominant build cost. The cache lives for the process; call this to
     free memory when you move on to different mesh shapes, or to force a clean rebuild.
-    Thread-safe: takes the same process-wide lock as ``run``/``build_solver`` (see the module
-    docstring); the ``workers`` path is unaffected since each spawned process has its own
-    cache."""
+    Thread-safe: takes the same process-wide lock as ``run``/``build_solver`` (the module
+    docstring's concurrency contract)."""
     with _BACKEND_LOCK:
         _FE_CACHE.clear()
 
@@ -132,14 +146,13 @@ def build_solver(sim, bbar=True, cancel=None, petsc_options=None, solver="auto")
     ``petsc_options`` overrides the iterative KSP/PC. ``cancel`` is polled per KSP iteration
     by the iterative solver (LU is cancelled only between frequencies, by ``run``).
 
-    Thread safety: both the build and every call of the returned ``solve_one`` serialize
-    on the backend lock (they share the cached, mutable ``_FEProblem`` -- see the module
-    docstring), so handing the closure to another thread is safe; concurrent calls simply
-    run one at a time.
+    Thread safety: the build and every call of the returned ``solve_one`` serialize and run
+    single-core in the calling thread, as the module docstring's concurrency contract states,
+    so handing the closure to another thread is safe.
     """
-    with _BACKEND_LOCK:
+    with _single_core():
         solve_one, dim = _build_solver(sim, bbar, cancel, petsc_options, solver)
-    return _locked(solve_one), dim
+    return _single_core_calls(solve_one), dim
 
 
 def _build_solver(sim, bbar, cancel, petsc_options, solver):
@@ -176,21 +189,9 @@ _WORKER = {}  # per-process solver cache, populated by _init_worker in parallel 
 
 
 def _init_worker(sim, bbar, solver, petsc_options):
-    """ProcessPool worker initializer: pin BLAS threads, then build the solver once.
-
-    ``threadpool_limits(1)`` caps this worker's OpenBLAS/OpenMP/MKL pools to a single
-    thread in-process (regardless of when those libraries loaded), so N workers on one
-    box never oversubscribe cores -- and, unlike setting ``os.environ`` in the parent, it
-    leaves the parent's environment untouched. The returned controller is kept alive in
-    ``_WORKER`` so the cap persists for the worker's lifetime."""
-    try:
-        import threadpoolctl
-    except ImportError as e:  # pragma: no cover - env misconfiguration guard
-        raise RuntimeError(
-            "run(workers>1) needs 'threadpoolctl' to cap each worker's BLAS threads, but "
-            "it is not importable in this environment. Install it into the FEniCSx env "
-            "(e.g. `conda install -c conda-forge threadpoolctl`) or use workers=1."
-        ) from e
+    """ProcessPool worker initializer: cap this worker's native thread pools to one thread
+    for its lifetime, then build the solver once (the module docstring's concurrency
+    contract). The controller is kept alive in ``_WORKER`` so the cap persists."""
     _WORKER["thread_limits"] = threadpoolctl.threadpool_limits(limits=1)
     # cancel is None in workers: the parent polls cancel and SIGTERMs live workers
     _WORKER["solve_one"], _WORKER["dim"] = build_solver(
@@ -243,7 +244,8 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
              ABAQUS CPE4/C3D8 B-bar and avoids Q1 volumetric locking).
     workers: 1 = serial. >1 spawns a ProcessPoolExecutor and splits the independent
              per-frequency solves across processes -- each worker builds the solver once, then
-             solves its share, pinned to one BLAS thread. A driver that calls this with workers>1
+             solves its share single-core (module docstring). A driver that calls this with
+             workers>1
              must guard the call under ``if __name__ == "__main__":`` (the standard "spawn"
              requirement) or the workers will re-import and re-run it.
     cancel:  callable() -> bool, or None. Polled before each frequency. Stop the sweep
@@ -285,15 +287,12 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     free-lateral root-find misses its tolerance, or an iterative linear solve that does not
     converge, raises ``ConvergenceError`` (a ``RuntimeError``) and returns no row.
 
-    Thread safety: ``run`` may be called concurrently from multiple threads. Serial
-    sweeps and the multistep paths serialize on a process-wide lock held for the whole
-    call (see the module docstring), so each returns exactly what a serial call would --
-    on those paths threads buy safety, not speed. A ``workers>1`` sweep runs its fan-out
-    *outside* that lock (the worker processes share no state with this one), so parallel
-    sweeps launched from several threads genuinely overlap. A ``cancel`` callback always
-    runs in the calling thread; on the locked (serial/multistep) paths it must not call
-    back into this backend from *another* thread and wait on it (that would deadlock) --
-    in a ``workers>1`` sweep the lock is not held, so that caveat does not apply.
+    Thread safety: ``run`` may be called concurrently from multiple threads; which calls
+    serialize on the backend lock and run single-core, and why a ``workers>1`` sweep overlaps,
+    is the module docstring's concurrency contract. A ``cancel`` callback always runs in the
+    calling thread; on the locked (serial/multistep) paths it must not call back into this
+    backend from *another* thread and wait on it (that would deadlock) -- in a ``workers>1``
+    sweep the lock is not held, so that caveat does not apply.
     """
     dim = sim.model.nodes.dim
 
@@ -309,7 +308,7 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
 
     energies = None
     if len(list(sim.steps)) > 1 or _has_static(sim):
-        with _BACKEND_LOCK:
+        with _single_core():
             out = _run_multistep(sim, bbar, cancel, solver, petsc_options, n_incr,
                                  collect_energy=return_energy)
         if return_energy:
@@ -333,7 +332,7 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
             # cache, so parallel sweeps from several threads may overlap (module docstring).
             out = _run_parallel(sim, freqs, bbar, workers, cancel, solver, petsc_options)
         else:
-            with _BACKEND_LOCK:
+            with _single_core():
                 out = _run_serial_sweep(sim, freqs, bbar, cancel, solver, petsc_options)
 
     if output_path is not None:
@@ -497,8 +496,8 @@ def _kill_workers(ex):
 def _run_parallel(sim, freqs, bbar, workers, cancel=None, solver="auto", petsc_options=None):
     """Fan the per-frequency solves across a spawn ProcessPoolExecutor (order preserved).
 
-    Each worker caps its own BLAS/OpenMP threads to one in ``_init_worker`` (threadpoolctl),
-    so the parent's ``os.environ`` is never touched and workers never oversubscribe cores.
+    Each worker runs single-core (``_init_worker``; the module docstring's concurrency
+    contract), so workers never oversubscribe cores.
 
     ``cancel`` (parent-process predicate) is polled as futures complete; on True the live
     workers are SIGTERMed and ``Cancelled`` is raised. With ``cancel=None`` this keeps the
