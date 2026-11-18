@@ -161,14 +161,14 @@ def _make_newton_wrapper(solver, ksp_proxy, newton_calls_list, newton_meta_list)
     """
     original_newton = solver._newton  # bound method
 
-    def _wrapped_newton(E_voigt):
+    def _wrapped_newton(E_voigt, *args):
         # Start a new per-call residual list
         this_call_residuals = []
         ksp_proxy._current_newton_residuals = this_call_residuals
 
         ksp_before = solver._timers["ksp_solve"][1] if "ksp_solve" in solver._timers else 0
         t0 = time.perf_counter()
-        result = original_newton(E_voigt)
+        result = original_newton(E_voigt, *args)
         elapsed = time.perf_counter() - t0
         ksp_after = solver._timers["ksp_solve"][1] if "ksp_solve" in solver._timers else 0
 

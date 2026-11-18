@@ -224,7 +224,8 @@ class FreeEntries:
         ``stress(axes)`` is the average normal stress on ``axes`` at the last residual.
     stress_derivative : callable
         ``stress_derivative(y, axes)`` is its derivative with respect to the field, in the
-        direction of the dof array ``y`` in the field's layout, at the last Jacobian refresh.
+        direction of the dof array ``y`` in the field's layout, at the last Jacobian refresh or
+        at the current iterate.
     macro_jacobian : callable
         ``macro_jacobian(axes) -> (B, D)`` at the last Jacobian refresh: ``B`` a list of
         constrained residual derivatives (``PETSc.Vec``, one per free entry), ``D`` the
