@@ -103,5 +103,6 @@ result = run(sim)                      # ndarray (n_freqs + 1, 1 + 3*dim)
 
 Pass `workers=N` to fan the independent per-frequency solves
 across processes (guard the call under `if __name__ == "__main__":`).
+The concurrency contract is in the module docstring of `microstructure_ve.backends.dolfinx._run`.
 
 ## Documentation

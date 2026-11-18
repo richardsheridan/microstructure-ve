@@ -8,12 +8,8 @@ Public API::
 ``run`` transparently caches the mesh-only FE setup by mesh shape, so sweeping many
 simulations that share a grid is fast; ``clear_cache`` releases that memory.
 
-Every entry point is thread-safe: calls that touch the in-process cache (serial
-``run``, ``build_solver``, ``clear_cache``) serialize on one process-wide lock -- safe,
-but no thread parallelism -- while a ``run(workers=N)`` sweep fans out to worker
-processes *outside* that lock, so parallel sweeps launched from several threads overlap.
-The worker path mutates no process-global state (each worker caps its own BLAS threads
-in-process via threadpoolctl). See ``_run``'s module docstring for the full guarantee.
+Every entry point is thread-safe; which calls serialize, that they run single-core, and how a
+``run(workers=N)`` sweep differs is the concurrency contract in ``_run``'s module docstring.
 
 ``run`` / ``build_solver`` are resolved lazily so that importing this package -- and its pure-numpy
 ``_spec`` and ``_loading`` submodules -- never pulls in dolfinx. The other submodules import
@@ -25,7 +21,7 @@ from __future__ import annotations
 _LAZY = ("run", "build_solver", "Cancelled", "ConvergenceError", "clear_cache")
 
 # The FE stack these modules import at the top; a missing one means "wrong env".
-_FE_DEPS = {"dolfinx", "dolfinx_mpc", "basix", "ufl", "petsc4py", "mpi4py"}
+_FE_DEPS = {"dolfinx", "dolfinx_mpc", "basix", "ufl", "petsc4py", "mpi4py", "threadpoolctl"}
 
 
 def __getattr__(name):
@@ -36,8 +32,8 @@ def __getattr__(name):
             if (e.name or "").split(".")[0] in _FE_DEPS:
                 raise ImportError(
                     "The DOLFINx backend requires the FEniCSx stack (dolfinx, "
-                    "dolfinx_mpc, basix, and a complex-scalar petsc4py build), which is "
-                    f"not importable in this Python environment (missing {e.name!r}). "
+                    "dolfinx_mpc, basix, threadpoolctl, and a complex-scalar petsc4py build), "
+                    f"which is not importable in this Python environment (missing {e.name!r}). "
                     "These are typically installed via conda-forge rather than pip; run "
                     "from an environment that provides them."
                 ) from e

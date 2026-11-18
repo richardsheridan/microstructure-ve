@@ -59,6 +59,41 @@ class DolfinxBackendApiTests(unittest.TestCase):
         self.assertNotIn("conda activate", msg)
         self.assertNotIn("docs/", msg)
 
+    @unittest.skipUnless(HAS_DOLFINX, "needs the fenicsx env (dolfinx)")
+    def test_missing_threadpoolctl_gives_actionable_error(self):
+        # threadpoolctl is part of the backend's FE stack: without it the entry points do not
+        # resolve, with the same box-agnostic error a missing dolfinx gives. A child process
+        # hides the module so the rest of the suite keeps it.
+        import json
+        import subprocess
+        import sys
+
+        child = (
+            "import json, sys\n"
+            "sys.modules['threadpoolctl'] = None\n"
+            "import microstructure_ve.backends.dolfinx as d\n"
+            "out = {}\n"
+            "for name in ('run', 'build_solver'):\n"
+            "    try:\n"
+            "        getattr(d, name)\n"
+            "        out[name] = None\n"
+            "    except ImportError as e:\n"
+            "        out[name] = str(e)\n"
+            "print(json.dumps(out))\n"
+        )
+        proc = subprocess.run([sys.executable, "-c", child], capture_output=True, text=True,
+                              timeout=300)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        results = json.loads(proc.stdout.strip().splitlines()[-1])
+        for name, msg in results.items():
+            with self.subTest(name):
+                self.assertIsNotNone(msg, f"{name} resolved without threadpoolctl")
+                msg = msg.lower()
+                self.assertIn("threadpoolctl", msg)  # names the missing dependency
+                self.assertIn("dolfinx", msg)        # names the backend
+                self.assertNotIn("conda activate", msg)
+                self.assertNotIn("docs/", msg)
+
 
 if __name__ == "__main__":
     unittest.main()
