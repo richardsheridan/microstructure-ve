@@ -42,7 +42,8 @@ Results
 -------
 50x50 grid (5202 dof), 12 increments, single core of the shared 2x Xeon Gold 6148 host.
 The linear-solve counts are deterministic and independent of machine load; the calibrated
-single LU is 0.149 s (``predict_lu_seconds(5202, 2)``). CPU-hours are for the 5000-run
+single LU is 0.149 s (``predict_lu_seconds(5202, 2)`` when the backend factored with PETSc's
+native LU; the MUMPS fit now in ``_solver._COST`` predicts less). CPU-hours are for the 5000-run
 campaign; the band multiplies by the 1x to 3x hyperelastic-vs-proxy cost factor.
 
     solver                   variant        solves/run    CPU-h      band

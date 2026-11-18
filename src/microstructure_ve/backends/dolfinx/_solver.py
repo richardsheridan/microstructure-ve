@@ -1,8 +1,10 @@
-"""The linear solve: one native-LU factorization reused across frequencies and RHS.
+"""The linear solve: one MUMPS LU factorization reused across frequencies and RHS.
 
-PETSc's built-in serial LU is used (MUMPS is much slower on these small complex systems,
-docs/dolfinx_backend_design.md section 0). The matrix is re-assembled per frequency (same sparsity
--> LU re-factors values only); the per-unit-strain right-hand sides are cheap back-substitutions.
+The direct solver is MUMPS, a multifrontal sparse LU; why it and not PETSc's native serial LU is in
+docs/dolfinx_backend_design.md#10-iterative-solver-gmresilu-crossover-for-large-3d-adopted. The
+matrix is re-assembled per frequency (same sparsity -> LU re-factors values only); the
+per-unit-strain right-hand sides are cheap back-substitutions. MUMPS factors on the native thread
+pools, which every in-process backend call caps to one thread (the ``_run`` module docstring).
 
 Cancellation. A direct LU ``ksp.solve()`` is a single C call with no Python breakpoint
 and no monitor callback (PREONLY+LU never fires ``setMonitor``), so it can only be
@@ -29,20 +31,18 @@ class ConvergenceError(RuntimeError):
 
 
 # --- LU cost model -----------------------------------------------------------------
-# Sparse-direct factorization under nested dissection scales with dimension: 2D fill
-# ~O(ndof^1.5), 3D fill ~O(ndof^2). Constants are fit to the single-core steady times of
-# tools/bench_solvers.py; rerun it to recalibrate on other hardware.
+# A power law in ndof per dimension, coefficient and exponent fit to the single-core MUMPS times
+# of tools/bench_solvers.py; rerun it to recalibrate on other hardware.
 # ndof = n_nodes * dim for the vector P1 space.
 LU_TIME_S = 10.0  # crossover budget: above this predicted LU time, prefer the iterative solver
-_COST = {2: (3.98e-7, 1.5), 3: (1.92e-7, 2.0)}  # dim -> (coefficient, exponent)
+_COST = {2: (1.70e-6, 1.21), 3: (6.96e-7, 1.61)}  # dim -> (coefficient, exponent)
 
 
 def predict_lu_seconds(ndof, dim):
     """Predict the single-core LU factor+solve time (seconds) for ``ndof`` unknowns.
 
-    See the module ``_COST`` calibration note. The 3D exponent is the nested-dissection
-    theoretical value (the benchmark has a single 3D point, so only its coefficient is
-    fit); treat the prediction as an order-of-magnitude crossover signal, not a timer.
+    See the module ``_COST`` calibration note. Treat the prediction as an order-of-magnitude
+    crossover signal, not a timer.
     """
     if dim not in _COST:
         raise ValueError(f"unsupported dim {dim!r}; expected 2 or 3")
@@ -69,16 +69,18 @@ def select_solver_kind(ndof, dim):
 
 
 def lu_ksp(A, comm):
-    """A direct solver for ``A``: PETSc's native serial LU (see the module docstring)."""
+    """A direct solver for ``A``: a MUMPS LU factorization (see the module docstring)."""
     ksp = PETSc.KSP().create(comm)
     ksp.setOperators(A)
     ksp.setType("preonly")
-    ksp.getPC().setType("lu")
+    pc = ksp.getPC()
+    pc.setType("lu")
+    pc.setFactorSolverType("mumps")
     return ksp
 
 
 class LuSolver:
-    """Native-LU solve of the periodic fluctuation per unit macro strain, refactored per
+    """Direct (``lu_ksp``) solve of the periodic fluctuation per unit macro strain, refactored per
     frequency."""
 
     def __init__(self, space, forms, matfields, mpc, bcs):

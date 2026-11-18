@@ -4,7 +4,7 @@
 > lives in the package at `src/microstructure_ve/backends/dolfinx/`, split by concern into
 > private submodules: `_spec` (msve-dataclass parsing, pure numpy), `_assembly` (mesh / dof map /
 > DG0 fields / B-bar forms), `_constraints` (periodic MPC + interior pin), `_loading` (macro-loading
-> parse: driven axis/mode + free-vs-held lateral), `_solver` (native-LU / GMRES+ILU, factorization
+> parse: driven axis/mode + free-vs-held lateral), `_solver` (MUMPS LU / GMRES+ILU, factorization
 > reuse), `_homogenize` (σ̄ + free-lateral superposition), `_standard` (direct-Dirichlet non-periodic
 > path), `_plastic` (J2 return-mapping, §12), and `_run` (orchestration + frequency-parallel sweep).
 > The public entry point is `from microstructure_ve.backends.dolfinx import run` →
@@ -65,7 +65,10 @@ broke in practice and forced a formulation change**, found by execution:
 - **Performance** — one factorization reused across all frequencies and both RHS. The real
   bottleneck was the solver: **MUMPS is pathologically slow (~9 s) on this small 5202-dof complex
   system; PETSc's built-in serial LU does it in 0.37 s** (25×). Switched to native LU → the full
-  30-frequency sweep dropped from **270 s to 15 s (0.5 s/frequency)**.
+  30-frequency sweep dropped from **270 s to 15 s (0.5 s/frequency)**. *Superseded (§10):* the
+  ~9 s was not reproduced later. Single-threaded on this host, MUMPS refactors the 5202-dof
+  system in 0.03 s against native LU's 0.11 s, and its lead grows with size, so the backend uses
+  MUMPS.
 - **2D and 3D** — the backend is dimension-general (hexahedra in 3D, B-bar with κ = λ + 2μ/d, the
   periodic MPC built from a "map every max-face coordinate to 0" rule that reduces to the 2D
   edge+corner pairing). Free-lateral generalizes to a (d−1)×(d−1) lateral solve. `GridElements`
@@ -105,8 +108,7 @@ log-frequency table interpolation rather than the discretization.
   rank-local node↔dof map (the global `ravel_multi_index` assumption breaks), `comm.allreduce` on the
   volume-averaged-stress and area integrals, a distributed solver (superlu_dist / parallel MUMPS), and
   testing the periodic MPC across partition boundaries.
-- Non-square / non-cubic cells; reuse the *symbolic* factorization across frequencies (native LU
-  re-factors in 0.37 s, so minor); close the 2D viscoelastic 0.08% by matching ABAQUS's tabular
+- Non-square / non-cubic cells; close the 2D viscoelastic 0.08% by matching ABAQUS's tabular
   interpolation rule.
 
 ## 1. Motivation
@@ -401,9 +403,18 @@ about 7.5 minutes per solve before it timed out. `bench_dolfinx.py` and its raw
 Direct LU is the default everywhere it is feasible; an iterative solver was added for the large-3D
 regime where LU is not. **`IterativeSolver` = GMRES + ILU**, selected automatically by
 `select_solver_kind(ndof, dim)`: 2D always stays LU, and 3D switches to iterative once
-`predict_lu_seconds` (the `_solver._COST` nested-dissection model — 2D fill ~ndof^1.5, 3D ~ndof^2)
+`predict_lu_seconds` (the `_solver._COST` power law per dimension, fit to the MUMPS times below)
 exceeds `LU_TIME_S = 10 s`. The ILU KSP monitor also gives sub-second `cancel` latency mid-solve,
 where LU can only be cancelled between whole frequencies.
+
+**Direct solver: MUMPS.** `_solver.lu_ksp` factors with MUMPS (multifrontal, dense BLAS-3 kernels
+on the fronts, ordering chosen by MUMPS itself, which picks METIS here), not PETSc's native serial
+LU. Both produce the same fill, but the native numeric factorization runs scalar sparse kernels:
+single-threaded on this host MUMPS is 3–9× faster on the 2D cells below and 4–15× on the 3D ones,
+and on the plastic Jacobian of the FEniCS_test 400×400 RVE it refactors in 4.6 s against 71 s
+(about 15×, `tools/bench_grid_scaling.py`), with answers equal to round-off. §0's earlier "MUMPS ~9 s"
+was not reproduced. MUMPS would also use BLAS threads on its fronts, but every in-process backend
+call caps the native thread pools to one (the `_run` module docstring).
 
 **History — why ILU, not the textbook GMRES+GAMG.** A first pass tried the canonical recipe: the
 rigid-body **near**-nullspace (`dolfinx_mpc.utils.rigid_motions_nullspace`) with **GMRES + GAMG** —
@@ -418,24 +429,29 @@ hypre are real-only and the operator is complex — so the adopted solver is pla
 GMRES, with no nullspace.
 
 **Benchmark** (per-frequency `solve_one`, one BLAS thread; reproducer `tools/bench_solvers.py`,
-whose module docstring records the current calibration under Results):
+whose module docstring records the current calibration under Results; native-LU times from the
+calibration before the move to MUMPS, 132k/526k from the earlier native-only sweep):
 
-| dim | ndof | LU (s) | GMRES+ILU (s) | iter/LU | outcome |
-| --- | --- | --- | --- | --- | --- |
-| 2D | 4.8k | 0.15 | 0.25 | 1.6× | both ok |
-| 2D | 42k | 4.38 | 20.3 | 4.6× | both ok |
-| 2D | 116k | 20.0 | — | — | **iterative DIVERGED_ITS** |
-| 2D | 132k / 526k | 25 / 184 | — | — | LU ok; **iterative DNC** (1000 iters, KSP reason −3) |
-| 3D | 2.2k | 0.73 | 0.28 | 0.38× | iterative faster |
-| 3D | 6.6k | 9.70 | 1.11 | 0.11× | iterative faster |
-| 3D | 14.7k | 50.0 | 3.08 | 0.06× | iterative faster |
+| dim | ndof | native LU (s) | MUMPS (s) | GMRES+ILU (s) | iter/MUMPS | outcome |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2D | 4.8k | 0.15 | 0.047 | 0.15 | 3.1× | both ok |
+| 2D | 42k | 4.38 | 0.62 | 15.6 | 25× | both ok |
+| 2D | 116k | 20.0 | 2.30 | — | — | **iterative DNC** |
+| 2D | 132k / 526k | 25 / 184 | — | — | — | LU ok; **iterative DNC** (1000 iters, KSP reason −3) |
+| 3D | 2.2k | 0.73 | 0.19 | 0.16 | 0.81× | iterative a little faster |
+| 3D | 6.6k | 9.70 | 0.93 | 0.66 | 0.71× | iterative a little faster |
+| 3D | 14.7k | 50.0 | 3.31 | 2.32 | 0.70× | iterative a little faster |
+| 3D | 27.8k | — | 10.2 | 5.42 | 0.53× | iterative faster |
+| 3D | 46.9k | — | 25.5 | 11.1 | 0.43× | iterative faster |
 
-- **2D → always LU.** Nested-dissection LU completes past 500k ndof; GMRES+ILU is 1.6–4.6× slower
-  where it converges and **diverges above ~120k ndof** (burns all iterations, DIVERGED_ITS), so `auto`
-  never picks it in 2D (a caller can still force `solver="iterative"`).
-- **3D → iterative above the LU budget.** LU fill explodes ~ndof² (50 s already at ~15k) while
-  GMRES+ILU stays cheap (16× faster at ~15k), so `auto` crosses over once `predict_lu_seconds` exceeds
-  `LU_TIME_S`.
+- **2D → always LU.** Nested-dissection LU completes past 500k ndof; GMRES+ILU is 3–25× slower
+  than MUMPS where it converges and **fails to converge above ~100k ndof** (burns all iterations),
+  so `auto` never picks it in 2D (a caller can still force `solver="iterative"`).
+- **3D → LU within the budget, iterative above it.** GMRES+ILU is somewhat faster than MUMPS at
+  every measured size, and its lead grows with size (2× past ~28k). LU stays the default under
+  `LU_TIME_S` anyway: it has no convergence failure mode, while ILU-preconditioned GMRES without
+  AMG can stagnate on hard cases. `LU_TIME_S` is the budget on one uncancellable solve, and MUMPS
+  reaches it near 28k ndof.
 
 The `_COST` constants are fit to this single-core benchmark on the 2× Xeon Gold 6148 host; rerun
 `tools/bench_solvers.py` to recalibrate on other hardware. (§9's `bench_dolfinx.py` is a *separate*
