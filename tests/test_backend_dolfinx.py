@@ -17,7 +17,7 @@ from tests._helpers import (
     oracle_simulation_prony,
     synthetic_simulation,
 )
-from tests._matrix import matrix_simulation
+from tests._matrix import PLASTIC_DISPLACEMENT, matrix_simulation
 
 try:
     import dolfinx  # noqa: F401
@@ -247,6 +247,58 @@ class NeoHookeanZeroLambdaTests(unittest.TestCase):
 
     def test_standard_zero_lambda_solves_and_matches_linear(self):
         self._check_small_strain_matches_linear("standard")
+
+
+@needs_dolfinx
+class BelowYieldPlasticFactorizationTests(unittest.TestCase):
+    """A periodic ``Plastic`` cell driven within its elastic range performs no more numeric LU
+    factorizations in a ``run`` than the same cell with ``Elastic`` phases, however many Newton
+    solves the run makes.
+    """
+
+    # A small fraction of the matrix plastic drive, which yields the stiff phase: at this drive
+    # no Gauss point reaches its yield stress. Not equal to DISPLACEMENT, which the harness would
+    # swap for the yielding drive.
+    BELOW_YIELD = PLASTIC_DISPLACEMENT / 250
+
+    @classmethod
+    def setUpClass(cls):
+        from petsc4py import PETSc
+
+        PETSc.Log.begin()
+
+    def _factorizations(self, sim, **kwargs):
+        """The number of numeric LU factorizations PETSc logs during ``run(sim, **kwargs)``."""
+        from petsc4py import PETSc
+
+        from microstructure_ve.backends.dolfinx import run
+
+        event = PETSc.Log.Event("MatLUFactorNum")
+        before = event.getPerfInfo()["count"]
+        run(sim, **kwargs)
+        return event.getPerfInfo()["count"] - before
+
+    def _assert_no_more_than_elastic(self, cell, **kwargs):
+        plastic = self._factorizations(matrix_simulation(
+            test_type="hyperelastic_plastic", displacement=self.BELOW_YIELD, **cell), **kwargs)
+        elastic = self._factorizations(matrix_simulation(
+            test_type="elastic", displacement=self.BELOW_YIELD, **cell), **kwargs)
+        self.assertLessEqual(plastic, elastic,
+                             f"plastic run factored {plastic} times, elastic twin {elastic}")
+
+    def test_increments_below_yield_reuse_the_elastic_factorization(self):
+        """Several increments of a confined cell below yield factor no more often than the
+        same cell with ``Elastic`` phases."""
+        cell = {"mode": "uniaxial_x", "traction": "confined_slip", "bc": "periodic", "dim": 2}
+        self._assert_no_more_than_elastic(cell, n_incr=3)
+
+    def test_free_lateral_below_yield_reuses_the_elastic_factorization(self):
+        """A free lateral face below yield factors no more often than the same cell with
+        ``Elastic`` phases."""
+        for dim in (2, 3):
+            with self.subTest(dim=dim):
+                cell = {"mode": "uniaxial_x", "traction": "free", "bc": "periodic", "dim": dim}
+                self._assert_no_more_than_elastic(cell)
 
 
 @needs_dolfinx
