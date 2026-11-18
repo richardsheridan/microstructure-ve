@@ -85,15 +85,14 @@ class ConvergenceErrorTests(unittest.TestCase):
             with self.assertRaises(ConvergenceError):
                 run(sim)
 
-    def test_free_lateral_root_find_failure_raises(self):
-        """A periodic plastic cell with a free lateral face whose root-find for zero lateral
-        traction is cut short of convergence raises, although each of its Newton solves
-        converges."""
+    def test_periodic_free_lateral_plastic_newton_failure_raises(self):
+        """A periodic plastic cell with a free lateral face whose Newton solve is cut short of
+        convergence raises instead of returning a row."""
         from microstructure_ve.backends.dolfinx import ConvergenceError, _nonlinear, run
 
         sim = matrix_simulation(mode="uniaxial_x", traction="free", bc="periodic", dim=2,
                                 test_type="hyperelastic_plastic")
-        with mock.patch.object(_nonlinear, "_MAX_OUTER", 1):
+        with mock.patch.object(_nonlinear, "_MAX_NEWTON", 1):
             with self.assertRaises(ConvergenceError):
                 run(sim)
 
