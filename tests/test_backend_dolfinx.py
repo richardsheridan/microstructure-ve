@@ -391,5 +391,189 @@ class FrequencyParallelTests(unittest.TestCase):
         self.assertIn("worker process", str(cm.exception).lower())
 
 
+class _CallerError(Exception):
+    """An exception a caller's own ``cancel`` raises to stop a solve."""
+
+
+@needs_dolfinx
+class InProcessThreadCapTests(unittest.TestCase):
+    """Every in-process call that solves runs with each native thread pool capped to one
+    thread in the calling thread, and hands the caller's own limits back on return or raise.
+
+    The caller sets its own limit (not 1) around each call, so the checks do not depend on the
+    host's core count or on ``*_NUM_THREADS``. Callbacks only record what they see; the
+    assertions run after the call, so a failed check cannot pose as the caller's exception.
+    """
+
+    CALLER_LIMIT = 2
+
+    def setUp(self):
+        from microstructure_ve.backends.dolfinx import clear_cache
+
+        clear_cache()
+        self.addCleanup(clear_cache)
+
+    def _caller_baseline(self):
+        """Pool counts under the caller's own limit; must hold no 1 for a cap to be visible."""
+        counts = _worker_threadpool_counts()
+        self.assertTrue(counts, "no native thread pools reported")
+        self.assertNotIn(1, counts, "caller limit not applied; the cap would be invisible")
+        return counts
+
+    def _assert_capped(self, seen):
+        self.assertTrue(seen, "the backend never called back mid-call")
+        for counts in seen:
+            self.assertTrue(counts, "no native thread pools reported mid-call")
+            self.assertTrue(all(n == 1 for n in counts), f"pools not capped mid-call: {seen}")
+
+    def _recording_cancel(self, seen, stop=None):
+        """A ``cancel`` that records the pool counts, then returns False, or ``True`` /
+        raises ``stop`` when ``stop`` is ``True`` / an exception class."""
+        def cancel():
+            seen.append(_worker_threadpool_counts())
+            if stop is True:
+                return True
+            if stop is not None:
+                raise stop("stopped by the caller")
+            return False
+        return cancel
+
+    def test_serial_sweep_caps_pools_and_restores_caller_limits(self):
+        # workers=2 on a single frequency runs in-process like workers=1
+        import threadpoolctl
+
+        from microstructure_ve.backends.dolfinx import run
+
+        for workers, f_count in ((1, 2), (2, 1)):
+            with self.subTest(workers=workers, f_count=f_count):
+                sim = homogeneous_simulation(n=3, dim=2, f_count=f_count)
+                seen = []
+                with threadpoolctl.threadpool_limits(limits=self.CALLER_LIMIT):
+                    before = self._caller_baseline()
+                    run(sim, workers=workers, cancel=self._recording_cancel(seen))
+                    after = _worker_threadpool_counts()
+                self.assertEqual(len(seen), f_count)
+                self._assert_capped(seen)
+                self.assertEqual(after, before, "caller's limits not restored after run")
+
+    def test_multistep_run_caps_pools_per_step_and_restores_caller_limits(self):
+        import threadpoolctl
+
+        from microstructure_ve.backends.dolfinx import run
+        from tests._matrix import MULTISTEP_CELL, PLASTIC_MULTISTEP_CELL
+
+        sims = {
+            "periodic static then dynamic": matrix_simulation(
+                test_type="viscoelastic_sd", **MULTISTEP_CELL),
+            "standard static": matrix_simulation(
+                test_type="viscoelastic_static", mode="uniaxial_x", traction="free",
+                bc="standard", dim=2),
+            "periodic plastic reversal": matrix_simulation(
+                test_type="hyperelastic_plastic_reversal", **PLASTIC_MULTISTEP_CELL),
+        }
+        for name, sim in sims.items():
+            for workers in (1, 2):
+                with self.subTest(name, workers=workers):
+                    seen = []
+                    with threadpoolctl.threadpool_limits(limits=self.CALLER_LIMIT):
+                        before = self._caller_baseline()
+                        run(sim, workers=workers, cancel=self._recording_cancel(seen))
+                        after = _worker_threadpool_counts()
+                    self.assertEqual(len(seen), len(list(sim.steps)))
+                    self._assert_capped(seen)
+                    self.assertEqual(after, before, "caller's limits not restored after run")
+
+    def test_stopped_run_restores_caller_limits(self):
+        import threadpoolctl
+
+        from microstructure_ve.backends.dolfinx import Cancelled, run
+        from tests._matrix import MULTISTEP_CELL
+
+        sims = {
+            "sweep": homogeneous_simulation(n=3, dim=2, f_count=2),
+            "multistep": matrix_simulation(test_type="viscoelastic_sd", **MULTISTEP_CELL),
+        }
+        for name, sim in sims.items():
+            for stop, raised in ((True, Cancelled), (_CallerError, _CallerError)):
+                with self.subTest(name, raised=raised.__name__):
+                    seen = []
+                    with threadpoolctl.threadpool_limits(limits=self.CALLER_LIMIT):
+                        before = self._caller_baseline()
+                        with self.assertRaises(raised):
+                            run(sim, cancel=self._recording_cancel(seen, stop=stop))
+                        after = _worker_threadpool_counts()
+                    self._assert_capped(seen)
+                    self.assertEqual(after, before, "caller's limits not restored after raise")
+
+    def test_solve_one_caps_pools_in_its_calling_thread_and_restores(self):
+        # solver="iterative" polls cancel from the KSP monitor inside each solve_one call
+        import threadpoolctl
+
+        from microstructure_ve.backends.dolfinx import build_solver
+
+        sim = homogeneous_simulation(n=3, dim=2)
+        seen = []
+        with threadpoolctl.threadpool_limits(limits=self.CALLER_LIMIT):
+            before = self._caller_baseline()
+            solve_one, _ = build_solver(sim, solver="iterative",
+                                        cancel=self._recording_cancel(seen))
+            after_build = _worker_threadpool_counts()
+            solve_one(1.0)
+            after_solve = _worker_threadpool_counts()
+            solve_one(1.0, elastic=True)
+            after_elastic = _worker_threadpool_counts()
+        self.assertEqual(after_build, before, "caller's limits not restored after build_solver")
+        self._assert_capped(seen)
+        self.assertEqual(after_solve, before, "caller's limits not restored after solve_one")
+        self.assertEqual(after_elastic, before,
+                         "caller's limits not restored after solve_one(elastic=True)")
+
+    def test_solve_one_from_another_thread_caps_pools_in_that_thread(self):
+        # built in this thread, called in another: the cap and the restore follow the caller
+        from concurrent.futures import ThreadPoolExecutor
+
+        import threadpoolctl
+
+        from microstructure_ve.backends.dolfinx import build_solver
+
+        sim = homogeneous_simulation(n=3, dim=2)
+        seen = []
+        solve_one, _ = build_solver(sim, solver="iterative", cancel=self._recording_cancel(seen))
+
+        def in_other_thread():
+            with threadpoolctl.threadpool_limits(limits=self.CALLER_LIMIT):
+                before = _worker_threadpool_counts()
+                solve_one(1.0)
+                return before, list(seen), _worker_threadpool_counts()
+
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            before, other_seen, after = ex.submit(in_other_thread).result(timeout=120)
+        self.assertTrue(before, "no native thread pools reported in the other thread")
+        self.assertNotIn(1, before, "caller limit not applied in the other thread")
+        self._assert_capped(other_seen)
+        self.assertEqual(after, before,
+                         "caller's limits not restored in the thread that called solve_one")
+
+    def test_raising_solve_one_restores_caller_limits(self):
+        # a Krylov solve cut off after one iteration raises from inside solve_one
+        import threadpoolctl
+
+        from microstructure_ve.backends.dolfinx import ConvergenceError, build_solver
+
+        sim = matrix_simulation(test_type="elastic", mode="uniaxial_x", traction="free",
+                                bc="periodic", dim=2)
+        seen = []
+        with threadpoolctl.threadpool_limits(limits=self.CALLER_LIMIT):
+            before = self._caller_baseline()
+            solve_one, _ = build_solver(sim, solver="iterative",
+                                        cancel=self._recording_cancel(seen),
+                                        petsc_options={"ksp_max_it": 1, "ksp_rtol": 1e-14})
+            with self.assertRaises(ConvergenceError):
+                solve_one(1.0)
+            after = _worker_threadpool_counts()
+        self._assert_capped(seen)
+        self.assertEqual(after, before, "caller's limits not restored after raise")
+
+
 if __name__ == "__main__":
     unittest.main()
