@@ -71,11 +71,9 @@ class _FEProblem:
 # so every access -- and every use of a cached problem -- happens under _BACKEND_LOCK.
 _FE_CACHE = {}
 
-# The backend-wide serialization lock behind the concurrency contract (module docstring):
-# held for the full duration of every call that touches in-process FE state --
-# serial/multistep run(), build_solver(), solve_one(), clear_cache(). The workers>1 fan-out
-# runs outside it (nothing in this process is shared with the spawned workers).
-# Re-entrant because run() calls build_solver() (and solve_one) while already holding it.
+# The backend-wide serialization lock of the concurrency contract (module docstring), which
+# names the calls that hold it. Re-entrant because run() calls build_solver() (and solve_one)
+# while already holding it.
 _BACKEND_LOCK = threading.RLock()
 
 

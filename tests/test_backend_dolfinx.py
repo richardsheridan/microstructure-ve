@@ -34,9 +34,9 @@ def _lame(E, nu):
     return lam, mu
 
 
-def _worker_threadpool_counts():
-    """Run inside a spawned worker (top-level so it pickles): the per-pool thread counts
-    threadpoolctl reports after ``_init_worker`` has applied its cap."""
+def _threadpool_counts():
+    """The per-pool thread counts threadpoolctl reports where this runs: in a test, a callback,
+    or a spawned worker (top-level so it pickles)."""
     import threadpoolctl
 
     return [pool["num_threads"] for pool in threadpoolctl.threadpool_info()]
@@ -374,7 +374,7 @@ class FrequencyParallelTests(unittest.TestCase):
             max_workers=1, mp_context=ctx, initializer=run._init_worker,
             initargs=(sim, True, "auto", None),
         ) as ex:
-            counts = ex.submit(_worker_threadpool_counts).result(timeout=120)
+            counts = ex.submit(_threadpool_counts).result(timeout=120)
         self.assertTrue(counts, "no native thread pools reported")
         self.assertTrue(all(n == 1 for n in counts), f"workers not single-threaded: {counts}")
 
@@ -415,7 +415,7 @@ class InProcessThreadCapTests(unittest.TestCase):
 
     def _caller_baseline(self):
         """Pool counts under the caller's own limit; must hold no 1 for a cap to be visible."""
-        counts = _worker_threadpool_counts()
+        counts = _threadpool_counts()
         self.assertTrue(counts, "no native thread pools reported")
         self.assertNotIn(1, counts, "caller limit not applied; the cap would be invisible")
         return counts
@@ -430,7 +430,7 @@ class InProcessThreadCapTests(unittest.TestCase):
         """A ``cancel`` that records the pool counts, then returns False, or ``True`` /
         raises ``stop`` when ``stop`` is ``True`` / an exception class."""
         def cancel():
-            seen.append(_worker_threadpool_counts())
+            seen.append(_threadpool_counts())
             if stop is True:
                 return True
             if stop is not None:
@@ -451,7 +451,7 @@ class InProcessThreadCapTests(unittest.TestCase):
                 with threadpoolctl.threadpool_limits(limits=self.CALLER_LIMIT):
                     before = self._caller_baseline()
                     run(sim, workers=workers, cancel=self._recording_cancel(seen))
-                    after = _worker_threadpool_counts()
+                    after = _threadpool_counts()
                 self.assertEqual(len(seen), f_count)
                 self._assert_capped(seen)
                 self.assertEqual(after, before, "caller's limits not restored after run")
@@ -478,7 +478,7 @@ class InProcessThreadCapTests(unittest.TestCase):
                     with threadpoolctl.threadpool_limits(limits=self.CALLER_LIMIT):
                         before = self._caller_baseline()
                         run(sim, workers=workers, cancel=self._recording_cancel(seen))
-                        after = _worker_threadpool_counts()
+                        after = _threadpool_counts()
                     self.assertEqual(len(seen), len(list(sim.steps)))
                     self._assert_capped(seen)
                     self.assertEqual(after, before, "caller's limits not restored after run")
@@ -501,7 +501,7 @@ class InProcessThreadCapTests(unittest.TestCase):
                         before = self._caller_baseline()
                         with self.assertRaises(raised):
                             run(sim, cancel=self._recording_cancel(seen, stop=stop))
-                        after = _worker_threadpool_counts()
+                        after = _threadpool_counts()
                     self._assert_capped(seen)
                     self.assertEqual(after, before, "caller's limits not restored after raise")
 
@@ -517,11 +517,11 @@ class InProcessThreadCapTests(unittest.TestCase):
             before = self._caller_baseline()
             solve_one, _ = build_solver(sim, solver="iterative",
                                         cancel=self._recording_cancel(seen))
-            after_build = _worker_threadpool_counts()
+            after_build = _threadpool_counts()
             solve_one(1.0)
-            after_solve = _worker_threadpool_counts()
+            after_solve = _threadpool_counts()
             solve_one(1.0, elastic=True)
-            after_elastic = _worker_threadpool_counts()
+            after_elastic = _threadpool_counts()
         self.assertEqual(after_build, before, "caller's limits not restored after build_solver")
         self._assert_capped(seen)
         self.assertEqual(after_solve, before, "caller's limits not restored after solve_one")
@@ -542,9 +542,9 @@ class InProcessThreadCapTests(unittest.TestCase):
 
         def in_other_thread():
             with threadpoolctl.threadpool_limits(limits=self.CALLER_LIMIT):
-                before = _worker_threadpool_counts()
+                before = _threadpool_counts()
                 solve_one(1.0)
-                return before, list(seen), _worker_threadpool_counts()
+                return before, list(seen), _threadpool_counts()
 
         with ThreadPoolExecutor(max_workers=1) as ex:
             before, other_seen, after = ex.submit(in_other_thread).result(timeout=120)
@@ -570,7 +570,7 @@ class InProcessThreadCapTests(unittest.TestCase):
                                         petsc_options={"ksp_max_it": 1, "ksp_rtol": 1e-14})
             with self.assertRaises(ConvergenceError):
                 solve_one(1.0)
-            after = _worker_threadpool_counts()
+            after = _threadpool_counts()
         self._assert_capped(seen)
         self.assertEqual(after, before, "caller's limits not restored after raise")
 
