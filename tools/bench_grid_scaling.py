@@ -9,17 +9,21 @@ report's own script predates the current spec API; this rebuilds the same model 
 ``--material neohookean`` swaps every phase for a coupled neo-Hookean of the same small-strain
 moduli under NLGEOM, which times the hyperelastic free-lateral path on the same microstructure.
 
-Run from the fenicsx env against a checkout of the report, which is read as data only::
+Run from either DOLFINx env against a checkout of the report, which is read as data only. From
+``fenicsx-complex`` with ``MSVE_DOLFINX_REAL_PYTHON`` naming the real interpreter, ``run`` hands
+the sim to the real build (``docs/dolfinx_backend_design.md`` §14)::
 
     git clone https://github.com/AnlanChenA/FEniCS_test /path/to/FEniCS_test
-    /home/rjs80/miniconda3/envs/fenicsx/bin/python tools/bench_grid_scaling.py \
-        /path/to/FEniCS_test --coarsen 4 [--material plastic|neohookean] \
+    /home/rjs80/miniconda3/envs/fenicsx-real/bin/python tools/bench_grid_scaling.py \
+        /path/to/FEniCS_test --coarsen 4 [--material plastic|neohookean] [--threads N] \
         [--points abaqus|first:K|e1,e2,...] [--n-incr N] [--profile N] [--json OUT]
 
 Prints the wall time of ``run``, the PETSc factorization and back-substitution counts and times,
 and the stress at each point (against the ABAQUS curve for the plastic case). ``--profile N``
-adds the N functions with the most own time; ``--json`` writes the numbers to a file. One thread
-per process.
+adds the N functions with the most own time; ``--json`` writes the numbers to a file.
+``--threads N`` is ``run``'s ``threads``: each process that solves caps its native thread pools
+at N (default 1). The PETSc counts and times are this process's own, so a run handed to the real
+peer prints none.
 
 Results
 -------
@@ -81,10 +85,32 @@ The before run was not taken at 400x400; 406 native factorizations at 71 s each 
 Peak memory at 400x400 is 2.1 GB. The stresses match the before run's to 2.0e-9. After the fixes
 the run factors once per increment (130 = 13 points x 10 increments); before, about three times
 per increment.
+
+Scalar build and threads, ABAQUS points, at dc91cc1, runs one after another on the otherwise idle
+host. ``complex`` is ``fenicsx-complex`` alone (Static steps in complex arithmetic), ``routed`` is
+``fenicsx-complex`` with ``MSVE_DOLFINX_REAL_PYTHON`` set (the sim handed to the real peer, its
+start included), ``real`` is ``fenicsx-real`` alone; the LU columns are the factorization time:
+
+    case                  threads   complex    routed     real       complex LU   real LU
+    200x200 plastic       1         43.8 s     28.6 s     26.6 s     16.4 s       7.5 s
+    200x200 plastic       8         35.4 s     23.9 s     21.9 s     10.1 s       4.1 s
+    200x200 neo-Hookean   1         194.6 s    95.3 s     92.2 s     97.0 s       44.2 s
+    200x200 neo-Hookean   8         142.6 s    67.2 s     65.9 s     59.9 s       23.1 s
+    400x400 plastic       1                    152.1 s
+    400x400 plastic       8                    130.9 s
+
+Every variant's stresses match the complex one-thread run's to 1.3e-15 relative, and the 400x400
+stresses lie within +0.05% to +0.15% of ABAQUS, as before. The real build takes 2.2x off the
+factorization time and 2x off the back-substitutions in both cases, and 1.65x (plastic) to 2.1x
+(neo-Hookean) off the wall time; routing adds 1 to 3 s, mostly the peer's start. Eight threads
+speed the factorizations up 1.6x (complex) to 1.9x (real) but the wall time only 1.2x to 1.4x at
+200x200 and 1.16x at 400x400: assembly and the return map run on one thread. The 400x400 plastic
+run took 277 s in the complex build at 2f12017 (the table of fixes above).
 """
 from __future__ import annotations
 
-# Pin BLAS/OpenMP to one thread before importing numpy/dolfinx (mirrors tools/bench_solvers.py).
+# Start BLAS/OpenMP at one thread before importing numpy/dolfinx (mirrors tools/bench_solvers.py);
+# run(threads=N) sets every pool to N while it solves.
 import os
 for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
     os.environ.setdefault(_v, "1")
@@ -191,6 +217,7 @@ def main():
     ap.add_argument("--material", choices=("plastic", "neohookean"), default="plastic")
     ap.add_argument("--points", default="abaqus")
     ap.add_argument("--n-incr", type=int, default=None)
+    ap.add_argument("--threads", type=int, default=1)
     ap.add_argument("--profile", type=int, default=0, metavar="N")
     ap.add_argument("--json", default=None)
     a = ap.parse_args()
@@ -214,17 +241,20 @@ def main():
     t0 = time.perf_counter()
     if prof:
         prof.enable()
-    rows = run(sim, n_incr=a.n_incr)
+    rows = run(sim, n_incr=a.n_incr, threads=a.threads)
     if prof:
         prof.disable()
     wall = time.perf_counter() - t0
 
     stress, strain = rows[:, 1] / Lx, rows[:, 5] / Lx
     ev = petsc_events()
+    scalar = "complex" if np.dtype(PETSc.ScalarType).kind == "c" else "real"
+    routed = bool(os.environ.get("MSVE_DOLFINX_REAL_PYTHON")) and scalar == "complex"
     res = {"grid": list(shape), "ndof": ndof, "material": a.material, "points": a.points,
-           "n_incr": a.n_incr, "wall_s": wall, "petsc": ev, "strain": strain.tolist(),
-           "stress": stress.tolist()}
-    print(f"grid {shape[0]}x{shape[1]} ndof {ndof} {a.material} points {a.points}: "
+           "n_incr": a.n_incr, "threads": a.threads, "build": scalar, "routed": routed,
+           "wall_s": wall, "petsc": ev, "strain": strain.tolist(), "stress": stress.tolist()}
+    print(f"grid {shape[0]}x{shape[1]} ndof {ndof} {a.material} points {a.points} "
+          f"{scalar} build{' via the real peer' if routed else ''} threads {a.threads}: "
           f"wall {wall:.1f} s")
     for name, (sec, count) in ev.items():
         print(f"  {name:16s} {count:6d} calls {sec:10.2f} s")
