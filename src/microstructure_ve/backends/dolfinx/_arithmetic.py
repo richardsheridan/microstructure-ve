@@ -28,6 +28,26 @@ def needs_complex_build(sim):
     return any(any(isinstance(s, Dynamic) for s in step.subsections) for step in sim.steps)
 
 
+def peer_variable(sim, complex_build):
+    """The variable naming the interpreter that solves ``sim`` in place of this build, or None.
+
+    A complex build hands a sim with no ``Dynamic`` step to the real build; a real build hands a
+    sim with any ``Dynamic`` step to the complex build. ``complex_build`` is this process's build.
+    """
+    if needs_complex_build(sim):
+        return None if complex_build else COMPLEX_PYTHON_VAR
+    return REAL_PYTHON_VAR if complex_build else None
+
+
+def native_static_warning():
+    """The message for a Static step a complex build solves itself, no real interpreter named."""
+    return (
+        "Solving a Static step in complex arithmetic because no real-scalar PETSc build is "
+        f"configured. Set {REAL_PYTHON_VAR} to a Python whose PETSc is the real-scalar build to "
+        "solve it there."
+    )
+
+
 def refusal_message():
     """The message for a frequency-domain solve refused in a real-scalar build."""
     return (

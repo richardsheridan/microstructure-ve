@@ -4,6 +4,7 @@ Public API::
 
     from microstructure_ve.backends.dolfinx import run, clear_cache  # (and build_solver)
     from microstructure_ve.backends.dolfinx import Cancelled, ConvergenceError, ScalarBuildError
+    from microstructure_ve.backends.dolfinx import ScalarBuildWarning
 
 ``run`` transparently caches the mesh-only FE setup by mesh shape, so sweeping many
 simulations that share a grid is fast; ``clear_cache`` releases that memory.
@@ -19,7 +20,7 @@ stays importable under the numpy-only msve env.
 from __future__ import annotations
 
 _LAZY = ("run", "build_solver", "Cancelled", "ConvergenceError", "ScalarBuildError",
-         "clear_cache")
+         "ScalarBuildWarning", "clear_cache")
 
 # The FE stack these modules import at the top; a missing one means "wrong env".
 _FE_DEPS = {"dolfinx", "dolfinx_mpc", "basix", "ufl", "petsc4py", "mpi4py", "threadpoolctl"}

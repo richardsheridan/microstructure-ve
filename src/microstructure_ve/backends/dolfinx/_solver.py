@@ -33,7 +33,12 @@ class ConvergenceError(RuntimeError):
 
 
 class ScalarBuildError(RuntimeError):
-    """Raised when a solve needs complex arithmetic and this process's PETSc is the real build."""
+    """Raised when a solve needs complex arithmetic and this process's PETSc is the real build,
+    or when the variable naming the other build's interpreter names no usable one."""
+
+
+class ScalarBuildWarning(UserWarning):
+    """Emitted when ``run`` solves a Static step in complex arithmetic for want of a real build."""
 
 
 COMPLEX_BUILD = arithmetic.is_complex_scalar(PETSc.ScalarType)
