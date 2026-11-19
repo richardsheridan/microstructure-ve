@@ -6,6 +6,7 @@ Tests build **small synthetic microstructures** here; they never load the 50x50
 needed, so the emitted tables match what the package actually produces in practice.
 """
 import pathlib
+import unittest
 
 import numpy as np
 
@@ -24,6 +25,31 @@ from microstructure_ve.core import ElementSet, GridElements, GridNodes
 from microstructure_ve.materials import Material
 from microstructure_ve.steps import Dynamic, Heading, Model, Simulation, Step
 from microstructure_ve.utils import load_viscoelasticity, periodic_assign_intph
+
+try:
+    import dolfinx  # noqa: F401
+    HAS_DOLFINX = True
+except ImportError:
+    HAS_DOLFINX = False
+
+needs_dolfinx = unittest.skipUnless(HAS_DOLFINX, "needs the fenicsx env (dolfinx)")
+
+
+def _complex_build():
+    """True iff this interpreter's PETSc is the complex-scalar build."""
+    if not HAS_DOLFINX:
+        return False
+    from petsc4py import PETSc
+
+    return np.dtype(PETSc.ScalarType).kind == "c"
+
+
+HAS_COMPLEX = _complex_build()
+
+# A frequency-domain solve (a Dynamic step, or solve_one(f) without elastic=True) needs complex
+# arithmetic; a real-scalar build refuses it.
+needs_complex = unittest.skipUnless(
+    HAS_COMPLEX, "needs a complex-scalar PETSc build (the fenicsx env)")
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PMMA_DATA = REPO_ROOT / "PMMA_shifted_R10_data.txt"

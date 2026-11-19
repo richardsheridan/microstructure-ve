@@ -12,22 +12,18 @@ import unittest
 import numpy as np
 
 from tests._helpers import (
+    needs_complex,
+    needs_dolfinx,
     oracle_simulation_2d,
     oracle_simulation_3d,
     oracle_simulation_prony,
 )
 
-try:
-    import dolfinx  # noqa: F401
-    HAS_DOLFINX = True
-except ImportError:
-    HAS_DOLFINX = False
-
-needs_dolfinx = unittest.skipUnless(HAS_DOLFINX, "needs the fenicsx env (dolfinx)")
 DATA = pathlib.Path(__file__).resolve().parent / "data"
 
 
 @needs_dolfinx
+@needs_complex
 class AbaqusParityTests(unittest.TestCase):
     def _check(self, sim, oracle_name, dim, rtol):
         oracle = np.loadtxt(DATA / oracle_name, skiprows=1)

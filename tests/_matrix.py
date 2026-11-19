@@ -188,6 +188,11 @@ def _step_plan(test_type):
     raise ValueError(f"unknown test_type {test_type!r}")
 
 
+def has_dynamic_step(test_type):
+    """True iff ``test_type``'s step plan holds a Dynamic step (a frequency-domain solve)."""
+    return any(kind == "D" for kind, _ in _step_plan(test_type))
+
+
 # ---------------------------------------------------------------------------
 # the pruned matrix
 # ---------------------------------------------------------------------------

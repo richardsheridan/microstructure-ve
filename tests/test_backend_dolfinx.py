@@ -14,18 +14,12 @@ from microstructure_ve.constitutive import NeoHookean
 from tests._helpers import (
     SCALE,
     homogeneous_simulation,
+    needs_complex,
+    needs_dolfinx,
     oracle_simulation_prony,
     synthetic_simulation,
 )
 from tests._matrix import PLASTIC_DISPLACEMENT, matrix_simulation
-
-try:
-    import dolfinx  # noqa: F401
-    HAS_DOLFINX = True
-except ImportError:
-    HAS_DOLFINX = False
-
-needs_dolfinx = unittest.skipUnless(HAS_DOLFINX, "needs the fenicsx env (dolfinx)")
 
 
 def _lame(E, nu):
@@ -53,6 +47,7 @@ class AssemblyTests(unittest.TestCase):
             space = assembly.Space.build(geom)
             self.assertAlmostEqual(space.area, (n * SCALE) ** dim, places=12)
 
+    @needs_complex
     def test_dg0_assignment_round_trips_microstructure(self):
         # a 2-material checkerboard: mu field must reflect each cell's modulus after the
         # original_cell_index remap (naive order would scramble the microstructure)
@@ -140,6 +135,7 @@ class PeriodicMpcTests(unittest.TestCase):
 
 
 @needs_dolfinx
+@needs_complex
 class AnalyticHomogeneousTests(unittest.TestCase):
     def _sigma(self, sim):
         # lateral_bc is now read off the Simulation's corner BCs, not passed in
@@ -179,6 +175,7 @@ class AnalyticHomogeneousTests(unittest.TestCase):
 
 
 @needs_dolfinx
+@needs_complex
 class PronyViscoelasticBehaviorTests(unittest.TestCase):
     """The silent-correctness fix: a Prony material must produce a frequency-varying,
     lossy homogenized modulus -- not the flat elastic the base ``complex_modulus`` gave.
@@ -311,6 +308,7 @@ class BelowYieldPlasticLuCountTests(unittest.TestCase):
 
 @needs_dolfinx
 class FrequencyParallelTests(unittest.TestCase):
+    @needs_complex
     def test_workers_match_serial(self):
         # frequency-varying (viscoelastic) sim so the parallel split is non-trivial
         from microstructure_ve.backends.dolfinx import _run as run
@@ -321,6 +319,7 @@ class FrequencyParallelTests(unittest.TestCase):
         parallel = run.run(sim, workers=2)
         np.testing.assert_allclose(parallel, serial, rtol=1e-9, atol=0)
 
+    @needs_complex
     def test_concurrent_runs_from_threads_match_serial(self):
         # The runner-level thread-safety guarantee: run() may be called from any number
         # of threads; calls serialize on the backend lock and each returns exactly what a
@@ -344,6 +343,7 @@ class FrequencyParallelTests(unittest.TestCase):
         for got, want in zip(threaded, serial):
             np.testing.assert_allclose(got, want, rtol=1e-9, atol=0)
 
+    @needs_complex
     def test_parallel_sweep_does_not_hold_backend_lock(self):
         # A workers>1 sweep touches no parent-process FE state (workers rebuild the
         # solver from the pickled sim), so its fan-out must run outside _BACKEND_LOCK:
@@ -383,6 +383,7 @@ class FrequencyParallelTests(unittest.TestCase):
         serial = run.run(sim, workers=1)
         np.testing.assert_allclose(result["out"], serial, rtol=1e-9, atol=0)
 
+    @needs_complex
     def test_parent_env_untouched_during_parallel_sweep(self):
         # Workers cap their own BLAS/OpenMP threads in-process (threadpoolctl); the parent's
         # os.environ must never be mutated. A watcher thread samples the BLAS env vars while
@@ -438,6 +439,7 @@ class FrequencyParallelTests(unittest.TestCase):
         self.assertTrue(counts, "no native thread pools reported")
         self.assertTrue(all(n == 1 for n in counts), f"workers not single-threaded: {counts}")
 
+    @needs_complex
     def test_workers_inside_worker_process_raises(self):
         # simulate being a spawned worker that re-ran the driver: parent_process() != None
         from unittest import mock
@@ -498,6 +500,7 @@ class InProcessThreadCapTests(unittest.TestCase):
             return False
         return cancel
 
+    @needs_complex
     def test_serial_sweep_caps_pools_and_restores_caller_limits(self):
         # workers=2 on a single frequency runs in-process like workers=1
         import threadpoolctl
@@ -516,6 +519,7 @@ class InProcessThreadCapTests(unittest.TestCase):
                 self._assert_capped(seen)
                 self.assertEqual(after, before, "caller's limits not restored after run")
 
+    @needs_complex
     def test_multistep_run_caps_pools_per_step_and_restores_caller_limits(self):
         import threadpoolctl
 
@@ -543,6 +547,7 @@ class InProcessThreadCapTests(unittest.TestCase):
                     self._assert_capped(seen)
                     self.assertEqual(after, before, "caller's limits not restored after run")
 
+    @needs_complex
     def test_stopped_run_restores_caller_limits(self):
         import threadpoolctl
 
@@ -565,6 +570,7 @@ class InProcessThreadCapTests(unittest.TestCase):
                     self._assert_capped(seen)
                     self.assertEqual(after, before, "caller's limits not restored after raise")
 
+    @needs_complex
     def test_solve_one_caps_pools_in_its_calling_thread_and_restores(self):
         # solver="iterative" polls cancel from the KSP monitor inside each solve_one call
         import threadpoolctl
@@ -588,6 +594,7 @@ class InProcessThreadCapTests(unittest.TestCase):
         self.assertEqual(after_elastic, before,
                          "caller's limits not restored after solve_one(elastic=True)")
 
+    @needs_complex
     def test_solve_one_from_another_thread_caps_pools_in_that_thread(self):
         # built in this thread, called in another: the cap and the restore follow the caller
         from concurrent.futures import ThreadPoolExecutor
@@ -614,6 +621,7 @@ class InProcessThreadCapTests(unittest.TestCase):
         self.assertEqual(after, before,
                          "caller's limits not restored in the thread that called solve_one")
 
+    @needs_complex
     def test_raising_solve_one_restores_caller_limits(self):
         # a Krylov solve cut off after one iteration raises from inside solve_one
         import threadpoolctl

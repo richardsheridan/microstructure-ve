@@ -12,15 +12,8 @@ import unittest
 
 import numpy as np
 
-from tests._matrix import is_fe_green, matrix_cases, matrix_simulation
-
-try:
-    import dolfinx  # noqa: F401
-    HAS_DOLFINX = True
-except ImportError:
-    HAS_DOLFINX = False
-
-needs_dolfinx = unittest.skipUnless(HAS_DOLFINX, "needs the fenicsx env (dolfinx)")
+from tests._helpers import needs_complex, needs_dolfinx
+from tests._matrix import has_dynamic_step, is_fe_green, matrix_cases, matrix_simulation
 
 
 def _lame(E, nu):
@@ -121,6 +114,8 @@ for _cell, _tt in matrix_cases():
     _method = _make_test(_cell, _tt)
     if not is_fe_green(_cell, _tt):
         _method = unittest.expectedFailure(_method)
+    if has_dynamic_step(_tt):
+        _method = needs_complex(_method)
     setattr(MatrixDolfinxTests, _name, _method)
 
 del _cell, _tt, _name, _method

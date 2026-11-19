@@ -10,15 +10,9 @@ import unittest
 
 import numpy as np
 
+from tests._helpers import needs_complex, needs_dolfinx
 from tests._matrix import matrix_simulation
 
-try:
-    import dolfinx  # noqa: F401
-    HAS_DOLFINX = True
-except ImportError:
-    HAS_DOLFINX = False
-
-needs_dolfinx = unittest.skipUnless(HAS_DOLFINX, "needs the fenicsx env (dolfinx)")
 
 _CELL = dict(mode="uniaxial_x", traction="free", bc="periodic", dim=2)
 
@@ -30,6 +24,7 @@ class IterativeSolverTests(unittest.TestCase):
 
         clear_cache()  # isolate: don't reuse a cached solver of the other kind
 
+    @needs_complex
     def test_iterative_matches_lu(self):
         from microstructure_ve.backends.dolfinx import clear_cache, run
 
@@ -44,6 +39,7 @@ class IterativeSolverTests(unittest.TestCase):
                     scale = float(np.max(np.abs(lu[:, 1:3]))) or 1e-30
                     np.testing.assert_allclose(it, lu, rtol=1e-6, atol=scale * 1e-6)
 
+    @needs_complex
     def test_auto_uses_lu_on_small_mesh(self):
         # below the LU time budget, "auto" must stay on LU -- identical to forcing it
         from microstructure_ve.backends.dolfinx import clear_cache, run
@@ -55,6 +51,7 @@ class IterativeSolverTests(unittest.TestCase):
         lu = run(matrix_simulation(**sim_kw), solver="lu")
         np.testing.assert_array_equal(auto, lu)
 
+    @needs_complex
     def test_cancel_raises_during_solve(self):
         from microstructure_ve.backends.dolfinx import run
         from microstructure_ve.backends.dolfinx._solver import Cancelled
@@ -63,6 +60,7 @@ class IterativeSolverTests(unittest.TestCase):
         with self.assertRaises(Cancelled):
             run(sim, solver="iterative", cancel=lambda: True)
 
+    @needs_complex
     def test_nonconvergence_raises_convergence_error(self):
         """A linear sweep whose Krylov solve does not converge raises the same ``ConvergenceError``
         as a non-converged nonlinear step."""
@@ -73,6 +71,7 @@ class IterativeSolverTests(unittest.TestCase):
             run(sim, solver="iterative", petsc_options={"ksp_max_it": 1, "ksp_rtol": 1e-14})
         self.assertIn("did not converge", str(cm.exception))
 
+    @needs_complex
     def test_nonconvergence_in_worker_reaches_caller_as_convergence_error(self):
         """A Krylov solve that does not converge inside a ``workers>1`` sweep reaches the caller as
         ``ConvergenceError``, not as a broken pool or a bare ``RuntimeError``."""

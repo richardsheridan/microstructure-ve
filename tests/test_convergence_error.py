@@ -13,16 +13,9 @@ import numpy as np
 
 from microstructure_ve.constitutive import Plastic
 
+from tests._helpers import needs_dolfinx
 from tests._matrix import matrix_simulation
 from tests._mechanical_mnist import mm_simulation
-
-try:
-    import dolfinx  # noqa: F401
-    HAS_DOLFINX = True
-except ImportError:
-    HAS_DOLFINX = False
-
-needs_dolfinx = unittest.skipUnless(HAS_DOLFINX, "needs the fenicsx env (dolfinx)")
 
 
 def _stiff_block_bitmap():

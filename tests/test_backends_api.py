@@ -8,11 +8,7 @@ lives in private ``_*`` submodules. Importing the dolfinx *package* (and its pur
 import importlib
 import unittest
 
-try:
-    import dolfinx  # noqa: F401
-    HAS_DOLFINX = True
-except ImportError:
-    HAS_DOLFINX = False
+from tests._helpers import HAS_DOLFINX
 
 
 class AbaqusBackendApiTests(unittest.TestCase):

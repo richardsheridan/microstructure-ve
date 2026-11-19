@@ -20,15 +20,15 @@ import unittest
 
 import numpy as np
 
-from tests._matrix import hold_by_prescribed, is_fe_green, matrix_cases, matrix_simulation
+from tests._helpers import needs_complex, needs_dolfinx
+from tests._matrix import (
+    has_dynamic_step,
+    hold_by_prescribed,
+    is_fe_green,
+    matrix_cases,
+    matrix_simulation,
+)
 
-try:
-    import dolfinx  # noqa: F401
-    HAS_DOLFINX = True
-except ImportError:
-    HAS_DOLFINX = False
-
-needs_dolfinx = unittest.skipUnless(HAS_DOLFINX, "needs the fenicsx env (dolfinx)")
 DATA = pathlib.Path(__file__).resolve().parent / "data"
 RTOL = 1e-4  # robust to ABAQUS .dat frequency rounding
 
@@ -123,7 +123,10 @@ for _cell, _tt in matrix_cases():
             _rtol = _HYPER_RTOL
         else:
             _rtol = _RTOL_OVERRIDES.get(_name, RTOL)
-        setattr(MatrixParityTests, _name, _make_test(_cell, _tt, _rtol))
+        _method = _make_test(_cell, _tt, _rtol)
+        if has_dynamic_step(_tt):
+            _method = needs_complex(_method)
+        setattr(MatrixParityTests, _name, _method)
         _attached += 1
 
 assert _attached, "no FE-green matrix cells to check parity for"

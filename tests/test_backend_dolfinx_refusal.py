@@ -14,16 +14,9 @@ from microstructure_ve.boundary import BoundaryCondition, Fixed, Prescribed
 from microstructure_ve.constitutive import ArrudaBoyce, Elastic
 from microstructure_ve.steps import Dynamic, Static, Step
 
-from tests._helpers import homogeneous_simulation
+from tests._helpers import homogeneous_simulation, needs_dolfinx
 from tests._matrix import hold_by_prescribed, matrix_simulation
 
-try:
-    import dolfinx  # noqa: F401
-    HAS_DOLFINX = True
-except ImportError:
-    HAS_DOLFINX = False
-
-needs_dolfinx = unittest.skipUnless(HAS_DOLFINX, "needs the fenicsx env (dolfinx)")
 
 _N = 4
 _STANDARD = {"mode": "uniaxial_x", "traction": "confined_slip", "bc": "standard", "dim": 2}

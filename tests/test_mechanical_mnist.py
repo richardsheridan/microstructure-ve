@@ -12,17 +12,10 @@ import numpy as np
 
 from microstructure_ve.constitutive import Elastic
 
+from tests._helpers import needs_dolfinx
 from tests._mechanical_mnist import (
     DATA_DIR, DISP_VALS, E_HIGH, POISSON, load_bitmap, load_psi, mm_simulation,
 )
-
-try:
-    import dolfinx  # noqa: F401
-    HAS_DOLFINX = True
-except ImportError:
-    HAS_DOLFINX = False
-
-needs_dolfinx = unittest.skipUnless(HAS_DOLFINX, "needs the fenicsx env (dolfinx)")
 
 
 def _homogeneous_bitmap():
