@@ -51,6 +51,10 @@ HAS_COMPLEX = _complex_build()
 needs_complex = unittest.skipUnless(
     HAS_COMPLEX, "needs a complex-scalar PETSc build (the fenicsx env)")
 
+# The refusal of frequency-domain solves is observable only in a real-scalar build.
+needs_real = unittest.skipUnless(
+    HAS_DOLFINX and not HAS_COMPLEX, "needs a real-scalar PETSc build (the fenicsx-real env)")
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PMMA_DATA = REPO_ROOT / "PMMA_shifted_R10_data.txt"
 
