@@ -27,9 +27,9 @@ Two loading variants bracket the estimate:
 * **free-lateral** -- lateral faces float (Poisson contraction, the physical tensile case):
   each increment also solves the lateral macro strain so lateral stress vanishes (upper bound).
 
-Run from the fenicsx env::
+Run from the fenicsx-complex env::
 
-    /home/rjs80/miniconda3/envs/fenicsx/bin/python tools/bench_hyperelastic_estimate.py
+    /home/rjs80/miniconda3/envs/fenicsx-complex/bin/python tools/bench_hyperelastic_estimate.py
 
 Prints a summary table to stdout and writes no file.
 

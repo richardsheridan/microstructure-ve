@@ -1,7 +1,7 @@
 """The Mechanical-MNIST benchmark: NeoHookean solve sanity + parity with committed data.
 
 ``tests/_mechanical_mnist.py`` builds the benchmark's uniaxial-extension Simulation; here
-we check (fenicsx env only, self-skipping elsewhere) that the coupled-Neo-Hookean DOLFINx
+we check (DOLFINx env only, self-skipping elsewhere) that the coupled-Neo-Hookean DOLFINx
 solve linearizes to the correct small-strain elasticity, and (once the data excerpts and
 energy output land) that the solved strain energies match the benchmark's committed rows.
 """

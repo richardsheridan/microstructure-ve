@@ -1,4 +1,4 @@
-"""FE-vs-ABAQUS parity over the feature matrix (requires the fenicsx env).
+"""FE-vs-ABAQUS parity over the feature matrix (requires a DOLFINx env).
 
 For every matrix cell the DOLFINx backend currently supports (``is_fe_green``), solve the
 *same* Simulation the committed ABAQUS oracle under ``tests/data/`` was generated from and

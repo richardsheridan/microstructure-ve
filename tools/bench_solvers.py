@@ -2,7 +2,7 @@
 
 This is the reproducer behind the solver-kind crossover: the ``_solver._COST`` LU cost model and the
 2D-diverges / 3D-iterative-wins boundaries recorded in the design doc (§10) are fit to its output.
-Run from anywhere with the fenicsx interpreter; it prints the table below to stdout and writes no
+Run from anywhere with the fenicsx-complex interpreter; it prints the table below to stdout and writes no
 file.
 
 Pinned to one BLAS thread (the serial cost-model regime). For each mesh size it times the

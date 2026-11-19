@@ -1,4 +1,4 @@
-"""DOLFINx red/green harness over the feature matrix (requires the fenicsx env).
+"""DOLFINx red/green harness over the feature matrix (requires a DOLFINx env).
 
 One test per matrix cell x {elastic, viscoelastic}, generated dynamically. Cells the FE
 backend supports today (``is_fe_green``) actually solve and assert closed-form physics on

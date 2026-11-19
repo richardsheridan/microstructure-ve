@@ -1,4 +1,4 @@
-"""FE-vs-ABAQUS parity for the DOLFINx backend (requires the fenicsx env).
+"""FE-vs-ABAQUS parity for the DOLFINx backend (requires a DOLFINx env).
 
 Each committed oracle under ``tests/data/`` is the ABAQUS reaction-force tsv for a small
 synthetic RVE; the FE backend solves the same Simulation (ignoring the corner BCs and

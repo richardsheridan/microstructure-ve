@@ -14,7 +14,11 @@ Sections instrumented:
 
 Usage::
 
-    /home/rjs80/miniconda3/envs/fenicsx/bin/python tools/profile_linear.py [--n N] [--freqs F]
+    /home/rjs80/miniconda3/envs/fenicsx-complex/bin/python tools/profile_linear.py \
+        [--n N] [--freqs F]
+
+It solves in the calling process, frequency-domain solves included, so it needs the complex-scalar
+build; in fenicsx-real its ``set_moduli`` call raises ``ScalarBuildError``.
 
 Default: n=50 (50x50 grid), F=20 frequencies, 2D two-phase viscoelastic, uniaxial_x free lateral.
 Prints the per-section tables to stdout and writes no file.

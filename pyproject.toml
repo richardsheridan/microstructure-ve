@@ -13,11 +13,12 @@ dependencies = ["numpy", "scipy"]
 
 # NOTE: the DOLFINx backend (microstructure_ve.backends.dolfinx) is NOT a pip extra.
 # fenics-dolfinx / dolfinx_mpc / a complex-PETSc build are conda-forge only and not
-# pip-installable in a working complex configuration. Use the conda env in environment.yml
-# (see docs/dolfinx_backend_design.md). The package imports dolfinx lazily, so it stays
-# importable (numpy-only) without that env. That conda env also provides threadpoolctl,
-# which the DOLFINx backend requires (backends/dolfinx/_run.py docstring); it is kept out of the
-# pip dependencies here so base installs stay numpy-only.
+# pip-installable in a working complex configuration. Use the conda envs in
+# environment-complex.yml and environment-real.yml (see docs/dolfinx_backend_design.md). The
+# package imports dolfinx lazily, so it stays importable (numpy-only) without them. Those
+# conda envs also provide threadpoolctl, which the DOLFINx backend requires
+# (backends/dolfinx/_run.py docstring); it is kept out of the pip dependencies here so base
+# installs stay numpy-only.
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,4 +1,4 @@
-"""The GMRES+ILU IterativeSolver path (requires the fenicsx env).
+"""The GMRES+ILU IterativeSolver path (requires a DOLFINx env).
 
 The iterative solver solves the *same* linear system as the LU path, so it is validated against
 ``LuSolver`` (not ABAQUS): on a small periodic cell the homogenized rows must agree. The suite's

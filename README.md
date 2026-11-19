@@ -6,7 +6,7 @@ A repository for FEA code developed by members of the Brinson Group at Duke Univ
 The base package (ABAQUS `.inp` emitter + solver-neutral spec) needs only numpy and scipy;
 the optional **DOLFINx** finite-element backend needs the FEniCSx stack, which is provided
 through conda-forge (not pip). The package imports dolfinx lazily, so the base install stays
-importable without it. Two conda env files are provided at the repo root.
+importable without it. Three conda env files are provided at the repo root.
 
 **Base only (numpy + scipy) — Linux, macOS, Windows.**
 
@@ -18,12 +18,30 @@ conda activate msve
 ```
 
 **DOLFINx FE backend — Linux & macOS (incl. Apple Silicon).** conda-forge ships `linux-64`,
-`osx-64` and `osx-arm64` builds:
+`osx-64` and `osx-arm64` builds. PETSc is built for one scalar type, so the backend comes as two
+envs with the same stack: `Dynamic` (steady-state) steps need complex arithmetic, and `Static`
+steps solve faster in real arithmetic. Install the one your sims need, or both:
 
 ```sh
-conda env create -f environment.yml           # creates env "fenicsx" (dolfinx + complex PETSc)
-conda activate fenicsx
+conda env create -f environment-complex.yml   # env "fenicsx-complex": dolfinx + complex PETSc
+conda env create -f environment-real.yml      # env "fenicsx-real": dolfinx + real PETSc
 ```
+
+Each recipe installs this checkout editable, so create both from the same checkout. With both,
+run from either env and name the other one's interpreter; `run` then solves each step in the
+build it needs, the other env's steps in a helper process, and returns one result:
+
+```sh
+conda activate fenicsx-complex
+export MSVE_DOLFINX_REAL_PYTHON="$CONDA_PREFIX/../fenicsx-real/bin/python"
+# or the other way round:
+conda activate fenicsx-real
+export MSVE_DOLFINX_COMPLEX_PYTHON="$CONDA_PREFIX/../fenicsx-complex/bin/python"
+```
+
+Without the variable, `fenicsx-complex` still solves `Static` steps, in complex arithmetic, and
+warns once (`ScalarBuildWarning`); `fenicsx-real` refuses a sim with a `Dynamic` step
+(`ScalarBuildError`).
 
 **DOLFINx FE backend — Windows.** conda-forge has **no native Windows DOLFINx build**.
 Run the Linux instructions inside **WSL2** (Ubuntu).
@@ -89,7 +107,7 @@ scale together — `img, scale = refine_matl_img(img, scale, refine=2)` (from
 `microstructure_ve.utils`) keeps the physical domain size; apply it after any
 `assign_intph`/`periodic_assign_intph` so interphase thicknesses stay in original-pixel units.
 
-Solve the same `sim` with the DOLFINx backend (needs the FEniCSx env):
+Solve the same `sim` with the DOLFINx backend (needs `fenicsx-complex`, or both envs; see Install):
 
 ```python
 from microstructure_ve.backends.dolfinx import run
@@ -102,7 +120,8 @@ result = run(sim)                      # ndarray (n_freqs + 1, 1 + 3*dim)
 ```
 
 Pass `workers=N` to fan the independent per-frequency solves
-across processes (guard the call under `if __name__ == "__main__":`).
+across processes (guard the call under `if __name__ == "__main__":`), and `threads=N` to let
+each solve use N threads in MUMPS and BLAS (default 1).
 The concurrency contract is in the module docstring of `microstructure_ve.backends.dolfinx._run`.
 
 ## Documentation

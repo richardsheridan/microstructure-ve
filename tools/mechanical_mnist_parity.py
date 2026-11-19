@@ -9,7 +9,7 @@ The benchmark's summary files are fixed-point with 5 decimals, so comparisons ca
 absolute floor of 1e-5 (their d=0.001 column rounds to exactly 0). The reported
 relative errors use max(|theirs|, 1e-5) in the denominator.
 
-Run under the fenicsx env::
+Run under the fenicsx-complex env::
 
     python tools/mechanical_mnist_parity.py --refine 1 2 3 --set all
 

@@ -1,14 +1,14 @@
-# Full FEniCSx (DOLFINx) backend environment for microstructure-ve.
+# Complex-scalar FEniCSx (DOLFINx) environment for microstructure-ve.
 #
-#   conda env create -f environment.yml
-#   conda activate fenicsx
+#   conda env create -f environment-complex.yml
+#   conda activate fenicsx-complex
 #
 # Provides the finite-element backend: dolfinx + dolfinx_mpc against a COMPLEX-scalar
 # PETSc build (steady-state dynamics needs complex arithmetic). Static steps run faster in
 # the real-scalar twin, environment-real.yml. conda-forge ships
 # linux-64, osx-64 and osx-arm64 builds; there is no native Windows build -- on Windows
 # use WSL2 or the dolfinx/dolfinx Docker image (see README "Install").
-name: fenicsx
+name: fenicsx-complex
 channels:
   - conda-forge
 dependencies:

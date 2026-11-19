@@ -36,7 +36,7 @@ class DolfinxBackendApiTests(unittest.TestCase):
         with self.assertRaises(ModuleNotFoundError):
             importlib.import_module("microstructure_ve.backends.dolfinx.spec")
 
-    @unittest.skipUnless(HAS_DOLFINX, "needs the fenicsx env (dolfinx)")
+    @unittest.skipUnless(HAS_DOLFINX, "needs a DOLFINx env (dolfinx)")
     def test_run_is_public(self):
         from microstructure_ve.backends.dolfinx import run
 
@@ -55,7 +55,7 @@ class DolfinxBackendApiTests(unittest.TestCase):
         self.assertNotIn("conda activate", msg)
         self.assertNotIn("docs/", msg)
 
-    @unittest.skipUnless(HAS_DOLFINX, "needs the fenicsx env (dolfinx)")
+    @unittest.skipUnless(HAS_DOLFINX, "needs a DOLFINx env (dolfinx)")
     def test_missing_threadpoolctl_gives_actionable_error(self):
         # threadpoolctl is part of the backend's FE stack: without it the entry points do not
         # resolve, with the same box-agnostic error a missing dolfinx gives. A child process

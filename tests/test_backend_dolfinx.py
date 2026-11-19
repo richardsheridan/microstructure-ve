@@ -1,4 +1,4 @@
-"""DOLFINx FE backend tests (require the fenicsx env; skip cleanly otherwise).
+"""DOLFINx FE backend tests (require a DOLFINx env; skip cleanly otherwise).
 
 Tests 1-4 are self-contained analytic checks needing no ABAQUS: mesh/dof construction,
 the periodic MPC, and homogeneous closed-form uniaxial stresses. ABAQUS-parity tests
