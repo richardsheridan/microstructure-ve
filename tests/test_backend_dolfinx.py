@@ -16,6 +16,7 @@ from tests._helpers import (
     homogeneous_simulation,
     needs_complex,
     needs_dolfinx,
+    native_arithmetic,
     oracle_simulation_prony,
     synthetic_simulation,
 )
@@ -247,6 +248,7 @@ class NeoHookeanZeroLambdaTests(unittest.TestCase):
 
 
 @needs_dolfinx
+@native_arithmetic
 class BelowYieldPlasticLuCountTests(unittest.TestCase):
     """A periodic ``Plastic`` cell driven within its elastic range performs no more numeric LU
     factorizations in a ``run`` than the same cell with ``Elastic`` phases, however many Newton
@@ -502,6 +504,7 @@ class _ThreadCapCase(unittest.TestCase):
 
 
 @needs_dolfinx
+@native_arithmetic
 class InProcessThreadCapTests(_ThreadCapCase):
     """Every in-process call that solves runs with each native thread pool capped to one
     thread by default in the calling thread, and hands the caller's own limits back on return or raise.
@@ -651,6 +654,7 @@ class InProcessThreadCapTests(_ThreadCapCase):
 
 
 @needs_dolfinx
+@native_arithmetic
 class ThreadsKnobTests(_ThreadCapCase):
     """``threads=N`` on ``run`` and ``build_solver`` caps each native thread pool at N threads
     wherever the default caps it at one, restores the caller's limits, and refuses an N that is

@@ -13,7 +13,7 @@ import numpy as np
 
 from microstructure_ve.constitutive import Plastic
 
-from tests._helpers import needs_dolfinx
+from tests._helpers import native_arithmetic, needs_dolfinx
 from tests._matrix import matrix_simulation
 from tests._mechanical_mnist import mm_simulation
 
@@ -67,6 +67,7 @@ class ConvergenceErrorTests(unittest.TestCase):
         with self.assertRaises(ConvergenceError):
             run(sim)
 
+    @native_arithmetic
     def test_periodic_plastic_newton_failure_raises(self):
         """A fully prescribed periodic plastic cell whose Newton solve is cut short of
         convergence raises instead of returning a row."""
@@ -78,6 +79,7 @@ class ConvergenceErrorTests(unittest.TestCase):
             with self.assertRaises(ConvergenceError):
                 run(sim)
 
+    @native_arithmetic
     def test_periodic_free_lateral_plastic_newton_failure_raises(self):
         """A periodic plastic cell with a free lateral face whose Newton solve is cut short of
         convergence raises instead of returning a row."""

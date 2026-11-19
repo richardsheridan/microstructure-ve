@@ -5,11 +5,15 @@ Tests build **small synthetic microstructures** here; they never load the 50x50
 ``PMMA_shifted_R10_data.txt`` master curve *is* used where a viscoelastic material is
 needed, so the emitted tables match what the package actually produces in practice.
 """
+import functools
+import os
 import pathlib
 import unittest
+from unittest import mock
 
 import numpy as np
 
+from microstructure_ve.backends.dolfinx._arithmetic import COMPLEX_PYTHON_VAR, REAL_PYTHON_VAR
 from microstructure_ve.boundary import (
     BoundaryCondition,
     Fixed,
@@ -54,6 +58,29 @@ needs_complex = unittest.skipUnless(
 # The refusal of frequency-domain solves is observable only in a real-scalar build.
 needs_real = unittest.skipUnless(
     HAS_DOLFINX and not HAS_COMPLEX, "needs a real-scalar PETSc build (the fenicsx-real env)")
+
+
+def native_arithmetic(test):
+    """Run ``test`` (a test method, or every ``test*`` method of a class) with both interpreter
+    variables unset, so the backend solves in the test's own process.
+
+    For tests that patch the process or measure it while it solves (thread pools, PETSc events,
+    module constants): a solve handed to the other build's interpreter would escape them.
+    """
+    if isinstance(test, type):
+        for name, attr in list(vars(test).items()):
+            if name.startswith("test") and callable(attr):
+                setattr(test, name, native_arithmetic(attr))
+        return test
+
+    @functools.wraps(test)
+    def wrapper(*args, **kwargs):
+        with mock.patch.dict(os.environ):
+            os.environ.pop(REAL_PYTHON_VAR, None)
+            os.environ.pop(COMPLEX_PYTHON_VAR, None)
+            return test(*args, **kwargs)
+    return wrapper
+
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PMMA_DATA = REPO_ROOT / "PMMA_shifted_R10_data.txt"
