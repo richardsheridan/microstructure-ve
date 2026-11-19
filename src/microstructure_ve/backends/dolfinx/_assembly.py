@@ -20,7 +20,7 @@ from petsc4py import PETSc
 import dolfinx
 from dolfinx import fem
 
-from . import _spec as spec
+from . import _arithmetic as arithmetic, _spec as spec
 from ._solver import require_complex_build
 
 _ELEMENT = {2: "quadrilateral", 3: "hexahedron"}
@@ -125,7 +125,7 @@ class MaterialFields:
 
         Raises ``ScalarBuildError`` in a real-scalar build.
         """
-        require_complex_build()
+        require_complex_build(arithmetic.in_process_refusal_message())
         E_cell = np.empty(len(self.mat_of_cell), dtype=complex)
         for mi, mod in enumerate(self.modulus_fns):
             E_cell[self.mat_of_cell == mi] = complex(np.asarray(mod(np.array([f]))).ravel()[0])

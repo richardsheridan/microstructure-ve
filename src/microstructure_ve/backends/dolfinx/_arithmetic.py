@@ -48,10 +48,24 @@ def native_static_warning():
     )
 
 
+_NEEDS_COMPLEX = (
+    "A frequency-domain (Dynamic) solve needs complex arithmetic, but this Python's PETSc is the "
+    "real-scalar build."
+)
+
+
 def refusal_message():
-    """The message for a frequency-domain solve refused in a real-scalar build."""
+    """The message for a frequency-domain solve ``run`` refuses in a real-scalar build."""
     return (
-        "A frequency-domain (Dynamic) solve needs complex arithmetic, but this Python's PETSc is "
-        f"the real-scalar build. Set {COMPLEX_PYTHON_VAR} to a Python whose PETSc is the "
-        "complex-scalar build, or run from that environment."
+        f"{_NEEDS_COMPLEX} Set {COMPLEX_PYTHON_VAR} to a Python whose PETSc is the complex-scalar "
+        "build, or run from that environment."
+    )
+
+
+def in_process_refusal_message():
+    """The message for a frequency-domain ``solve_one(f)`` refused in a real-scalar build."""
+    return (
+        f"{_NEEDS_COMPLEX} build_solver solves in this process, so {COMPLEX_PYTHON_VAR} does not "
+        "apply to it: call it from a Python whose PETSc is the complex-scalar build, or use run, "
+        f"which hands the sim to the interpreter {COMPLEX_PYTHON_VAR} names."
     )

@@ -357,7 +357,7 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
         out, energies = peer.solve(var, interpreter, sim, cancel, knobs)
     else:
         if arithmetic.needs_complex_build(sim):
-            require_complex_build()
+            require_complex_build(arithmetic.refusal_message())
         if COMPLEX_BUILD and _has_static(sim) and not os.environ.get(arithmetic.REAL_PYTHON_VAR):
             warnings.warn(arithmetic.native_static_warning(), ScalarBuildWarning)
         out, energies = _solve(sim, cancel=cancel, **knobs)
