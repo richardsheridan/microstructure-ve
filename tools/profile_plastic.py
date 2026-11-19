@@ -67,8 +67,10 @@ The changes, in the order they were made:
    warm-started re-solve.
 3. Modified Newton. At this size a native PETSc LU factorization costs 137 ms against 4 ms for
    a back-substitution, so the tangent and factorization are refreshed only when the
-   frozen-tangent rate stalls (``_FROZEN_RATIO``). A real-valued scipy ``splu`` is only
-   about 12 percent cheaper than the complex PETSc LU, so the complex build is kept.
+   frozen-tangent rate stalls (``_FROZEN_RATIO``). A real-valued scipy ``splu`` was only
+   about 12 percent cheaper than the complex native PETSc LU, so this study kept the complex
+   build. The real-scalar PETSc build with MUMPS saves much more; its Static steps run in the
+   ``fenicsx-real`` env, measured in ``tools/bench_grid_scaling.py``.
 4. Backtracking. Frozen steps, and full Newton steps too, can chatter in a two-cycle when
    Gauss points switch between the elastic and plastic branches of the return map. The
    standard shear_xy no_slip plastic cell oscillated between residuals 0.2296 and 0.2113

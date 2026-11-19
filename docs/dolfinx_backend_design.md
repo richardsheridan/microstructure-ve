@@ -6,9 +6,11 @@
 > DG0 fields / B-bar forms), `_constraints` (periodic MPC + interior pin), `_loading` (macro-loading
 > parse: driven axis/mode + free-vs-held lateral), `_solver` (MUMPS LU / GMRES+ILU, factorization
 > reuse), `_homogenize` (σ̄ + free-lateral superposition), `_standard` (direct-Dirichlet non-periodic
-> path), `_plastic` (J2 return-mapping, §12), and `_run` (orchestration + frequency-parallel sweep).
+> path), `_plastic` (J2 return-mapping, §12), `_hyperelastic` (finite strain, §13), `_arithmetic`
+> and `_peer` (which PETSc scalar build solves which step, and the peer process of the other build,
+> §14), and `_run` (orchestration + frequency-parallel sweep).
 > The public entry point is `from microstructure_ve.backends.dolfinx import run` →
-> `run(sim, output_path=…, bbar=…, workers=…, cancel=…, solver=…, petsc_options=…)` — no physics
+> `run(sim, output_path=…, …)`, whose docstring lists its execution keywords — no physics
 > kwargs; the problem (frequencies, driven axis/mode, free-vs-held lateral) is read from `sim`. It is
 > exercised by `tests/test_dolfinx_spec.py`
 > (msve tier) and `tests/test_backend_dolfinx.py` (dolfinx-gated: mesh/dof/MPC + the homogeneous
@@ -32,10 +34,9 @@ the `fenicsx` conda env (created 2026-06-12):
 | fenics-basix / fenics-ufl | 0.10.0 / 2025.2.1 |
 | python / numpy | 3.12.13 / 2.4.6 |
 
-Recreate with:
-```
-conda create -n fenicsx -c conda-forge python=3.12 fenics-dolfinx dolfinx_mpc 'petsc=*=*complex*' scipy
-```
+That env is now `fenicsx-complex`, with a real-scalar twin `fenicsx-real` (§14). Create both from
+the recipes `environment-complex.yml` and `environment-real.yml` (README "Install"); the recipes
+hold the current pins.
 
 ## 0. Implementation status (executed 2026-06-12)
 
@@ -424,9 +425,10 @@ invalid), monitoring the **true** residual (PETSc's default preconditioned-resid
 viscoelastic case but was **not robust** — it false-converges on the purely-elastic case, because the
 rigid-body modes on `V` are **not** the nullspace of the dolfinx_mpc *reduced* matrix (slave rows are
 identity rows, `‖A·(uniform translation)‖ ≈ 8 ≠ 0`); a robust nullspace solver needs an
-MPC-homogenized nullspace the shipped helper does not build. AMG is unavailable regardless — GAMG and
-hypre are real-only and the operator is complex — so the adopted solver is plain ILU-preconditioned
-GMRES, with no nullspace.
+MPC-homogenized nullspace the shipped helper does not build. AMG is unavailable for a `Dynamic`
+step regardless — GAMG and hypre are real-only and its operator is complex — so the adopted solver
+is plain ILU-preconditioned GMRES, with no nullspace. A `Static` step solved in the real build
+(§14) could use AMG; none does yet.
 
 **Benchmark** (per-frequency `solve_one`, one BLAS thread; reproducer `tools/bench_solvers.py`,
 whose module docstring records the current calibration under Results; native-LU times from the
@@ -487,12 +489,13 @@ Validated cell-by-cell against ABAQUS oracles (`tests/test_matrix_parity.py`).
 
 Design decisions and rationale:
 
-- **Return mapping in numpy at the quadrature points, not in UFL.** The FEniCSx env is a
-  *complex-scalar* PETSc build, where UFL yield conditionals (`max`, `conditional` on the Mises
-  test) are ill-defined. The radial return + algorithmic tangent are computed in real numpy over a
-  flat `(n_quad,)` batch and fed back as Quadrature-space coefficients (`sig_q`, `C_q`); the
-  assembled complex matrices carry real values. Quadrature degree 2 (4 pts/quad = CPE4, 8 pts/hex =
-  C3D8). The consistent tangent is the **closed-form algorithmic modulus** of the radial return
+- **Return mapping in numpy at the quadrature points, not in UFL.** A plastic `Static` step can
+  solve in the *complex-scalar* PETSc build (§14: with no real interpreter configured), where UFL
+  yield conditionals (`max`, `conditional` on the Mises test) are ill-defined. The radial return +
+  algorithmic tangent are computed in real numpy over a flat `(n_quad,)` batch and fed back as
+  Quadrature-space coefficients (`sig_q`, `C_q`); in the complex build the assembled matrices carry
+  real values, and in the real build the same code runs unchanged.
+  Quadrature degree 2 (4 pts/quad = CPE4, 8 pts/hex = C3D8). The consistent tangent is the **closed-form algorithmic modulus** of the radial return
   with piecewise-linear hardening, taken at the hardening slope the converged increment sits on. A
   point that does not yield gets the elastic stiffness of its own moduli, bitwise the same at every
   evaluation, so a cell that stays elastic leaves the tangent unchanged and the Newton refresh skips
@@ -650,3 +653,74 @@ strain energy the benchmark reports.
 
 The CPU-hour estimate for a 5000-microstructure, 12-extension tensile campaign is in the
 module docstring of `tools/bench_hyperelastic_estimate.py`.
+
+## 14. Scalar builds: real arithmetic for `Static` steps, complex for `Dynamic`
+
+A `Dynamic` (steady-state, perturbation) step solves the frequency-domain system, whose moduli
+are complex, so it needs complex arithmetic. A `Static` step (elastic, plastic, hyperelastic) is a
+real problem: a complex build solves it with zero imaginary parts and pays for complex arithmetic
+in every assembly, factorization and back-substitution. The answers agree to round-off; the cost
+of each build and of the solver threads is measured in the module docstring of
+`tools/bench_grid_scaling.py`.
+
+**Why two processes.** PETSc, petsc4py and dolfinx_mpc are compiled for one scalar type, a process
+can load only one build, and dolfinx_mpc assembles only forms of that type (complex128 in the
+complex build, float64 in the real one). So the backend comes as two conda envs with the same pins,
+`fenicsx-complex` (`environment-complex.yml`) and `fenicsx-real` (`environment-real.yml`), and a
+run that needs both builds uses a process of each.
+
+**Routing.** `run` reads two variables at call time, `MSVE_DOLFINX_REAL_PYTHON` and
+`MSVE_DOLFINX_COMPLEX_PYTHON`, each naming the other build's interpreter
+(`_arithmetic.peer_variable`). A step that carries a `Dynamic` subsection is a Dynamic step.
+
+| caller | steps | other variable set | other variable unset or empty |
+| --- | --- | --- | --- |
+| complex | `Static` only | all to the real peer | here, with a `ScalarBuildWarning` |
+| complex | `Dynamic` only | here | here |
+| complex | both | `Static` to the real peer, `Dynamic` here | here, with a `ScalarBuildWarning` |
+| real | `Static` only | here | here |
+| real | `Dynamic` only | all to the complex peer | `ScalarBuildError`, nothing solved |
+| real | both | `Static` here, `Dynamic` to the complex peer | `ScalarBuildError`, nothing solved |
+
+`build_solver` and its `solve_one`, the `workers>1` pool workers and a peer itself never route;
+in the real build a frequency-domain `solve_one(f)` raises `ScalarBuildError`.
+
+**The peer** (`_peer`) is a child process that runs the named interpreter on
+`microstructure_ve.backends.dolfinx._peer` as `__main__`, one per interpreter path, started on
+the first routed call and kept across calls with its own FE cache, since a cold import of the FE
+stack costs seconds. It talks over two pipes carrying pickles, so its stdout and stderr stay the caller's. On start it reports
+its scalar build and the directory of the `microstructure_ve` it imports; the caller refuses a peer
+of its own build or of another source tree with `ScalarBuildError`, and so a worktree's runs, whose
+`PYTHONPATH` the peer inherits, stay on the worktree's sources. The peer's environment is the
+caller's minus both variables. It leads its own process group: a cancel, an exception in the
+caller while it waits, or interpreter exit stops the whole group, pool workers included, with
+`SIGTERM` first so multiprocessing's resource tracker can unlink the pool's semaphores. Exceptions
+raised in the peer come back with their type and the peer's traceback as a note. `clear_cache`
+clears every live peer's cache, a busy one before its next request.
+`multiprocessing.set_executable` was not used: it sets one process-global interpreter, shared with
+the frequency fan-out pool, and a spawned child re-runs the caller's `__main__`.
+
+**Splitting a sim with both kinds of step** is valid because the two kinds share no state. A
+`Dynamic` step reads none of the plastic or hyperelastic state the `Static` steps carry and leaves
+none; the `Static` steps form one ordered chain. A driveless `Static` step inherits its drive only
+from the last earlier `Static` step that carried one: `check_supported` refuses a driveless
+`Static` step with no such step before it, since a perturbation step's drive is not a load a later
+general step keeps (as in ABAQUS). The caller sends the peer its share first, solves its own share,
+then collects the peer's rows and merges both in step order, so the two shares overlap in wall
+time. Each share ignores `workers`, as a native multi-step run does (§11).
+
+**Threads.** `run(threads=N)` and `build_solver(threads=N)` cap each native thread pool (OpenMP,
+BLAS, and so MUMPS) at `N` in every process that solves: the caller, a peer, and each pool worker.
+The concurrency contract in the `_run` module docstring is the statement. A split run can use
+`2 * N` cores while its shares overlap, and a `workers=W` sweep about `W * N`.
+
+**Consequences elsewhere.** The real-only AMG preconditioners bind only `Dynamic` steps (§10). The
+numpy return map of §12 still has to run in the complex build. The LU-versus-iterative cost model
+(`_solver._COST`) was fit at one thread in the complex build (its `TODO`).
+
+**Testing.** The gate is three suite runs: the numpy-only env; `fenicsx-complex` with
+`MSVE_DOLFINX_REAL_PYTHON` naming the real interpreter, so its `Static` solves go through the peer;
+and `fenicsx-real`. `tests/_helpers.py` holds `needs_complex` for tests that reach a
+frequency-domain solve and `native_arithmetic` for tests that instrument the process while it
+solves. `tests/test_dolfinx_arithmetic.py` covers the routing, the split and the peer's lifecycle,
+including a real-build caller through a child process.
