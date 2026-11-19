@@ -280,9 +280,9 @@ def rejected_sims():
 
 class CheckSupportedTests(unittest.TestCase):
     def test_driveless_static_step_after_only_dynamic_steps_is_refused_naming_it(self):
-        """A Static step with no drive of its own and no earlier Static step carrying one is
-        refused with ``NotImplementedError`` naming that step: a Dynamic step's drive is not one
-        a later Static step inherits."""
+        """A Static step with no drive of its own and no earlier Static step carrying one is refused
+        with ``NotImplementedError`` naming that step: a Dynamic step's drive is not one a later
+        Static step inherits."""
         from microstructure_ve.backends.dolfinx._loading import check_supported
 
         sims = {

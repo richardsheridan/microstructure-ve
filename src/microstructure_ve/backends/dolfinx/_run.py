@@ -3,35 +3,34 @@
 ``build_solver`` assembles the spec/assembly/constraints/solver/homogenize pieces into a
 ``solve_one(f)`` closure (all dolfinx/PETSc state captured in it). ``run`` sweeps the frequencies
 and optionally writes a readODB-style tsv, optionally fanning the independent per-frequency solves
-across a spawn ProcessPool (``workers``), or hands the sim, or the other build's share of a sim with both Static and Dynamic steps, to a peer process of the other PETSc scalar build (``_peer``). The macro loading is parsed from the sim by
-``_loading.macro_loading``.
+across a spawn ProcessPool (``workers``), or hands the sim, or the other build's share of a sim with
+both Static and Dynamic steps, to a peer process of the other PETSc scalar build (``_peer``). The
+macro loading is parsed from the sim by ``_loading.macro_loading``.
 
-Concurrency contract (the guarantee): every entry point of this backend -- ``run``,
-``build_solver`` plus the ``solve_one`` closures it returns, and ``clear_cache`` --
-is safe to call concurrently from multiple threads. Everything that touches in-process
-FE state (serial and multistep ``run``, ``build_solver``/``solve_one``, ``clear_cache``)
-serializes on one process-wide re-entrant lock (``_BACKEND_LOCK``): the cached
-``_FEProblem``s and the dolfinx/PETSc objects inside them are shared mutable state
-(material refill, matrix reassembly, factorization reuse), so those calls execute one
-at a time, each seeing a consistent cache -- *safe but not parallel*. Each of those calls
-that solves (a serial or single-frequency sweep, a multistep or Static ``run``, the
-``build_solver`` build, every ``solve_one`` call) also runs at a fixed thread count: while it holds the
-lock, every native BLAS/OpenMP thread pool threadpoolctl finds is capped to exactly ``threads`` threads (default 1) in
-the calling thread, callbacks it makes (``cancel``) included, and the caller's previous
-limits come back when the call returns or raises (a nested call leaves the outer cap in
-place). An OpenMP cap binds the calling thread only, but a BLAS cap is process-wide: while
-such a call runs, numpy BLAS work in the caller's other threads is capped too, and
-a limit another thread sets meanwhile is overwritten when the call restores its own. The
-exception is a ``workers>1`` frequency sweep: its worker processes rebuild
-everything from the pickled sim and share nothing with this process's cache, so the
-fan-out runs *outside* the lock and parallel sweeps launched from several threads
-genuinely overlap. It runs N worker processes, each capping its own pools at ``threads`` for
-its lifetime (``_init_worker``), while the calling thread, which solves nothing, is not
-capped. A ``run`` handed to a peer process (``_peer``) touches no FE state here either, so it too
-runs outside the lock and uncapped; calls routed to one peer serialize on that peer's own lock.
-A split run (``_solve_split``) holds its peer's lock throughout and takes the backend lock, capped,
-only while it solves its own share, so a call holding both locks takes the peer's first.
-No path mutates ``os.environ``.
+Concurrency contract (the guarantee): every entry point of this backend -- ``run``, ``build_solver``
+plus the ``solve_one`` closures it returns, and ``clear_cache`` -- is safe to call concurrently from
+multiple threads. Everything that touches in-process FE state (serial and multistep ``run``,
+``build_solver``/``solve_one``, ``clear_cache``) serializes on one process-wide re-entrant lock
+(``_BACKEND_LOCK``): the cached ``_FEProblem``s and the dolfinx/PETSc objects inside them are shared
+mutable state (material refill, matrix reassembly, factorization reuse), so those calls execute one
+at a time, each seeing a consistent cache -- *safe but not parallel*. Each of those calls that
+solves (a serial or single-frequency sweep, a multistep or Static ``run``, the ``build_solver``
+build, every ``solve_one`` call) also runs at a fixed thread count: while it holds the lock, every
+native BLAS/OpenMP thread pool threadpoolctl finds is capped to exactly ``threads`` threads (default
+1) in the calling thread, callbacks it makes (``cancel``) included, and the caller's previous limits
+come back when the call returns or raises (a nested call leaves the outer cap in place). An OpenMP
+cap binds the calling thread only, but a BLAS cap is process-wide: while such a call runs, numpy
+BLAS work in the caller's other threads is capped too, and a limit another thread sets meanwhile is
+overwritten when the call restores its own. The exception is a ``workers>1`` frequency sweep: its
+worker processes rebuild everything from the pickled sim and share nothing with this process's
+cache, so the fan-out runs *outside* the lock and parallel sweeps launched from several threads
+genuinely overlap. It runs N worker processes, each capping its own pools at ``threads`` for its
+lifetime (``_init_worker``), while the calling thread, which solves nothing, is not capped. A
+``run`` handed to a peer process (``_peer``) touches no FE state here either, so it too runs outside
+the lock and uncapped; calls routed to one peer serialize on that peer's own lock. A split run
+(``_solve_split``) holds its peer's lock throughout and takes the backend lock, capped, only while
+it solves its own share, so a call holding both locks takes the peer's first. No path mutates
+``os.environ``.
 """
 from __future__ import annotations
 
@@ -161,10 +160,9 @@ def build_solver(sim, bbar=True, cancel=None, petsc_options=None, solver="auto",
     modulus ``E*(f)`` even when the sim's step is Static; ``solve_one(f, elastic=True)`` solves with
     the real elastic moduli instead, as ``run`` does for a Static step. In a real-scalar PETSc build
     the build never raises ``ScalarBuildError``, ``solve_one(f)`` raises ``ScalarBuildError`` and
-    ``solve_one(f, elastic=True)`` solves. The mesh-only setup (mesh,
-    dof map, forms, MPC/BCs, factorizable matrix) is cached by mesh shape and reused across cells
-    (see ``_fe_problem``); only the per-cell material mapping and the per-frequency matrix values
-    are refilled.
+    ``solve_one(f, elastic=True)`` solves. The mesh-only setup (mesh, dof map, forms, MPC/BCs,
+    factorizable matrix) is cached by mesh shape and reused across cells (see ``_fe_problem``); only
+    the per-cell material mapping and the per-frequency matrix values are refilled.
 
     Dispatches on the model's boundary conditions: *Periodic* (carries a
     ``PeriodicBoundaryConstraint``) -> corner-driven homogenization via MPC; *Standard* ->
@@ -259,8 +257,9 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
 
     Each step's rows report that step's own drive and the reaction to it. A periodic ``Static`` step
     with no drive of its own reports the drive of the last ``Static`` step that carried one; a
-    ``Dynamic`` step with no drive of its own, a driveless first step, or a driveless ``Static`` step with no earlier ``Static`` step carrying a drive, is refused, as is a step
-    that drives other components than the first (``_loading.check_supported``).
+    ``Dynamic`` step with no drive of its own, a driveless first step, or a driveless ``Static``
+    step with no earlier ``Static`` step carrying a drive, is refused, as is a step that drives
+    other components than the first (``_loading.check_supported``).
 
     Each row is ``[frame_value, RF_Real_1..d, RF_Imag_1..d, U_1..d]`` (same columns as the ABAQUS
     readODB tsv; ``frame_value`` is the frequency for a Dynamic sweep, the step time for a
@@ -276,10 +275,9 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
              ABAQUS CPE4/C3D8 B-bar and avoids Q1 volumetric locking).
     workers: 1 = serial. >1 spawns a ProcessPoolExecutor and splits the independent
              per-frequency solves across processes -- each worker builds the solver once, then
-             solves its share capped at ``threads`` (module docstring). A driver that calls this with
-             workers>1
-             must guard the call under ``if __name__ == "__main__":`` (the standard "spawn"
-             requirement) or the workers will re-import and re-run it.
+             solves its share capped at ``threads`` (module docstring). A driver that calls this
+             with workers>1 must guard the call under ``if __name__ == "__main__":`` (the standard
+             "spawn" requirement) or the workers will re-import and re-run it.
     cancel:  callable() -> bool, or None. Polled before each frequency. Stop the sweep
              either by returning a truthy value (raises ``Cancelled``) or by raising your own
              exception (propagates unchanged) -- the latter lets a caller carry a reason/payload out
@@ -316,31 +314,33 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     Refusal: a sim that ``_loading.check_supported`` rejects raises that check's
     ``NotImplementedError`` (unsupported feature) or ``ValueError`` (malformed sim) before any
     solver is built. After that check, a sim with any ``Dynamic`` step raises ``ScalarBuildError``
-    (a ``RuntimeError``) in a real-scalar PETSc build with ``MSVE_DOLFINX_COMPLEX_PYTHON`` unset or empty, before any solver is built or worker started
-    and without writing ``output_path``; ``Static`` steps solve in either build.
+    (a ``RuntimeError``) in a real-scalar PETSc build with ``MSVE_DOLFINX_COMPLEX_PYTHON`` unset or
+    empty, before any solver is built or worker started and without writing ``output_path``;
+    ``Static`` steps solve in either build.
 
     Scalar build: when ``_arithmetic.peer_variable`` names a variable for ``sim`` and that variable
-    is set, the whole sim is solved by a peer process running the interpreter it names
-    (``_peer``), after every check above, and its rows, energies and exceptions are returned or
-    raised here; ``output_path`` is written here. ``cancel`` is polled while the peer solves; either
-    trigger kills the peer. A sim with both Static and Dynamic steps is split instead
-    (``_solve_split``): its Static steps solve in the real build and its Dynamic steps in the
-    complex build, this process solving its own build's share, and the rows merge in step order;
-    a failure of either share stops the peer if it is still solving and writes no ``output_path``. An interpreter that is missing, of this process's own build, or imports
-    another ``microstructure_ve`` source tree raises ``ScalarBuildError``. A complex build with
-    ``MSVE_DOLFINX_REAL_PYTHON`` unset solves a sim's Static steps itself and emits a
-    ``ScalarBuildWarning``, shown once per process under Python's default warning filter.
+    is set, the whole sim is solved by a peer process running the interpreter it names (``_peer``),
+    after every check above, and its rows, energies and exceptions are returned or raised here;
+    ``output_path`` is written here. ``cancel`` is polled while the peer solves; either trigger
+    kills the peer. A sim with both Static and Dynamic steps is split instead (``_solve_split``):
+    its Static steps solve in the real build and its Dynamic steps in the complex build, this
+    process solving its own build's share, and the rows merge in step order; a failure of either
+    share stops the peer if it is still solving and writes no ``output_path``. An interpreter that
+    is missing, of this process's own build, or imports another ``microstructure_ve`` source tree
+    raises ``ScalarBuildError``. A complex build with ``MSVE_DOLFINX_REAL_PYTHON`` unset solves a
+    sim's Static steps itself and emits a ``ScalarBuildWarning``, shown once per process under
+    Python's default warning filter.
 
     Non-convergence: a hyperelastic or plastic ``Static`` step whose Newton solve, free lateral
     entries included, misses its tolerance, or an iterative linear solve that does not
     converge, raises ``ConvergenceError`` (a ``RuntimeError``) and returns no row.
 
-    Thread safety: ``run`` may be called concurrently from multiple threads; which calls
-    serialize on the backend lock and run capped at ``threads``, and why a ``workers>1`` sweep overlaps,
-    is the module docstring's concurrency contract. A ``cancel`` callback always runs in the
-    calling thread; on the locked (serial/multistep) paths it must not call back into this
-    backend from *another* thread and wait on it (that would deadlock) -- in a ``workers>1``
-    sweep the lock is not held, so that caveat does not apply.
+    Thread safety: ``run`` may be called concurrently from multiple threads; which calls serialize
+    on the backend lock and run capped at ``threads``, and why a ``workers>1`` sweep overlaps, is
+    the module docstring's concurrency contract. A ``cancel`` callback always runs in the calling
+    thread; on the locked (serial/multistep) paths it must not call back into this backend from
+    *another* thread and wait on it (that would deadlock) -- in a ``workers>1`` sweep the lock is
+    not held, so that caveat does not apply.
     """
     _check_threads(threads)
     dim = sim.model.nodes.dim

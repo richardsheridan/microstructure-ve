@@ -8,13 +8,13 @@ persists across consecutive plastic Static steps (load/reverse hysteresis).
 
 Design constraints (docs/dolfinx_backend_design.md, section 12):
 
-* **Real values in either PETSc build** -- UFL yield conditionals on complex scalars are ill-defined,
-  so the radial return runs in **numpy at the quadrature points** (real arithmetic) and is fed
-  back as Quadrature-space coefficients: the stress ``sig_q`` (residual) and algorithmic tangent
-  ``C_q`` (Jacobian). Assembled matrices/vectors carry real values, in a complex build too.
-* **Hand-rolled Newton** (``_nonlinear.modified_newton``) over the ``dolfinx_mpc`` assemble +
-  LU path; ``dolfinx_mpc.NonlinearProblem``/SNES is skipped in complex builds and would not
-  let us refresh the return-map coefficients between iterations.
+* **Real values in either PETSc build** -- UFL yield conditionals on complex scalars are
+  ill-defined, so the radial return runs in **numpy at the quadrature points** (real arithmetic) and
+  is fed back as Quadrature-space coefficients: the stress ``sig_q`` (residual) and algorithmic
+  tangent ``C_q`` (Jacobian). Assembled matrices/vectors carry real values, in a complex build too.
+* **Hand-rolled Newton** (``_nonlinear.modified_newton``) over the ``dolfinx_mpc`` assemble + LU
+  path; ``dolfinx_mpc.NonlinearProblem``/SNES is skipped in complex builds and would not let us
+  refresh the return-map coefficients between iterations.
 * **B-bar** (mean-dilatation) on the strain removes Q1/Q1-hex volumetric locking from J2's
   near-isochoric plastic flow, matching the elastic path's selective reduced integration.
 * Quadrature degree 2 -> 4 Gauss points on a quad (CPE4) / 8 on a hex (C3D8).

@@ -85,8 +85,8 @@ def _part(sim, dynamic):
 
 
 def _plastic_reversal_after_dynamic():
-    """A plastic Static, Dynamic, Static sim whose last step reverses the first step's drive, so
-    its row depends on the plastic strain the first step left."""
+    """A plastic Static, Dynamic, Static sim whose last step reverses the first step's drive, so its
+    row depends on the plastic strain the first step left."""
     sim = matrix_simulation(test_type="hyperelastic_plastic_sd", n=_N, **PLASTIC_MULTISTEP_CELL)
     reversed_drives = [BoundaryCondition(s.target, Prescribed(list(s.constraint.dofs),
                                                               -s.constraint.value))
@@ -96,8 +96,8 @@ def _plastic_reversal_after_dynamic():
 
 
 def _mixed_sims():
-    """Every matrix sim with both Static and Dynamic steps, and a plastic Static, Dynamic,
-    Static sim, by name."""
+    """Every matrix sim with both Static and Dynamic steps, and a plastic Static, Dynamic, Static
+    sim, by name."""
     sims = {test_type: matrix_simulation(test_type=test_type, n=_N, **cell)
             for cell, test_type in matrix_cases()
             if {kind for kind, _ in _step_plan(test_type)} == {"S", "D"}}
@@ -143,9 +143,9 @@ class RealBuildTests(unittest.TestCase):
         self.assertTrue(issubclass(ScalarBuildError, RuntimeError))
 
     def test_run_refuses_a_sim_with_a_dynamic_step_before_solving_or_writing(self):
-        """With no complex interpreter configured, ``run`` on a sim with any Dynamic step raises ``ScalarBuildError`` naming the
-        complex-interpreter variable, before any step solves (``cancel`` is never polled) and
-        without creating or touching ``output_path``."""
+        """With no complex interpreter configured, ``run`` on a sim with any Dynamic step raises
+        ``ScalarBuildError`` naming the complex-interpreter variable, before any step solves
+        (``cancel`` is never polled) and without creating or touching ``output_path``."""
         sims = {
             "periodic dynamic": homogeneous_simulation(n=3, dim=2),
             "standard dynamic": matrix_simulation(test_type="viscoelastic", n=_N, **_STANDARD),
@@ -198,9 +198,9 @@ class RealBuildTests(unittest.TestCase):
         self.assertEqual(starts, [])
 
     def test_solve_one_refuses_frequency_domain_and_solves_elastic(self):
-        """``build_solver`` returns for any sim; its ``solve_one(f)`` raises
-        ``ScalarBuildError`` naming the complex-interpreter variable, whatever the sim's steps,
-        while ``solve_one(f, elastic=True)`` returns a row."""
+        """``build_solver`` returns for any sim; its ``solve_one(f)`` raises ``ScalarBuildError``
+        naming the complex-interpreter variable, whatever the sim's steps, while
+        ``solve_one(f, elastic=True)`` returns a row."""
         sims = {
             "periodic dynamic": homogeneous_simulation(n=3, dim=2),
             "periodic static": matrix_simulation(test_type="elastic", n=_N, **_PERIODIC),
@@ -220,8 +220,8 @@ class RealBuildTests(unittest.TestCase):
                     self.assertTrue(np.all(np.isfinite(row)))
 
     def test_static_runs_solve_without_complex_warning(self):
-        """A Static run (elastic, plastic or hyperelastic; periodic or standard) returns its
-        rows and never casts a complex value into the real build's fields."""
+        """A Static run (elastic, plastic or hyperelastic; periodic or standard) returns its rows
+        and never casts a complex value into the real build's fields."""
         from numpy.exceptions import ComplexWarning
 
         from microstructure_ve.backends.dolfinx import clear_cache, run
@@ -274,8 +274,8 @@ class PeerConfigurationTests(unittest.TestCase):
 
     def test_missing_interpreter_is_reported_after_argument_checks(self):
         """A path that does not exist or cannot be executed raises ``ScalarBuildError``; a call
-        whose own arguments are bad raises their ``ValueError`` instead, before any interpreter
-        is tried."""
+        whose own arguments are bad raises their ``ValueError`` instead, before any interpreter is
+        tried."""
         from microstructure_ve.backends.dolfinx import run
 
         var, sim = _routed_case()
@@ -306,10 +306,9 @@ class PeerConfigurationTests(unittest.TestCase):
                 self._assert_refused(var, path, sim)
 
     def test_mixed_sim_is_refused_before_any_step_solves(self):
-        """A sim with both Static and Dynamic steps, run with the other build's variable naming
-        no usable interpreter, raises ``ScalarBuildError`` naming the variable and the path
-        before any step solves (``cancel`` is never polled) and without writing
-        ``output_path``."""
+        """A sim with both Static and Dynamic steps, run with the other build's variable naming no
+        usable interpreter, raises ``ScalarBuildError`` naming the variable and the path before any
+        step solves (``cancel`` is never polled) and without writing ``output_path``."""
         from microstructure_ve.backends.dolfinx import ScalarBuildError, run
 
         var = _REAL_VAR if HAS_COMPLEX else _COMPLEX_VAR
@@ -336,8 +335,8 @@ class PeerConfigurationTests(unittest.TestCase):
 
 @needs_complex
 class ComplexBuildWithoutRealPeerTests(unittest.TestCase):
-    """With no real-build interpreter configured, the complex build solves Static steps in
-    complex arithmetic and says so with a ``ScalarBuildWarning`` naming the variable."""
+    """With no real-build interpreter configured, the complex build solves Static steps in complex
+    arithmetic and says so with a ``ScalarBuildWarning`` naming the variable."""
 
     def setUp(self):
         env = mock.patch.dict(os.environ)
@@ -354,9 +353,9 @@ class ComplexBuildWithoutRealPeerTests(unittest.TestCase):
         os.environ.pop(_REAL_VAR)
 
     def test_static_solve_warns_once_naming_the_real_interpreter_variable(self):
-        """Static runs from different call sites, under Python's default warning filter, emit
-        one ``ScalarBuildWarning`` (a ``UserWarning``) naming the variable; a fresh warning
-        context, and a mixed Static and Dynamic sim, see it again."""
+        """Static runs from different call sites, under Python's default warning filter, emit one
+        ``ScalarBuildWarning`` (a ``UserWarning``) naming the variable; a fresh warning context, and
+        a mixed Static and Dynamic sim, see it again."""
         from microstructure_ve.backends.dolfinx import ScalarBuildWarning, run
 
         self.assertTrue(issubclass(ScalarBuildWarning, UserWarning))
@@ -379,8 +378,8 @@ class ComplexBuildWithoutRealPeerTests(unittest.TestCase):
                 self.assertIn(_REAL_VAR, str(cm.warning))
 
     def test_solves_without_a_static_step_in_run_do_not_warn(self):
-        """A Dynamic-only ``run``, and ``build_solver`` with ``solve_one(f, elastic=True)``,
-        emit no ``ScalarBuildWarning``."""
+        """A Dynamic-only ``run``, and ``build_solver`` with ``solve_one(f, elastic=True)``, emit no
+        ``ScalarBuildWarning``."""
         from microstructure_ve.backends.dolfinx import ScalarBuildWarning, build_solver, run
 
         with warnings.catch_warnings(record=True) as caught:
@@ -569,8 +568,8 @@ with open(sys.argv[2], "wb") as f:
 
 @needs_real_peer
 class RealPeerTests(unittest.TestCase):
-    """In the complex build, a sim with no Dynamic step is solved by the real-build peer named
-    by the variable, the Static steps of a sim that also has Dynamic steps are solved there, and
+    """In the complex build, a sim with no Dynamic step is solved by the real-build peer named by
+    the variable, the Static steps of a sim that also has Dynamic steps are solved there, and
     ``run`` answers as a native run would."""
 
     @classmethod
@@ -602,8 +601,8 @@ class RealPeerTests(unittest.TestCase):
         return out
 
     def _routed(self, sim, **kwargs):
-        """``run`` with the real interpreter configured: no solve in this process, no warning
-        about the real interpreter."""
+        """``run`` with the real interpreter configured: no solve in this process, no warning about
+        the real interpreter."""
         from microstructure_ve.backends.dolfinx import run
 
         with warnings.catch_warnings(record=True) as caught:
@@ -659,9 +658,9 @@ class RealPeerTests(unittest.TestCase):
         _assert_round_off(self._routed(elastic), self._native(elastic))
 
     def test_cancel_stops_a_routed_solve_and_the_next_routed_run_solves(self):
-        """A ``cancel`` that turns truthy, or raises, while the peer solves a long Static step
-        stops the run with ``Cancelled`` or the callback's own exception, and the next routed
-        run returns the native rows."""
+        """A ``cancel`` that turns truthy, or raises, while the peer solves a long Static step stops
+        the run with ``Cancelled`` or the callback's own exception, and the next routed run returns
+        the native rows."""
         from microstructure_ve.backends.dolfinx import Cancelled, run
 
         long_sim = matrix_simulation(test_type="reduced_polynomial", mode="uniaxial_x",
@@ -712,9 +711,9 @@ class RealPeerTests(unittest.TestCase):
         return out, native
 
     def test_cancel_of_one_thread_leaves_a_run_queued_on_the_same_peer_solving(self):
-        """While one thread's routed run of a long sim is in flight, a second thread's routed
-        run queues on the same peer; cancelling the first raises ``Cancelled`` there, and the
-        second still returns the native rows."""
+        """While one thread's routed run of a long sim is in flight, a second thread's routed run
+        queues on the same peer; cancelling the first raises ``Cancelled`` there, and the second
+        still returns the native rows."""
         out, native = self._concurrent_child("two_threads_one_peer")
         self.assertIn("a_error", out, "the long run was not stopped")
         self.assertTrue(out["a_error"].startswith("Cancelled"), out["a_error"])
@@ -722,15 +721,15 @@ class RealPeerTests(unittest.TestCase):
         _assert_round_off(out["b"], native)
 
     def test_clear_cache_from_a_routed_runs_own_cancel_returns(self):
-        """A routed run whose ``cancel`` calls ``clear_cache`` and returns False completes with
-        the native rows instead of waiting on its own peer."""
+        """A routed run whose ``cancel`` calls ``clear_cache`` and returns False completes with the
+        native rows instead of waiting on its own peer."""
         out, native = self._concurrent_child("clear_cache_in_cancel")
         self.assertNotIn("small_error", out)
         _assert_round_off(out["small"], native)
 
     def test_peer_from_another_source_tree_is_refused(self):
-        """A real interpreter that imports ``microstructure_ve`` from another source tree
-        raises ``ScalarBuildError`` naming the variable and the path."""
+        """A real interpreter that imports ``microstructure_ve`` from another source tree raises
+        ``ScalarBuildError`` naming the variable and the path."""
         import microstructure_ve
 
         from microstructure_ve.backends.dolfinx import ScalarBuildError, run
@@ -752,8 +751,8 @@ class RealPeerTests(unittest.TestCase):
         self.assertIn(str(wrapper), str(cm.exception))
 
     def test_real_build_caller_solves_dynamic_sims_through_the_complex_peer(self):
-        """A real-build process with the complex interpreter configured returns, for a
-        Dynamic-only and a Static-then-Dynamic sim, the rows this complex process computes."""
+        """A real-build process with the complex interpreter configured returns, for a Dynamic-only
+        and a Static-then-Dynamic sim, the rows this complex process computes."""
         sims = [homogeneous_simulation(n=3, dim=2, f_count=2),
                 matrix_simulation(test_type="viscoelastic_sd", n=_N, **_PERIODIC)]
         native = [self._native(sim) for sim in sims]
@@ -775,10 +774,9 @@ class RealPeerTests(unittest.TestCase):
             _assert_round_off(got, want)
 
     def test_mixed_sims_solve_dynamic_steps_here_and_static_steps_in_the_real_peer(self):
-        """A sim with both Static and Dynamic steps returns the native rows to round-off, in
-        step order, while this process logs the solve events of the sim's Dynamic steps alone
-        and emits no ``ScalarBuildWarning``; ``output_path`` holds the rows in the native file
-        format."""
+        """A sim with both Static and Dynamic steps returns the native rows to round-off, in step
+        order, while this process logs the solve events of the sim's Dynamic steps alone and emits
+        no ``ScalarBuildWarning``; ``output_path`` holds the rows in the native file format."""
         from microstructure_ve.backends.dolfinx import ScalarBuildWarning, run
 
         for name, sim in _mixed_sims().items():
@@ -804,9 +802,9 @@ class RealPeerTests(unittest.TestCase):
                                            split, rtol=1e-7)
 
     def test_real_build_caller_solves_static_steps_itself_and_dynamic_steps_in_the_peer(self):
-        """A real-build process with the complex interpreter configured returns, for a sim with
-        both Static and Dynamic steps, the rows this complex process computes, and logs the
-        solve events of the sim's Static steps alone."""
+        """A real-build process with the complex interpreter configured returns, for a sim with both
+        Static and Dynamic steps, the rows this complex process computes, and logs the solve events
+        of the sim's Static steps alone."""
         mixed = _mixed_sims()
         native = {name: self._native(sim) for name, sim in mixed.items()}
         pairs = [(sim, _part(sim, dynamic=False)) for sim in mixed.values()]
@@ -832,10 +830,10 @@ class RealPeerTests(unittest.TestCase):
                                  "the real process did not solve exactly the Static steps")
 
     def test_cancel_while_the_real_peer_solves_stops_a_mixed_run(self):
-        """A ``cancel`` that turns truthy, or raises, once polled more times than the sim has
-        steps, while the peer still solves a long plastic Static step, stops the run with
-        ``Cancelled`` or the callback's own exception without writing ``output_path``, and the
-        next mixed run returns the native rows."""
+        """A ``cancel`` that turns truthy, or raises, once polled more times than the sim has steps,
+        while the peer still solves a long plastic Static step, stops the run with ``Cancelled`` or
+        the callback's own exception without writing ``output_path``, and the next mixed run returns
+        the native rows."""
         from microstructure_ve.backends.dolfinx import Cancelled, run
 
         long_sim = matrix_simulation(test_type="hyperelastic_plastic_sd", n=_N,
@@ -866,8 +864,8 @@ class RealPeerTests(unittest.TestCase):
 
     def test_cancelled_parallel_sweep_through_the_complex_peer_leaves_no_process(self):
         """A real-build process cancels a routed ``workers=2`` sweep once the complex peer's pool
-        has started: ``run`` raises ``Cancelled`` and every process below the caller at that
-        moment is gone within a bounded wait."""
+        has started: ``run`` raises ``Cancelled`` and every process below the caller at that moment
+        is gone within a bounded wait."""
         import signal
 
         sim = homogeneous_simulation(n=8, dim=2, f_count=40)

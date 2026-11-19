@@ -1,10 +1,10 @@
 """Direct-Dirichlet solve path for standard (non-periodic) boundary conditions.
 
-Assembles the B-bar stiffness with the complex moduli of a frequency-domain solve or the real elastic ones, imposes Dirichlet BCs from the simulation's
-model-level holds (zero, ``_loading.model_holds``) and step ``Prescribed`` drives (prescribed
-displacement), solves with PETSc serial LU, then reports the readODB-style row:
-``[f, RF_Real..., RF_Imag..., U_Real...]`` where RF and U are summed over the primary drive nodeset
-nodes for each component.
+Assembles the B-bar stiffness with the complex moduli of a frequency-domain solve or the real
+elastic ones, imposes Dirichlet BCs from the simulation's model-level holds (zero,
+``_loading.model_holds``) and step ``Prescribed`` drives (prescribed displacement), solves with
+PETSc serial LU, then reports the readODB-style row: ``[f, RF_Real..., RF_Imag..., U_Real...]``
+where RF and U are summed over the primary drive nodeset nodes for each component.
 
 Reaction-force computation: after solving for ``u``, assemble the internal-force vector
 ``f_int = K_full * u`` as the *action* of the unreduced bilinear form on the solution

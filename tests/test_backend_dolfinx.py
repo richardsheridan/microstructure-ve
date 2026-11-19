@@ -462,10 +462,9 @@ class _CallerError(Exception):
 class _ThreadCapCase(unittest.TestCase):
     """Checks shared by the thread-cap tests; holds no tests of its own.
 
-    The caller sets its own limit ``CALLER_LIMIT`` around each call, so the checks do not
-    depend on the host's core count or on ``*_NUM_THREADS``. Callbacks only record what they
-    see; the assertions run after the call, so a failed check cannot pose as the caller's
-    exception.
+    The caller sets its own limit ``CALLER_LIMIT`` around each call, so the checks do not depend on
+    the host's core count or on ``*_NUM_THREADS``. Callbacks only record what they see; the
+    assertions run after the call, so a failed check cannot pose as the caller's exception.
     """
 
     CALLER_LIMIT = 2
@@ -506,8 +505,8 @@ class _ThreadCapCase(unittest.TestCase):
 @needs_dolfinx
 @native_arithmetic
 class InProcessThreadCapTests(_ThreadCapCase):
-    """Every in-process call that solves runs with each native thread pool capped to one
-    thread by default in the calling thread, and hands the caller's own limits back on return or raise.
+    """Every in-process call that solves runs with each native thread pool capped to one thread by
+    default in the calling thread, and hands the caller's own limits back on return or raise.
     """
 
     @needs_complex
@@ -657,8 +656,8 @@ class InProcessThreadCapTests(_ThreadCapCase):
 @native_arithmetic
 class ThreadsKnobTests(_ThreadCapCase):
     """``threads=N`` on ``run`` and ``build_solver`` caps each native thread pool at N threads
-    wherever the default caps it at one, restores the caller's limits, and refuses an N that is
-    not a positive int before any work.
+    wherever the default caps it at one, restores the caller's limits, and refuses an N that is not
+    a positive int before any work.
 
     ``solver="iterative"`` polls ``cancel`` inside each solve as well as between solves, so the
     samples cover the solves themselves, not only ``run``'s own frame.
@@ -725,8 +724,8 @@ class ThreadsKnobTests(_ThreadCapCase):
                 self.assertEqual(after, before, "caller's limits not restored after raise")
 
     def _solve_one_capped(self, **call_kw):
-        """Build with ``threads=THREADS`` and call ``solve_one(1.0, **call_kw)`` under the
-        caller's limit; check the caps and the restore after the build and the call."""
+        """Build with ``threads=THREADS`` and call ``solve_one(1.0, **call_kw)`` under the caller's
+        limit; check the caps and the restore after the build and the call."""
         import threadpoolctl
 
         from microstructure_ve.backends.dolfinx import build_solver

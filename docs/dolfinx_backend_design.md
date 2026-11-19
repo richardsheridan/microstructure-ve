@@ -408,27 +408,27 @@ regime where LU is not. **`IterativeSolver` = GMRES + ILU**, selected automatica
 exceeds `LU_TIME_S = 10 s`. The ILU KSP monitor also gives sub-second `cancel` latency mid-solve,
 where LU can only be cancelled between whole frequencies.
 
-**Direct solver: MUMPS.** `_solver.lu_ksp` factors with MUMPS (multifrontal, dense BLAS-3 kernels
-on the fronts, ordering chosen by MUMPS itself, which picks METIS here), not PETSc's native serial
-LU. Both produce the same fill, but the native numeric factorization runs scalar sparse kernels:
+**Direct solver: MUMPS.** `_solver.lu_ksp` factors with MUMPS (multifrontal, dense BLAS-3 kernels on
+the fronts, ordering chosen by MUMPS itself, which picks METIS here), not PETSc's native serial LU.
+Both produce the same fill, but the native numeric factorization runs scalar sparse kernels:
 single-threaded on this host MUMPS is 3–9× faster on the 2D cells below and 4–15× on the 3D ones,
-and on the plastic Jacobian of the FEniCS_test 400×400 RVE it refactors in 4.6 s against 71 s
-(about 15×, `tools/bench_grid_scaling.py`), with answers equal to round-off. §0's earlier "MUMPS ~9 s"
-was not reproduced. MUMPS would also use BLAS threads on its fronts, but every in-process backend
-call caps the native thread pools at its `threads` (the `_run` module docstring).
+and on the plastic Jacobian of the FEniCS_test 400×400 RVE it refactors in 4.6 s against 71 s (about
+15×, `tools/bench_grid_scaling.py`), with answers equal to round-off. §0's earlier "MUMPS ~9 s" was
+not reproduced. MUMPS would also use BLAS threads on its fronts, but every in-process backend call
+caps the native thread pools at its `threads` (the `_run` module docstring).
 
 **History — why ILU, not the textbook GMRES+GAMG.** A first pass tried the canonical recipe: the
 rigid-body **near**-nullspace (`dolfinx_mpc.utils.rigid_motions_nullspace`) with **GMRES + GAMG** —
-*not* CG (the complex-symmetric frequency-domain stiffness is indefinite *and* non-Hermitian, so CG is
-invalid), monitoring the **true** residual (PETSc's default preconditioned-residual test falsely
+*not* CG (the complex-symmetric frequency-domain stiffness is indefinite *and* non-Hermitian, so CG
+is invalid), monitoring the **true** residual (PETSc's default preconditioned-residual test falsely
 "converges" in one iteration on the constrained operator). It reached ~1e-4…1e-7 vs LU on the
-viscoelastic case but was **not robust** — it false-converges on the purely-elastic case, because the
-rigid-body modes on `V` are **not** the nullspace of the dolfinx_mpc *reduced* matrix (slave rows are
-identity rows, `‖A·(uniform translation)‖ ≈ 8 ≠ 0`); a robust nullspace solver needs an
-MPC-homogenized nullspace the shipped helper does not build. AMG is unavailable for a `Dynamic`
-step regardless — GAMG and hypre are real-only and its operator is complex — so the adopted solver
-is plain ILU-preconditioned GMRES, with no nullspace. A `Static` step solved in the real build
-(§14) could use AMG; none does yet.
+viscoelastic case but was **not robust** — it false-converges on the purely-elastic case, because
+the rigid-body modes on `V` are **not** the nullspace of the dolfinx_mpc *reduced* matrix (slave
+rows are identity rows, `‖A·(uniform translation)‖ ≈ 8 ≠ 0`); a robust nullspace solver needs an
+MPC-homogenized nullspace the shipped helper does not build. AMG is unavailable for a `Dynamic` step
+regardless — GAMG and hypre are real-only and its operator is complex — so the adopted solver is
+plain ILU-preconditioned GMRES, with no nullspace. A `Static` step solved in the real build (§14)
+could use AMG; none does yet.
 
 **Benchmark** (per-frequency `solve_one`, one BLAS thread; reproducer `tools/bench_solvers.py`,
 whose module docstring records the current calibration under Results; native-LU times from the
@@ -494,12 +494,12 @@ Design decisions and rationale:
   yield conditionals (`max`, `conditional` on the Mises test) are ill-defined. The radial return +
   algorithmic tangent are computed in real numpy over a flat `(n_quad,)` batch and fed back as
   Quadrature-space coefficients (`sig_q`, `C_q`); in the complex build the assembled matrices carry
-  real values, and in the real build the same code runs unchanged.
-  Quadrature degree 2 (4 pts/quad = CPE4, 8 pts/hex = C3D8). The consistent tangent is the **closed-form algorithmic modulus** of the radial return
-  with piecewise-linear hardening, taken at the hardening slope the converged increment sits on. A
-  point that does not yield gets the elastic stiffness of its own moduli, bitwise the same at every
-  evaluation, so a cell that stays elastic leaves the tangent unchanged and the Newton refresh skips
-  reassembly and refactorization.
+  real values, and in the real build the same code runs unchanged. Quadrature degree 2 (4 pts/quad =
+  CPE4, 8 pts/hex = C3D8). The consistent tangent is the **closed-form algorithmic modulus** of the
+  radial return with piecewise-linear hardening, taken at the hardening slope the converged
+  increment sits on. A point that does not yield gets the elastic stiffness of its own moduli,
+  bitwise the same at every evaluation, so a cell that stays elastic leaves the tangent unchanged
+  and the Newton refresh skips reassembly and refactorization.
 - **Hand-rolled Newton, not `dolfinx_mpc.NonlinearProblem`/SNES.** The SNES nonlinear path is
   documented-skipped in complex builds, and a hand-rolled loop is what lets us refresh the return-map
   coefficients between iterations. Periodic assembly reuses the proven `dolfinx_mpc` + complex-LU
@@ -656,18 +656,18 @@ module docstring of `tools/bench_hyperelastic_estimate.py`.
 
 ## 14. Scalar builds: real arithmetic for `Static` steps, complex for `Dynamic`
 
-A `Dynamic` (steady-state, perturbation) step solves the frequency-domain system, whose moduli
-are complex, so it needs complex arithmetic. A `Static` step (elastic, plastic, hyperelastic) is a
-real problem: a complex build solves it with zero imaginary parts and pays for complex arithmetic
-in every assembly, factorization and back-substitution. The answers agree to round-off; the cost
-of each build and of the solver threads is measured in the module docstring of
+A `Dynamic` (steady-state, perturbation) step solves the frequency-domain system, whose moduli are
+complex, so it needs complex arithmetic. A `Static` step (elastic, plastic, hyperelastic) is a real
+problem: a complex build solves it with zero imaginary parts and pays for complex arithmetic in
+every assembly, factorization and back-substitution. The answers agree to round-off; the cost of
+each build and of the solver threads is measured in the module docstring of
 `tools/bench_grid_scaling.py`.
 
 **Why two processes.** PETSc, petsc4py and dolfinx_mpc are compiled for one scalar type, a process
 can load only one build, and dolfinx_mpc assembles only forms of that type (complex128 in the
 complex build, float64 in the real one). So the backend comes as two conda envs with the same pins,
-`fenicsx-complex` (`environment-complex.yml`) and `fenicsx-real` (`environment-real.yml`), and a
-run that needs both builds uses a process of each.
+`fenicsx-complex` (`environment-complex.yml`) and `fenicsx-real` (`environment-real.yml`), and a run
+that needs both builds uses a process of each.
 
 **Routing.** `run` reads two variables at call time, `MSVE_DOLFINX_REAL_PYTHON` and
 `MSVE_DOLFINX_COMPLEX_PYTHON`, each naming the other build's interpreter
@@ -682,32 +682,32 @@ run that needs both builds uses a process of each.
 | real | `Dynamic` only | all to the complex peer | `ScalarBuildError`, nothing solved |
 | real | both | `Static` here, `Dynamic` to the complex peer | `ScalarBuildError`, nothing solved |
 
-`build_solver` and its `solve_one`, the `workers>1` pool workers and a peer itself never route;
-in the real build a frequency-domain `solve_one(f)` raises `ScalarBuildError`.
+`build_solver` and its `solve_one`, the `workers>1` pool workers and a peer itself never route; in
+the real build a frequency-domain `solve_one(f)` raises `ScalarBuildError`.
 
 **The peer** (`_peer`) is a child process that runs the named interpreter on
-`microstructure_ve.backends.dolfinx._peer` as `__main__`, one per interpreter path, started on
-the first routed call and kept across calls with its own FE cache, since a cold import of the FE
-stack costs seconds. It talks over two pipes carrying pickles, so its stdout and stderr stay the caller's. On start it reports
-its scalar build and the directory of the `microstructure_ve` it imports; the caller refuses a peer
-of its own build or of another source tree with `ScalarBuildError`, and so a worktree's runs, whose
-`PYTHONPATH` the peer inherits, stay on the worktree's sources. The peer's environment is the
-caller's minus both variables. It leads its own process group: a cancel, an exception in the
-caller while it waits, or interpreter exit stops the whole group, pool workers included, with
-`SIGTERM` first so multiprocessing's resource tracker can unlink the pool's semaphores. Exceptions
-raised in the peer come back with their type and the peer's traceback as a note. `clear_cache`
-clears every live peer's cache, a busy one before its next request.
+`microstructure_ve.backends.dolfinx._peer` as `__main__`, one per interpreter path, started on the
+first routed call and kept across calls with its own FE cache, since a cold import of the FE stack
+costs seconds. It talks over two pipes carrying pickles, so its stdout and stderr stay the caller's.
+On start it reports its scalar build and the directory of the `microstructure_ve` it imports; the
+caller refuses a peer of its own build or of another source tree with `ScalarBuildError`, and so a
+worktree's runs, whose `PYTHONPATH` the peer inherits, stay on the worktree's sources. The peer's
+environment is the caller's minus both variables. It leads its own process group: a cancel, an
+exception in the caller while it waits, or interpreter exit stops the whole group, pool workers
+included, with `SIGTERM` first so multiprocessing's resource tracker can unlink the pool's
+semaphores. Exceptions raised in the peer come back with their type and the peer's traceback as a
+note. `clear_cache` clears every live peer's cache, a busy one before its next request.
 `multiprocessing.set_executable` was not used: it sets one process-global interpreter, shared with
 the frequency fan-out pool, and a spawned child re-runs the caller's `__main__`.
 
 **Splitting a sim with both kinds of step** is valid because the two kinds share no state. A
 `Dynamic` step reads none of the plastic or hyperelastic state the `Static` steps carry and leaves
 none; the `Static` steps form one ordered chain. A driveless `Static` step inherits its drive only
-from the last earlier `Static` step that carried one: `check_supported` refuses a driveless
-`Static` step with no such step before it, since a perturbation step's drive is not a load a later
-general step keeps (as in ABAQUS). The caller sends the peer its share first, solves its own share,
-then collects the peer's rows and merges both in step order, so the two shares overlap in wall
-time. Each share ignores `workers`, as a native multi-step run does (§11).
+from the last earlier `Static` step that carried one: `check_supported` refuses a driveless `Static`
+step with no such step before it, since a perturbation step's drive is not a load a later general
+step keeps (as in ABAQUS). The caller sends the peer its share first, solves its own share, then
+collects the peer's rows and merges both in step order, so the two shares overlap in wall time. Each
+share ignores `workers`, as a native multi-step run does (§11).
 
 **Threads.** `run(threads=N)` and `build_solver(threads=N)` cap each native thread pool (OpenMP,
 BLAS, and so MUMPS) at `N` in every process that solves: the caller, a peer, and each pool worker.

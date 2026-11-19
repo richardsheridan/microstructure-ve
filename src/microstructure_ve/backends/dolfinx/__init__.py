@@ -13,9 +13,9 @@ Every entry point is thread-safe; which calls serialize, the thread cap they run
 ``run(workers=N)`` sweep differs is the concurrency contract in ``_run``'s module docstring.
 
 ``run`` / ``build_solver`` are resolved lazily so that importing this package -- and its pure-numpy
-``_spec``, ``_loading`` and ``_arithmetic`` submodules -- never pulls in dolfinx. The other submodules import
-dolfinx/petsc4py/dolfinx_mpc at module top and are only loaded when ``run`` is used, so this package
-stays importable under the numpy-only msve env.
+``_spec``, ``_loading`` and ``_arithmetic`` submodules -- never pulls in dolfinx. The other
+submodules import dolfinx/petsc4py/dolfinx_mpc at module top and are only loaded when ``run`` is
+used, so this package stays importable under the numpy-only msve env.
 """
 from __future__ import annotations
 

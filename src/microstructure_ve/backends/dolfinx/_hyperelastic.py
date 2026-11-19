@@ -20,10 +20,10 @@ Design notes (mirroring ``_plastic``, the reference for every convention here):
   volumetric energy ``U(J)`` integrates on the 1-point (centroid) rule, the deviatoric part
   on the full degree-2 rule. Locking comes only from the volumetric term (the deviatoric
   invariants are volume-independent), so this matches CPE4/C3D8 closely.
-* **Real values in either PETSc build**: in the complex build the energy's ``J**(-2/3)`` / ``ln(J)`` complex
-  branches are noise-sensitive, so the fluctuation ``w`` is held real (its imaginary part is zeroed
-  after every Newton update); every fractional power then evaluates on a real-positive ``J`` and the
-  assembled objects carry real values -- the same invariant ``_plastic`` relies on.
+* **Real values in either PETSc build**: in the complex build the energy's ``J**(-2/3)`` / ``ln(J)``
+  complex branches are noise-sensitive, so the fluctuation ``w`` is held real (its imaginary part is
+  zeroed after every Newton update); every fractional power then evaluates on a real-positive ``J``
+  and the assembled objects carry real values -- the same invariant ``_plastic`` relies on.
 * **2D is plane strain**: ``F`` is embedded 3x3 with ``F[2,2] = 1`` so the out-of-plane
   stretch enters the invariants exactly.
 * **Reactions are nominal (PK1)**: the drive-corner constraint force is conjugate to the corner

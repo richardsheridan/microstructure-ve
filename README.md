@@ -3,10 +3,10 @@ A repository for FEA code developed by members of the Brinson Group at Duke Univ
 
 ## Install
 
-The base package (ABAQUS `.inp` emitter + solver-neutral spec) needs only numpy and scipy;
-the optional **DOLFINx** finite-element backend needs the FEniCSx stack, which is provided
-through conda-forge (not pip). The package imports dolfinx lazily, so the base install stays
-importable without it. Three conda env files are provided at the repo root.
+The base package (ABAQUS `.inp` emitter + solver-neutral spec) needs only numpy and scipy; the
+optional **DOLFINx** finite-element backend needs the FEniCSx stack, which is provided through
+conda-forge (not pip). The package imports dolfinx lazily, so the base install stays importable
+without it. Three conda env files are provided at the repo root.
 
 **Base only (numpy + scipy) — Linux, macOS, Windows.**
 
@@ -17,19 +17,19 @@ conda env create -f environment-numpy.yml     # creates env "msve"
 conda activate msve
 ```
 
-**DOLFINx FE backend — Linux & macOS (incl. Apple Silicon).** conda-forge ships `linux-64`,
-`osx-64` and `osx-arm64` builds. PETSc is built for one scalar type, so the backend comes as two
-envs with the same stack: `Dynamic` (steady-state) steps need complex arithmetic, and `Static`
-steps solve faster in real arithmetic. Install the one your sims need, or both:
+**DOLFINx FE backend — Linux & macOS (incl. Apple Silicon).** conda-forge ships `linux-64`, `osx-64`
+and `osx-arm64` builds. PETSc is built for one scalar type, so the backend comes as two envs with
+the same stack: `Dynamic` (steady-state) steps need complex arithmetic, and `Static` steps solve
+faster in real arithmetic. Install the one your sims need, or both:
 
 ```sh
 conda env create -f environment-complex.yml   # env "fenicsx-complex": dolfinx + complex PETSc
 conda env create -f environment-real.yml      # env "fenicsx-real": dolfinx + real PETSc
 ```
 
-Each recipe installs this checkout editable, so create both from the same checkout. With both,
-run from either env and name the other one's interpreter; `run` then solves each step in the
-build it needs, the other env's steps in a helper process, and returns one result:
+Each recipe installs this checkout editable, so create both from the same checkout. With both, run
+from either env and name the other one's interpreter; `run` then solves each step in the build it
+needs, the other env's steps in a helper process, and returns one result:
 
 ```sh
 conda activate fenicsx-complex
@@ -119,9 +119,9 @@ result = run(sim)                      # ndarray (n_freqs + 1, 1 + 3*dim)
 # linear-elastic -- the *Plastic table is honored only by the ABAQUS deck above.
 ```
 
-Pass `workers=N` to fan the independent per-frequency solves
-across processes (guard the call under `if __name__ == "__main__":`), and `threads=N` to let
-each solve use N threads in MUMPS and BLAS (default 1).
-The concurrency contract is in the module docstring of `microstructure_ve.backends.dolfinx._run`.
+Pass `workers=N` to fan the independent per-frequency solves across processes (guard the call under
+`if __name__ == "__main__":`), and `threads=N` to let each solve use N threads in MUMPS and BLAS
+(default 1). The concurrency contract is in the module docstring of
+`microstructure_ve.backends.dolfinx._run`.
 
 ## Documentation

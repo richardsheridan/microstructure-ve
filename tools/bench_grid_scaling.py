@@ -10,20 +10,19 @@ report's own script predates the current spec API; this rebuilds the same model 
 moduli under NLGEOM, which times the hyperelastic free-lateral path on the same microstructure.
 
 Run from either DOLFINx env against a checkout of the report, which is read as data only. From
-``fenicsx-complex`` with ``MSVE_DOLFINX_REAL_PYTHON`` naming the real interpreter, ``run`` hands
-the sim to the real build (``docs/dolfinx_backend_design.md`` §14)::
+``fenicsx-complex`` with ``MSVE_DOLFINX_REAL_PYTHON`` naming the real interpreter, ``run`` hands the
+sim to the real build (``docs/dolfinx_backend_design.md`` §14)::
 
     git clone https://github.com/AnlanChenA/FEniCS_test /path/to/FEniCS_test
     /home/rjs80/miniconda3/envs/fenicsx-real/bin/python tools/bench_grid_scaling.py \
         /path/to/FEniCS_test --coarsen 4 [--material plastic|neohookean] [--threads N] \
         [--points abaqus|first:K|e1,e2,...] [--n-incr N] [--profile N] [--json OUT]
 
-Prints the wall time of ``run``, the PETSc factorization and back-substitution counts and times,
-and the stress at each point (against the ABAQUS curve for the plastic case). ``--profile N``
-adds the N functions with the most own time; ``--json`` writes the numbers to a file.
-``--threads N`` is ``run``'s ``threads``: each process that solves caps its native thread pools
-at N (default 1). The PETSc counts and times are this process's own, so a run handed to the real
-peer prints none.
+Prints the wall time of ``run``, the PETSc factorization and back-substitution counts and times, and
+the stress at each point (against the ABAQUS curve for the plastic case). ``--profile N`` adds the N
+functions with the most own time; ``--json`` writes the numbers to a file. ``--threads N`` is
+``run``'s ``threads``: each process that solves caps its native thread pools at N (default 1). The
+PETSc counts and times are this process's own, so a run handed to the real peer prints none.
 
 Results
 -------
@@ -102,10 +101,10 @@ start included), ``real`` is ``fenicsx-real`` alone; the LU columns are the fact
 Every variant's stresses match the complex one-thread run's to 1.3e-15 relative, and the 400x400
 stresses lie within +0.05% to +0.15% of ABAQUS, as before. The real build takes 2.2x off the
 factorization time and 2x off the back-substitutions in both cases, and 1.65x (plastic) to 2.1x
-(neo-Hookean) off the wall time; routing adds 1 to 3 s, mostly the peer's start. Eight threads
-speed the factorizations up 1.6x (complex) to 1.9x (real) but the wall time only 1.2x to 1.4x at
-200x200 and 1.16x at 400x400: assembly and the return map run on one thread. The 400x400 plastic
-run took 277 s in the complex build at 2f12017 (the table of fixes above).
+(neo-Hookean) off the wall time; routing adds 1 to 3 s, mostly the peer's start. Eight threads speed
+the factorizations up 1.6x (complex) to 1.9x (real) but the wall time only 1.2x to 1.4x at 200x200
+and 1.16x at 400x400: assembly and the return map run on one thread. The 400x400 plastic run took
+277 s in the complex build at 2f12017 (the table of fixes above).
 """
 from __future__ import annotations
 

@@ -1,9 +1,9 @@
 """Which scalar arithmetic a solve needs, and the variables that name each build's interpreter.
 
 PETSc is compiled for one scalar type, so a process holds either the real-scalar or the
-complex-scalar build. A ``Dynamic`` step is a frequency-domain solve with a complex modulus and needs
-the complex build; ``Static`` steps solve in either. This module imports only numpy and the spec, so
-it loads without dolfinx.
+complex-scalar build. A ``Dynamic`` step is a frequency-domain solve with a complex modulus and
+needs the complex build; ``Static`` steps solve in either. This module imports only numpy and the
+spec, so it loads without dolfinx.
 """
 from __future__ import annotations
 
