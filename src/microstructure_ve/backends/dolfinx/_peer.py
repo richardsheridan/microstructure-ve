@@ -36,6 +36,7 @@ from multiprocessing.connection import Connection
 import microstructure_ve
 
 from . import _arithmetic as arithmetic
+from ._solver import COMPLEX_BUILD, Cancelled, ScalarBuildError
 
 _HANDSHAKE_S = 600.0
 """Longest wait for a starting peer to report, covering a cold import of the FE stack."""
@@ -59,6 +60,8 @@ class _Peer:
         self.proc, self.tx, self.rx = proc, tx, rx
         self.lock = threading.Lock()
         self.clear_pending = False
+        self._stop_lock = threading.Lock()
+        self._stopped = False
 
     def _signal_group(self, sig):
         try:
@@ -68,19 +71,27 @@ class _Peer:
         return True
 
     def stop(self):
-        """End the peer and every process in its group, wait for them, and close the pipes."""
-        self._signal_group(signal.SIGTERM)
-        deadline = time.monotonic() + _STOP_S
-        try:
-            self.proc.wait(_STOP_S)
-        except subprocess.TimeoutExpired:
-            pass
-        while self._signal_group(0) and time.monotonic() < deadline:
-            time.sleep(0.05)
-        self._signal_group(signal.SIGKILL)
-        self.proc.wait()
-        self.tx.close()
-        self.rx.close()
+        """End the peer and every process in its group, wait for them, and close the pipes.
+
+        Only the first call does this; a concurrent one waits for it, and a later one returns.
+        """
+        with self._stop_lock:
+            if self._stopped:
+                return
+            self._signal_group(signal.SIGTERM)
+            deadline = time.monotonic() + _STOP_S
+            try:
+                self.proc.wait(_STOP_S)
+            except subprocess.TimeoutExpired:
+                pass
+            while (alive := self._signal_group(0)) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            if alive:
+                self._signal_group(signal.SIGKILL)
+            self.proc.wait()
+            self.tx.close()
+            self.rx.close()
+            self._stopped = True
 
 
 _PEERS = {}
@@ -88,15 +99,11 @@ _PEERS_LOCK = threading.Lock()
 
 
 def _refuse(var, path, reason):
-    from ._solver import ScalarBuildError
-
     return ScalarBuildError(f"{var}={path} cannot solve this sim: {reason}.")
 
 
 def _start(var, path):
     """Start and handshake a peer running ``path``; raise ``ScalarBuildError`` if it is unusable."""
-    from ._solver import COMPLEX_BUILD
-
     if not (os.path.isfile(path) and os.access(path, os.X_OK)):
         raise _refuse(var, path, "no executable file at that path")
     request_r, request_w = os.pipe()
@@ -139,9 +146,10 @@ def _peer_for(var, path):
     """The live peer for ``path``, started if there is none or the last one died."""
     with _PEERS_LOCK:
         p = _PEERS.get(path)
-        if p is not None and p.proc.poll() is not None:
-            p.stop()
-            p = None
+    if p is not None and p.proc.poll() is not None:
+        _drop(path, p)
+    with _PEERS_LOCK:
+        p = _PEERS.get(path)
         if p is None:
             p = _PEERS[path] = _start(var, path)
         return p
@@ -157,8 +165,6 @@ def _drop(path, p):
 
 def _request(path, p, message, cancel=None):
     """Send ``message`` to ``p`` and return its reply, polling ``cancel`` while waiting."""
-    from ._solver import Cancelled
-
     try:
         p.tx.send(message)
         while not p.rx.poll(_POLL_S):
@@ -179,8 +185,6 @@ def _request(path, p, message, cancel=None):
 def solve(var, path, sim, cancel, kwargs):
     """Solve ``sim`` in the peer running ``path`` (named by ``var``); return
     ``(rows, energies)``, or raise the peer's exception with its traceback as a note."""
-    from ._solver import Cancelled
-
     while True:
         p = _peer_for(var, path)
         with p.lock:

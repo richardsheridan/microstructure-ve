@@ -93,7 +93,7 @@ class RealBuildTests(unittest.TestCase):
         self.assertTrue(issubclass(ScalarBuildError, RuntimeError))
 
     def test_run_refuses_a_sim_with_a_dynamic_step_before_solving_or_writing(self):
-        """``run`` on a sim with any Dynamic step raises ``ScalarBuildError`` naming the
+        """With no complex interpreter configured, ``run`` on a sim with any Dynamic step raises ``ScalarBuildError`` naming the
         complex-interpreter variable, before any step solves (``cancel`` is never polled) and
         without creating or touching ``output_path``."""
         sims = {
