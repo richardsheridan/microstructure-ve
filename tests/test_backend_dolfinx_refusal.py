@@ -92,6 +92,16 @@ def _step_drives_reversed(sim, index):
     return sim
 
 
+def _driveless_static_after_dynamic_steps(sim, n_dynamic):
+    """Keep ``sim``'s first step, a Dynamic one, repeated ``n_dynamic`` times, then a Static step
+    with no drive of its own."""
+    dynamic = sim.steps[0]
+    repeats = [Step(subsections=list(dynamic.subsections), perturbation=dynamic.perturbation)
+               for _ in range(n_dynamic - 1)]
+    sim.steps = [dynamic] + repeats + [Step(subsections=[Static()])]
+    return sim
+
+
 def _standard_two_static_elastic():
     return _with_repeated_step(matrix_simulation(test_type="elastic", n=_N, **_STANDARD))
 
@@ -194,6 +204,15 @@ def rejected_sims():
              matrix_simulation(test_type="hyperelastic_plastic_sd", n=_N,
                                **_PERIODIC_CONFINED), 1),
          NotImplementedError),
+        ("periodic driveless static step after a dynamic step",
+         lambda: _driveless_static_after_dynamic_steps(
+             matrix_simulation(test_type="viscoelastic_ds", n=_N, **_PERIODIC), 1),
+         NotImplementedError),
+        ("periodic plastic driveless static step after a dynamic step",
+         lambda: _driveless_static_after_dynamic_steps(
+             matrix_simulation(test_type="hyperelastic_plastic_ds", n=_N,
+                               **_PERIODIC_CONFINED), 1),
+         NotImplementedError),
         ("periodic later static step drives another axis",
          lambda: _step_driving(
              matrix_simulation(test_type="viscoelastic_halved_ss", n=_N, **_PERIODIC), 1,
@@ -257,6 +276,26 @@ def rejected_sims():
          lambda etype=etype, dim=dim: _with_element_type(etype, dim), NotImplementedError)
         for name, etype, dim in refused_element_types()
     ]
+
+
+class CheckSupportedTests(unittest.TestCase):
+    def test_driveless_static_step_after_only_dynamic_steps_is_refused_naming_it(self):
+        """A Static step with no drive of its own and no earlier Static step carrying one is
+        refused with ``NotImplementedError`` naming that step: a Dynamic step's drive is not one
+        a later Static step inherits."""
+        from microstructure_ve.backends.dolfinx._loading import check_supported
+
+        sims = {
+            "viscoelastic": matrix_simulation(test_type="viscoelastic_ds", n=_N, **_PERIODIC),
+            "plastic": matrix_simulation(test_type="hyperelastic_plastic_ds", n=_N,
+                                         **_PERIODIC_CONFINED),
+        }
+        for name, sim in sims.items():
+            with self.subTest(name):
+                sim = _driveless_static_after_dynamic_steps(sim, 2)
+                with self.assertRaises(NotImplementedError) as cm:
+                    check_supported(sim)
+                self.assertIn("step 2", str(cm.exception))
 
 
 @needs_dolfinx

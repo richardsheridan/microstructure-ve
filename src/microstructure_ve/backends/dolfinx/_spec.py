@@ -55,15 +55,24 @@ def frequencies(sim):
     ValueError
         If the first step has neither a ``Dynamic`` nor a ``Static`` subsection.
     """
-    dyn = find(sim.steps[0].subsections, Dynamic)
+    frames = step_frames(sim.steps[0])
+    if frames is None:
+        raise ValueError(
+            "no Dynamic or Static subsection found in the first step; "
+            "cannot determine frequency sweep"
+        )
+    return frames
+
+
+def step_frames(step):
+    """The frame values of ``step``'s rows: the sweep of its ``Dynamic`` subsection if it has one,
+    else ``[1.0]`` for a ``Static`` step, else None."""
+    dyn = find(step.subsections, Dynamic)
     if dyn is not None:
         return sweep_frequencies(dyn)
-    if find(sim.steps[0].subsections, Static) is not None:
+    if find(step.subsections, Static) is not None:
         return np.array([1.0])
-    raise ValueError(
-        "no Dynamic or Static subsection found in the first step; "
-        "cannot determine frequency sweep"
-    )
+    return None
 
 
 def drive_displacement(sim):

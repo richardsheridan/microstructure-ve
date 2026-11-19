@@ -1,6 +1,6 @@
-"""A persistent peer process that solves whole sims with the other PETSc scalar build.
+"""A persistent peer process solving sims, or a share of one, with the other PETSc scalar build.
 
-One process holds one PETSc scalar build, so ``run`` hands a sim this build should not solve to a
+One process holds one PETSc scalar build, so ``run`` hands a sim this build should not solve, or the share of a mixed sim it should not solve, to a
 peer running the interpreter its variable names (``_arithmetic.peer_variable``). The client side
 keeps one peer per interpreter path, started on first use and reused across calls; each serves one
 request at a time. The server side is this module run as
@@ -23,6 +23,7 @@ Only tuples, strings, sims, arrays and pickled exceptions cross the pipe: the se
 from __future__ import annotations
 
 import atexit
+import contextlib
 import os
 import pickle
 import signal
@@ -163,16 +164,11 @@ def _drop(path, p):
     p.stop()
 
 
-def _request(path, p, message, cancel=None):
-    """Send ``message`` to ``p`` and return its reply, polling ``cancel`` while waiting."""
+@contextlib.contextmanager
+def _stopped_on_failure(path, p):
+    """Stop ``p`` if the block raises; a broken pipe raises ``RuntimeError`` naming the peer."""
     try:
-        p.tx.send(message)
-        while not p.rx.poll(_POLL_S):
-            if p.proc.poll() is not None:
-                break
-            if cancel is not None and cancel():
-                raise Cancelled("cancelled by callback")
-        return p.rx.recv()
+        yield
     except (EOFError, OSError):
         _drop(path, p)
         raise RuntimeError(f"the peer process {path} exited with status {p.proc.returncode} "
@@ -182,21 +178,75 @@ def _request(path, p, message, cancel=None):
         raise
 
 
+def _receive(path, p, cancel=None):
+    """Wait for ``p``'s reply to the request in flight and return it, polling ``cancel``."""
+    with _stopped_on_failure(path, p):
+        while not p.rx.poll(_POLL_S):
+            if p.proc.poll() is not None:
+                break
+            if cancel is not None and cancel():
+                raise Cancelled("cancelled by callback")
+        return p.rx.recv()
+
+
+def _request(path, p, message, cancel=None):
+    """Send ``message`` to ``p`` and return its reply, polling ``cancel`` while waiting."""
+    with _stopped_on_failure(path, p):
+        p.tx.send(message)
+    return _receive(path, p, cancel)
+
+
+def _locked_peer(var, path):
+    """The live peer for ``path``, its lock held by the caller on return."""
+    while True:
+        p = _peer_for(var, path)
+        p.lock.acquire()
+        with _PEERS_LOCK:
+            current = _PEERS.get(path) is p
+        if current:
+            return p
+        p.lock.release()  # another call stopped it while this one waited
+
+
+@contextlib.contextmanager
+def sending(var, path, sim, cancel, kwargs):
+    """Send ``sim`` to the peer running ``path`` (named by ``var``) and yield a callable that
+    waits for the reply, polling ``cancel``, and returns ``(rows, energies)`` or raises the
+    peer's exception with its traceback as a note.
+
+    The peer serves only this request until the block exits; a block that exits before the
+    reply has arrived stops the peer."""
+    p = _locked_peer(var, path)
+    try:
+        if cancel is not None and cancel():
+            raise Cancelled("cancelled by callback")
+        _clear_if_pending(path, p)
+        with _stopped_on_failure(path, p):
+            p.tx.send(("run", sim, kwargs))
+        replies = []
+
+        def collect():
+            replies.append(_receive(path, p, cancel))
+            return _unpack(path, *replies[0])
+
+        try:
+            yield collect
+        finally:
+            if not replies:
+                _drop(path, p)
+    finally:
+        p.lock.release()
+
+
 def solve(var, path, sim, cancel, kwargs):
     """Solve ``sim`` in the peer running ``path`` (named by ``var``); return
     ``(rows, energies)``, or raise the peer's exception with its traceback as a note."""
-    while True:
-        p = _peer_for(var, path)
-        with p.lock:
-            with _PEERS_LOCK:
-                current = _PEERS.get(path) is p
-            if not current:
-                continue  # another call stopped it while this one waited
-            if cancel is not None and cancel():
-                raise Cancelled("cancelled by callback")
-            _clear_if_pending(path, p)
-            status, payload, text = _request(path, p, ("run", sim, kwargs), cancel)
-        break
+    with sending(var, path, sim, cancel, kwargs) as collect:
+        return collect()
+
+
+def _unpack(path, status, payload, text):
+    """The payload of an ``"ok"`` reply; otherwise raise the exception the reply carries."""
     if status == "ok":
         return payload
     try:
