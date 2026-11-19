@@ -34,6 +34,7 @@ No path mutates ``os.environ``.
 from __future__ import annotations
 
 import contextlib
+import copy
 import os
 import threading
 import warnings
@@ -57,6 +58,7 @@ from ._solver import (
 )
 
 from microstructure_ve.boundary import PeriodicBoundaryConstraint
+from microstructure_ve.steps import Dynamic
 
 
 class _FEProblem:
@@ -320,7 +322,10 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     is set, the whole sim is solved by a peer process running the interpreter it names
     (``_peer``), after every check above, and its rows, energies and exceptions are returned or
     raised here; ``output_path`` is written here. ``cancel`` is polled while the peer solves; either
-    trigger kills the peer. An interpreter that is missing, of this process's own build, or imports
+    trigger kills the peer. A sim with both Static and Dynamic steps is split instead
+    (``_solve_split``): its Static steps solve in the real build and its Dynamic steps in the
+    complex build, this process solving its own build's share, and the rows merge in step order;
+    a failure of either share stops the peer if it is still solving and writes no ``output_path``. An interpreter that is missing, of this process's own build, or imports
     another ``microstructure_ve`` source tree raises ``ScalarBuildError``. A complex build with
     ``MSVE_DOLFINX_REAL_PYTHON`` unset solves a sim's Static steps itself and emits a
     ``ScalarBuildWarning``, shown once per process under Python's default warning filter.
@@ -353,7 +358,9 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     interpreter = os.environ.get(var) if var else None
     knobs = dict(bbar=bbar, workers=workers, solver=solver, petsc_options=petsc_options,
                  n_incr=n_incr, return_energy=return_energy, threads=threads)
-    if interpreter:
+    if interpreter and arithmetic.is_mixed(sim):
+        out, energies = _solve_split(sim, var, interpreter, cancel, knobs)
+    elif interpreter:
         out, energies = peer.solve(var, interpreter, sim, cancel, knobs)
     else:
         if arithmetic.needs_complex_build(sim):
@@ -406,6 +413,34 @@ def _solve(sim, bbar, workers, cancel, solver, petsc_options, n_incr, return_ene
                 out = _run_serial_sweep(sim, freqs, bbar, cancel, solver, petsc_options,
                                         threads)
     return out, energies
+
+
+def _part(sim, dynamic):
+    """A shallow copy of ``sim`` keeping only its Dynamic steps, or only its other steps."""
+    part = copy.copy(sim)
+    part.steps = [step for step in sim.steps if arithmetic.is_dynamic_step(step) == dynamic]
+    return part
+
+
+def _solve_split(sim, var, interpreter, cancel, knobs):
+    """Solve a mixed ``sim``'s Dynamic steps in the complex build and its other steps in the real
+    build, this process taking its own build's share and the peer named by ``var`` the rest;
+    return the rows merged in step order and no energies.
+
+    The peer's share is sent before this process starts its own and collected after it. Each
+    share ignores ``workers``, as a native multistep run does."""
+    knobs = dict(knobs, workers=1)
+    own, other = _part(sim, COMPLEX_BUILD), _part(sim, not COMPLEX_BUILD)
+    with peer.sending(var, interpreter, other, cancel, knobs) as collect:
+        own_rows, _ = _solve(own, cancel=cancel, **knobs)
+        other_rows, _ = collect()
+    shares = {COMPLEX_BUILD: iter(own_rows), not COMPLEX_BUILD: iter(other_rows)}
+    rows = []
+    for step in sim.steps:
+        dyn = spec.find(step.subsections, Dynamic)
+        count = 1 if dyn is None else len(spec.sweep_frequencies(dyn))
+        rows.extend(next(shares[dyn is not None]) for _ in range(count))
+    return np.array(rows), None
 
 
 def _run_serial_sweep(sim, freqs, bbar, cancel, solver, petsc_options, threads):
@@ -499,7 +534,8 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
         loading = None
         if has_pbc:
             # a step's own drive; a driveless Static step keeps the last general drive
-            # (check_supported refuses a driveless Dynamic step and a driveless first step)
+            # (check_supported refuses a driveless Dynamic step and a driveless Static step with no
+            # earlier driven Static step)
             if loadingmod.prescribed_bcs(step.subsections):
                 loading = loadingmod.macro_loading(sim, step=step)
             else:

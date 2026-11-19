@@ -351,12 +351,20 @@ def check_supported(sim):
                 )
         if steps and not prescribed_bcs(steps[0].subsections):
             raise ValueError("the first step has no Prescribed drive to inherit")
+        static_drive = False
         for i, step in enumerate(steps):
-            if (spec.find(step.subsections, Dynamic) is not None
-                    and not prescribed_bcs(step.subsections)):
+            dynamic = spec.find(step.subsections, Dynamic) is not None
+            if prescribed_bcs(step.subsections):
+                static_drive = static_drive or not dynamic
+            elif dynamic:
                 raise NotImplementedError(
                     f"Dynamic step {i} has no Prescribed drive of its own; a perturbation "
                     "step does not inherit a drive"
+                )
+            elif spec.find(step.subsections, Static) is not None and not static_drive:
+                raise NotImplementedError(
+                    f"Static step {i} has no Prescribed drive of its own and no earlier Static "
+                    "step carries one; a Static step does not inherit a Dynamic step's drive"
                 )
         # every step must be a resolvable analysis (Static or Dynamic); the run loop
         # sweeps each step in turn (multi-step = several such steps)

@@ -23,17 +23,33 @@ def is_complex_scalar(scalar_type):
     return np.dtype(scalar_type).kind == "c"
 
 
+def is_dynamic_step(step):
+    """True iff ``step`` carries a ``Dynamic`` subsection; it then solves as a Dynamic step only."""
+    return any(isinstance(s, Dynamic) for s in step.subsections)
+
+
 def needs_complex_build(sim):
     """True iff any step of ``sim`` carries a ``Dynamic`` subsection, a frequency-domain solve."""
-    return any(any(isinstance(s, Dynamic) for s in step.subsections) for step in sim.steps)
+    return any(is_dynamic_step(step) for step in sim.steps)
+
+
+def is_mixed(sim):
+    """True iff ``sim`` has both Dynamic steps and steps that are not Dynamic."""
+    kinds = {is_dynamic_step(step) for step in sim.steps}
+    return kinds == {True, False}
 
 
 def peer_variable(sim, complex_build):
-    """The variable naming the interpreter that solves ``sim`` in place of this build, or None.
+    """The variable naming the interpreter that solves ``sim``, or its share of it, in place of
+    this build, or None.
 
     A complex build hands a sim with no ``Dynamic`` step to the real build; a real build hands a
-    sim with any ``Dynamic`` step to the complex build. ``complex_build`` is this process's build.
+    sim with any ``Dynamic`` step to the complex build. A mixed sim (``is_mixed``) is split
+    between the builds, so either build names the other's variable for it. ``complex_build`` is
+    this process's build.
     """
+    if is_mixed(sim):
+        return REAL_PYTHON_VAR if complex_build else COMPLEX_PYTHON_VAR
     if needs_complex_build(sim):
         return None if complex_build else COMPLEX_PYTHON_VAR
     return REAL_PYTHON_VAR if complex_build else None
