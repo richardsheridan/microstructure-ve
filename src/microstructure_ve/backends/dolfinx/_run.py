@@ -371,7 +371,7 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     return out
 
 
-def _run_serial_sweep(sim, freqs, bbar, cancel, solver, petsc_options, threads=1):
+def _run_serial_sweep(sim, freqs, bbar, cancel, solver, petsc_options, threads):
     solve_one, _ = build_solver(sim, bbar, cancel=cancel,
                                 petsc_options=petsc_options, solver=solver, threads=threads)
     rows = []
@@ -524,7 +524,7 @@ def _run_parallel(sim, freqs, bbar, workers, cancel=None, solver="auto", petsc_o
     """Fan the per-frequency solves across a spawn ProcessPoolExecutor (order preserved).
 
     Each worker runs capped at ``threads`` (``_init_worker``; the module docstring's concurrency
-    contract), so workers never oversubscribe cores.
+    contract), so the sweep occupies about ``workers * threads`` cores.
 
     ``cancel`` (parent-process predicate) is polled as futures complete; on True the live
     workers are SIGTERMed and ``Cancelled`` is raised. With ``cancel=None`` this keeps the

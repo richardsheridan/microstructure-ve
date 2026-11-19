@@ -504,7 +504,7 @@ class _ThreadCapCase(unittest.TestCase):
 @needs_dolfinx
 class InProcessThreadCapTests(_ThreadCapCase):
     """Every in-process call that solves runs with each native thread pool capped to one
-    thread in the calling thread, and hands the caller's own limits back on return or raise.
+    thread by default in the calling thread, and hands the caller's own limits back on return or raise.
     """
 
     @needs_complex
