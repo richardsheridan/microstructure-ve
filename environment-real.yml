@@ -1,0 +1,30 @@
+# Real-scalar FEniCSx (DOLFINx) environment for microstructure-ve.
+#
+#   conda env create -f environment-real.yml
+#   conda activate fenicsx-real
+#
+# The same stack as environment.yml against a REAL-scalar PETSc build. Static steps (elastic,
+# plastic, hyperelastic) solve here in real arithmetic; Dynamic steps need the complex build of
+# environment.yml. Each env routes the steps it cannot solve to the other one's interpreter, named
+# by MSVE_DOLFINX_REAL_PYTHON and MSVE_DOLFINX_COMPLEX_PYTHON (README "Install"). Keep the pins
+# equal to environment.yml's so the two envs solve with the same stack (BLAS, MPI, MUMPS); patch
+# versions are whatever conda-forge resolves when each env is created.
+name: fenicsx-real
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12.*
+  - fenics-dolfinx=0.10.*
+  - dolfinx_mpc=0.10.*
+  - petsc=3.25.*=real*         # the real-scalar build
+  - petsc4py=3.25.*
+  - mumps-mpi                  # the DOLFINx direct solver (backends/dolfinx/_solver.py docstring)
+  - libblas=*=*openblas        # MUMPS and numpy BLAS; the solver resolves BLIS + netlib otherwise
+  - openmpi
+  - mpi4py
+  - numpy
+  - scipy
+  - threadpoolctl              # DOLFINx backend thread cap (backends/dolfinx/_run.py docstring)
+  - pip
+  - pip:
+      - -e .
