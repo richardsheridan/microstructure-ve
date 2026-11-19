@@ -15,17 +15,17 @@ serializes on one process-wide re-entrant lock (``_BACKEND_LOCK``): the cached
 (material refill, matrix reassembly, factorization reuse), so those calls execute one
 at a time, each seeing a consistent cache -- *safe but not parallel*. Each of those calls
 that solves (a serial or single-frequency sweep, a multistep or Static ``run``, the
-``build_solver`` build, every ``solve_one`` call) also runs single-core: while it holds the
-lock, every native BLAS/OpenMP thread pool threadpoolctl finds is capped to one thread in
+``build_solver`` build, every ``solve_one`` call) also runs at a fixed thread count: while it holds the
+lock, every native BLAS/OpenMP thread pool threadpoolctl finds is capped to exactly ``threads`` threads (default 1) in
 the calling thread, callbacks it makes (``cancel``) included, and the caller's previous
 limits come back when the call returns or raises (a nested call leaves the outer cap in
 place). An OpenMP cap binds the calling thread only, but a BLAS cap is process-wide: while
-such a call runs, numpy BLAS work in the caller's other threads is single-threaded too, and
+such a call runs, numpy BLAS work in the caller's other threads is capped too, and
 a limit another thread sets meanwhile is overwritten when the call restores its own. The
 exception is a ``workers>1`` frequency sweep: its worker processes rebuild
 everything from the pickled sim and share nothing with this process's cache, so the
 fan-out runs *outside* the lock and parallel sweeps launched from several threads
-genuinely overlap. It runs N single-core worker processes, each capping its own pools for
+genuinely overlap. It runs N worker processes, each capping its own pools at ``threads`` for
 its lifetime (``_init_worker``), while the calling thread, which solves nothing, is not
 capped. No path mutates ``os.environ``.
 """
@@ -84,21 +84,27 @@ _FE_CACHE = {}
 _BACKEND_LOCK = threading.RLock()
 
 
+def _check_threads(threads):
+    """Raise ``ValueError`` unless ``threads`` is a positive ``int`` (a ``bool`` is refused)."""
+    if isinstance(threads, bool) or not isinstance(threads, int) or threads < 1:
+        raise ValueError(f"threads must be a positive int, got {threads!r}")
+
+
 @contextlib.contextmanager
-def _single_core():
-    """Hold ``_BACKEND_LOCK`` with the native thread pools capped to one thread, restoring
-    the previous limits on exit (the module docstring's concurrency contract)."""
-    with _BACKEND_LOCK, threadpoolctl.threadpool_limits(limits=1):
+def _capped(threads):
+    """Hold ``_BACKEND_LOCK`` with the native thread pools capped to ``threads`` threads,
+    restoring the previous limits on exit (the module docstring's concurrency contract)."""
+    with _BACKEND_LOCK, threadpoolctl.threadpool_limits(limits=threads):
         yield
 
 
-def _single_core_calls(fn):
-    """Wrap ``fn`` so each call runs inside ``_single_core`` (re-entrant, so safe within
+def _capped_calls(fn, threads):
+    """Wrap ``fn`` so each call runs inside ``_capped(threads)`` (re-entrant, so safe within
     ``run``'s own locked scope)."""
-    def single_core(*args, **kwargs):
-        with _single_core():
+    def capped(*args, **kwargs):
+        with _capped(threads):
             return fn(*args, **kwargs)
-    return single_core
+    return capped
 
 
 def clear_cache():
@@ -132,7 +138,7 @@ def _fe_problem(geom, model, bbar):
     return prob
 
 
-def build_solver(sim, bbar=True, cancel=None, petsc_options=None, solver="auto"):
+def build_solver(sim, bbar=True, cancel=None, petsc_options=None, solver="auto", threads=1):
     """Build the FE solver for ``sim``; return ``(solve_one, dim)``.
 
     ``solve_one(f)`` returns the readODB-style row for one frequency, at each material's complex
@@ -153,13 +159,17 @@ def build_solver(sim, bbar=True, cancel=None, petsc_options=None, solver="auto")
     ``petsc_options`` overrides the iterative KSP/PC. ``cancel`` is polled per KSP iteration
     by the iterative solver (LU is cancelled only between frequencies, by ``run``).
 
+    ``threads``: a positive int (``ValueError`` otherwise, before any build), the cap on each native
+    thread pool during the build and every ``solve_one`` call.
+
     Thread safety: the build and every call of the returned ``solve_one`` serialize and run
-    single-core in the calling thread, as the module docstring's concurrency contract states,
-    so handing the closure to another thread is safe.
+    capped at ``threads`` in the calling thread, as the module docstring's concurrency contract
+    states, so handing the closure to another thread is safe.
     """
-    with _single_core():
+    _check_threads(threads)
+    with _capped(threads):
         solve_one, dim = _build_solver(sim, bbar, cancel, petsc_options, solver)
-    return _single_core_calls(solve_one), dim
+    return _capped_calls(solve_one, threads), dim
 
 
 def _build_solver(sim, bbar, cancel, petsc_options, solver):
@@ -195,14 +205,14 @@ def _build_solver(sim, bbar, cancel, petsc_options, solver):
 _WORKER = {}  # per-process solver cache, populated by _init_worker in parallel mode
 
 
-def _init_worker(sim, bbar, solver, petsc_options):
-    """ProcessPool worker initializer: cap this worker's native thread pools to one thread
+def _init_worker(sim, bbar, solver, petsc_options, threads=1):
+    """ProcessPool worker initializer: cap this worker's native thread pools at ``threads``
     for its lifetime, then build the solver once (the module docstring's concurrency
     contract). The controller is kept alive in ``_WORKER`` so the cap persists."""
-    _WORKER["thread_limits"] = threadpoolctl.threadpool_limits(limits=1)
+    _WORKER["thread_limits"] = threadpoolctl.threadpool_limits(limits=threads)
     # cancel is None in workers: the parent polls cancel and SIGTERMs live workers
     _WORKER["solve_one"], _WORKER["dim"] = build_solver(
-        sim, bbar, petsc_options=petsc_options, solver=solver)
+        sim, bbar, petsc_options=petsc_options, solver=solver, threads=threads)
 
 
 def _worker_solve(f):
@@ -219,7 +229,7 @@ def _row_header(dim):
 
 
 def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
-        petsc_options=None, n_incr=None, return_energy=False):
+        petsc_options=None, n_incr=None, return_energy=False, threads=1):
     """Solve ``sim``; one row per frequency of a Dynamic step and one per Static step.
 
     Everything about the *problem* is read from ``sim`` -- there are no physics kwargs. The rows are
@@ -251,7 +261,7 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
              ABAQUS CPE4/C3D8 B-bar and avoids Q1 volumetric locking).
     workers: 1 = serial. >1 spawns a ProcessPoolExecutor and splits the independent
              per-frequency solves across processes -- each worker builds the solver once, then
-             solves its share single-core (module docstring). A driver that calls this with
+             solves its share capped at ``threads`` (module docstring). A driver that calls this with
              workers>1
              must guard the call under ``if __name__ == "__main__":`` (the standard "spawn"
              requirement) or the workers will re-import and re-run it.
@@ -280,6 +290,8 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
              measures (exactly the potential Newton minimized; zero at the undeformed
              state, so no baseline subtraction is needed). ``output_path`` still writes
              the rows only.
+    threads: a positive int (``ValueError`` otherwise, before any other work), the cap on each
+             native thread pool of every solve, in this thread or in each worker.
     n_incr:  load increments per plastic or hyperelastic ``Static`` step.  Default ``None``
              solves a plastic step in one increment, as ABAQUS solves the emitted ``*STATIC`` with
              no increment data line (docs/dolfinx_backend_design.md, section 12), and a hyperelastic
@@ -297,12 +309,13 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     converge, raises ``ConvergenceError`` (a ``RuntimeError``) and returns no row.
 
     Thread safety: ``run`` may be called concurrently from multiple threads; which calls
-    serialize on the backend lock and run single-core, and why a ``workers>1`` sweep overlaps,
+    serialize on the backend lock and run capped at ``threads``, and why a ``workers>1`` sweep overlaps,
     is the module docstring's concurrency contract. A ``cancel`` callback always runs in the
     calling thread; on the locked (serial/multistep) paths it must not call back into this
     backend from *another* thread and wait on it (that would deadlock) -- in a ``workers>1``
     sweep the lock is not held, so that caveat does not apply.
     """
+    _check_threads(threads)
     dim = sim.model.nodes.dim
 
     if return_energy and not _has_hyperelastic_static(sim):
@@ -319,9 +332,9 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
 
     energies = None
     if len(list(sim.steps)) > 1 or _has_static(sim):
-        with _single_core():
+        with _capped(threads):
             out = _run_multistep(sim, bbar, cancel, solver, petsc_options, n_incr,
-                                 collect_energy=return_energy)
+                                 collect_energy=return_energy, threads=threads)
         if return_energy:
             out, energies = out
     else:
@@ -341,10 +354,12 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
                 )
             # No _BACKEND_LOCK here: the fan-out shares nothing with this process's FE
             # cache, so parallel sweeps from several threads may overlap (module docstring).
-            out = _run_parallel(sim, freqs, bbar, workers, cancel, solver, petsc_options)
+            out = _run_parallel(sim, freqs, bbar, workers, cancel, solver, petsc_options,
+                                threads)
         else:
-            with _single_core():
-                out = _run_serial_sweep(sim, freqs, bbar, cancel, solver, petsc_options)
+            with _capped(threads):
+                out = _run_serial_sweep(sim, freqs, bbar, cancel, solver, petsc_options,
+                                        threads)
 
     if output_path is not None:
         np.savetxt(
@@ -356,9 +371,9 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     return out
 
 
-def _run_serial_sweep(sim, freqs, bbar, cancel, solver, petsc_options):
+def _run_serial_sweep(sim, freqs, bbar, cancel, solver, petsc_options, threads=1):
     solve_one, _ = build_solver(sim, bbar, cancel=cancel,
-                                petsc_options=petsc_options, solver=solver)
+                                petsc_options=petsc_options, solver=solver, threads=threads)
     rows = []
     for f in freqs:
         if cancel is not None and cancel():
@@ -390,7 +405,7 @@ def _has_hyperelastic_static(sim):
 
 
 def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_incr=None,
-                   collect_energy=False):
+                   collect_energy=False, threads=1):
     """Solve a multi-step sim, or any sim with a ``Static`` step, step by step, emitting rows in the
     ABAQUS reader's order (per step, then per frame): a ``Static`` step contributes one row (zero
     loss) at frame value 1.0 -- elastic (real ``*Elastic`` moduli) or, if a ``Plastic`` response is
@@ -407,7 +422,7 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
     from microstructure_ve.steps import Dynamic, Static
 
     solve_one, _ = build_solver(sim, bbar, cancel=cancel,
-                                petsc_options=petsc_options, solver=solver)
+                                petsc_options=petsc_options, solver=solver, threads=threads)
     has_plastic = any(isinstance(m.response, Plastic) for m in sim.model.materials)
     has_hyper = _has_hyperelastic(sim.model)
     has_pbc = any(isinstance(bc, PeriodicBoundaryConstraint) for bc in sim.model.bcs)
@@ -504,10 +519,11 @@ def _kill_workers(ex):
             pass
 
 
-def _run_parallel(sim, freqs, bbar, workers, cancel=None, solver="auto", petsc_options=None):
+def _run_parallel(sim, freqs, bbar, workers, cancel=None, solver="auto", petsc_options=None,
+                  threads=1):
     """Fan the per-frequency solves across a spawn ProcessPoolExecutor (order preserved).
 
-    Each worker runs single-core (``_init_worker``; the module docstring's concurrency
+    Each worker runs capped at ``threads`` (``_init_worker``; the module docstring's concurrency
     contract), so workers never oversubscribe cores.
 
     ``cancel`` (parent-process predicate) is polled as futures complete; on True the live
@@ -520,7 +536,7 @@ def _run_parallel(sim, freqs, bbar, workers, cancel=None, solver="auto", petsc_o
     ctx = multiprocessing.get_context("spawn")
     with ProcessPoolExecutor(
         max_workers=min(int(workers), len(freqs)), mp_context=ctx,
-        initializer=_init_worker, initargs=(sim, bbar, solver, petsc_options),
+        initializer=_init_worker, initargs=(sim, bbar, solver, petsc_options, threads),
     ) as ex:
         if cancel is None:
             rows = list(ex.map(_worker_solve, freqs))  # map preserves input order
