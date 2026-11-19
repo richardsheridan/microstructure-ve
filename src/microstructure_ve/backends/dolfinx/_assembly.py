@@ -21,6 +21,7 @@ import dolfinx
 from dolfinx import fem
 
 from . import _spec as spec
+from ._solver import require_complex_build
 
 _ELEMENT = {2: "quadrilateral", 3: "hexahedron"}
 
@@ -81,7 +82,7 @@ class Space:
 
 @dataclass(eq=False)
 class MaterialFields:
-    """DG0 complex Lame fields (mu, lambda) and the per-frequency refill."""
+    """DG0 Lame fields (mu, lambda) and the per-frequency refill."""
 
     mu_fn: Any
     lam_fn: Any
@@ -121,7 +122,10 @@ class MaterialFields:
 
         Per-cell modulus is assigned through ``original_cell_index`` (our cell order is
         the raveled pixel order, which dolfinx reorders). 3D / plane-strain Lame.
+
+        Raises ``ScalarBuildError`` in a real-scalar build.
         """
+        require_complex_build()
         E_cell = np.empty(len(self.mat_of_cell), dtype=complex)
         for mi, mod in enumerate(self.modulus_fns):
             E_cell[self.mat_of_cell == mi] = complex(np.asarray(mod(np.array([f]))).ravel()[0])
@@ -134,7 +138,7 @@ class MaterialFields:
         only to steady-state dynamics, so a static step sees the real long-term modulus and produces
         zero loss.
         """
-        self._fill(self.youngs_cell.astype(complex))
+        self._fill(self.youngs_cell.astype(self.mu_fn.x.array.dtype))
 
 
 @dataclass(eq=False)

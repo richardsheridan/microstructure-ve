@@ -8,12 +8,12 @@ persists across consecutive plastic Static steps (load/reverse hysteresis).
 
 Design constraints (docs/dolfinx_backend_design.md, section 12):
 
-* **Complex-scalar PETSc build** -- UFL yield conditionals on complex scalars are ill-defined,
+* **Real values in either PETSc build** -- UFL yield conditionals on complex scalars are ill-defined,
   so the radial return runs in **numpy at the quadrature points** (real arithmetic) and is fed
   back as Quadrature-space coefficients: the stress ``sig_q`` (residual) and algorithmic tangent
-  ``C_q`` (Jacobian). Assembled complex matrices/vectors carry real values.
+  ``C_q`` (Jacobian). Assembled matrices/vectors carry real values, in a complex build too.
 * **Hand-rolled Newton** (``_nonlinear.modified_newton``) over the ``dolfinx_mpc`` assemble +
-  complex-LU path; ``dolfinx_mpc.NonlinearProblem``/SNES is skipped in complex builds and would not
+  LU path; ``dolfinx_mpc.NonlinearProblem``/SNES is skipped in complex builds and would not
   let us refresh the return-map coefficients between iterations.
 * **B-bar** (mean-dilatation) on the strain removes Q1/Q1-hex volumetric locking from J2's
   near-isochoric plastic flow, matching the elastic path's selective reduced integration.
@@ -390,7 +390,7 @@ class _J2Solver:
 
 
 class _PlasticSolver(_J2Solver):
-    """Newton over the periodic MPC + complex LU, with numpy return mapping.
+    """Newton over the periodic MPC + LU, with numpy return mapping.
 
     Persistent across a sim's plastic Static steps: ``solve`` ramps the macro strain from the
     previously committed ``E_current`` to the new step target (so reversal/cyclic patterns

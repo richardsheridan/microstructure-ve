@@ -20,10 +20,10 @@ Design notes (mirroring ``_plastic``, the reference for every convention here):
   volumetric energy ``U(J)`` integrates on the 1-point (centroid) rule, the deviatoric part
   on the full degree-2 rule. Locking comes only from the volumetric term (the deviatoric
   invariants are volume-independent), so this matches CPE4/C3D8 closely.
-* **Complex-scalar PETSc build**: the energy contains ``J**(-2/3)`` / ``ln(J)`` whose complex
+* **Real values in either PETSc build**: in the complex build the energy's ``J**(-2/3)`` / ``ln(J)`` complex
   branches are noise-sensitive, so the fluctuation ``w`` is held real (its imaginary part is zeroed
   after every Newton update); every fractional power then evaluates on a real-positive ``J`` and the
-  assembled complex objects carry real values -- the same invariant ``_plastic`` relies on.
+  assembled objects carry real values -- the same invariant ``_plastic`` relies on.
 * **2D is plane strain**: ``F`` is embedded 3x3 with ``F[2,2] = 1`` so the out-of-plane
   stretch enters the invariants exactly.
 * **Reactions are nominal (PK1)**: the drive-corner constraint force is conjugate to the corner
@@ -286,7 +286,7 @@ class _FormsMixin:
 
 
 class _HyperelasticSolver(_FormsMixin):
-    """Total-Lagrangian Newton over the periodic MPC + complex LU (periodic cells).
+    """Total-Lagrangian Newton over the periodic MPC + LU (periodic cells).
 
     Persistent across a sim's hyperelastic Static steps (``H_current`` and ``w`` carry, so a
     later step warm-starts from the previous converged state -- the response itself is

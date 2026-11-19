@@ -46,7 +46,11 @@ from . import (
     _spec as spec,
     _standard as standard,
 )
-from ._solver import Cancelled, ConvergenceError, IterativeSolver, LuSolver, select_solver_kind
+from ._solver import (
+    Cancelled, ConvergenceError, IterativeSolver, LuSolver, ScalarBuildError,
+    require_complex_build, select_solver_kind,
+)
+from ._arithmetic import needs_complex_build
 
 from microstructure_ve.boundary import PeriodicBoundaryConstraint
 
@@ -133,7 +137,9 @@ def build_solver(sim, bbar=True, cancel=None, petsc_options=None, solver="auto")
 
     ``solve_one(f)`` returns the readODB-style row for one frequency, at each material's complex
     modulus ``E*(f)`` even when the sim's step is Static; ``solve_one(f, elastic=True)`` solves with
-    the real elastic moduli instead, as ``run`` does for a Static step. The mesh-only setup (mesh,
+    the real elastic moduli instead, as ``run`` does for a Static step. In a real-scalar PETSc build
+    the build never raises ``ScalarBuildError``, ``solve_one(f)`` raises ``ScalarBuildError`` and
+    ``solve_one(f, elastic=True)`` solves. The mesh-only setup (mesh,
     dof map, forms, MPC/BCs, factorizable matrix) is cached by mesh shape and reused across cells
     (see ``_fe_problem``); only the per-cell material mapping and the per-frequency matrix values
     are refilled.
@@ -282,7 +288,9 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
 
     Refusal: a sim that ``_loading.check_supported`` rejects raises that check's
     ``NotImplementedError`` (unsupported feature) or ``ValueError`` (malformed sim) before any
-    solver is built.
+    solver is built. After that check, a sim with any ``Dynamic`` step raises ``ScalarBuildError``
+    (a ``RuntimeError``) in a real-scalar PETSc build, before any solver is built or worker started
+    and without writing ``output_path``; ``Static`` steps solve in either build.
 
     Non-convergence: a hyperelastic or plastic ``Static`` step whose Newton solve, free lateral
     entries included, misses its tolerance, or an iterative linear solve that does not
@@ -306,6 +314,8 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
 
     # The check reads only the caller's sim (pure numpy), so it needs no lock.
     loadingmod.check_supported(sim)
+    if needs_complex_build(sim):
+        require_complex_build()
 
     energies = None
     if len(list(sim.steps)) > 1 or _has_static(sim):
