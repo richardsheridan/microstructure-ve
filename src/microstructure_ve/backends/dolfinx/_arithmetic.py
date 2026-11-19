@@ -3,11 +3,9 @@
 PETSc is compiled for one scalar type, so a process holds either the real-scalar or the
 complex-scalar build. A ``Dynamic`` step is a frequency-domain solve with a complex modulus and needs
 the complex build; ``Static`` steps solve in either. This module imports only numpy and the spec, so
-it loads without dolfinx. It reads ``os.environ`` at call time and never writes it.
+it loads without dolfinx.
 """
 from __future__ import annotations
-
-import os
 
 import numpy as np
 
@@ -25,13 +23,8 @@ def is_complex_scalar(scalar_type):
     return np.dtype(scalar_type).kind == "c"
 
 
-def complex_python():
-    """The configured complex-build interpreter, or None when the variable is unset or empty."""
-    return os.environ.get(COMPLEX_PYTHON_VAR) or None
-
-
-def needs_complex(sim):
-    """True iff any step of ``sim`` carries a ``Dynamic`` subsection."""
+def needs_complex_build(sim):
+    """True iff any step of ``sim`` carries a ``Dynamic`` subsection, a frequency-domain solve."""
     return any(any(isinstance(s, Dynamic) for s in step.subsections) for step in sim.steps)
 
 

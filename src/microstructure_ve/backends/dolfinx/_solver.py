@@ -159,7 +159,7 @@ class IterativeSolver(LuSolver):
     Inherits LuSolver's MPC assemble/solve plumbing unchanged (``reassemble`` already calls
     ``setOperators``, so the ILU is rebuilt per frequency); only the KSP/PC is swapped.
 
-    The system is **complex-symmetric** (complex moduli), so PETSc's algebraic multigrid
+    A frequency-domain system is **complex-symmetric** (complex moduli), so PETSc's algebraic multigrid
     (GAMG/hypre) is unavailable -- those are real-only -- and CG is invalid. This uses GMRES with an
     ILU preconditioner, which works in complex but does not coarsen like AMG, so it can stagnate on
     the hardest large-3D cases. ``solve`` raises ``ConvergenceError`` on non-convergence (it never
