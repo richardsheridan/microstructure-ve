@@ -1,6 +1,6 @@
-"""A persistent peer process that solves whole sims with the other PETSc scalar build.
+"""A persistent peer process solving sims, or a share of one, with the other PETSc scalar build.
 
-One process holds one PETSc scalar build, so ``run`` hands a sim this build should not solve to a
+One process holds one PETSc scalar build, so ``run`` hands a sim this build should not solve, or the share of a mixed sim it should not solve, to a
 peer running the interpreter its variable names (``_arithmetic.peer_variable``). The client side
 keeps one peer per interpreter path, started on first use and reused across calls; each serves one
 request at a time. The server side is this module run as

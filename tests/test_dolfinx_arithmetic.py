@@ -23,8 +23,9 @@ from unittest import mock
 
 import numpy as np
 
+from microstructure_ve.backends.dolfinx._arithmetic import is_dynamic_step
 from microstructure_ve.boundary import BoundaryCondition, Prescribed
-from microstructure_ve.steps import Dynamic, Static, Step
+from microstructure_ve.steps import Static, Step
 
 from tests._helpers import (
     HAS_COMPLEX,
@@ -76,14 +77,10 @@ def _assert_round_off(actual, expected):
                                atol=1e-12 * np.nanmax(np.abs(expected)))
 
 
-def _is_dynamic(step):
-    return any(isinstance(s, Dynamic) for s in step.subsections)
-
-
 def _part(sim, dynamic):
     """A copy of ``sim`` keeping only its Dynamic steps, or only its Static steps, in order."""
     part = copy.deepcopy(sim)
-    part.steps = [step for step in part.steps if _is_dynamic(step) == dynamic]
+    part.steps = [step for step in part.steps if is_dynamic_step(step) == dynamic]
     return part
 
 

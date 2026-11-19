@@ -3,7 +3,7 @@
 ``build_solver`` assembles the spec/assembly/constraints/solver/homogenize pieces into a
 ``solve_one(f)`` closure (all dolfinx/PETSc state captured in it). ``run`` sweeps the frequencies
 and optionally writes a readODB-style tsv, optionally fanning the independent per-frequency solves
-across a spawn ProcessPool (``workers``), or hands the whole sim to a peer process of the other PETSc scalar build (``_peer``). The macro loading is parsed from the sim by
+across a spawn ProcessPool (``workers``), or hands the sim, or the other build's share of a sim with both Static and Dynamic steps, to a peer process of the other PETSc scalar build (``_peer``). The macro loading is parsed from the sim by
 ``_loading.macro_loading``.
 
 Concurrency contract (the guarantee): every entry point of this backend -- ``run``,
@@ -29,6 +29,8 @@ genuinely overlap. It runs N worker processes, each capping its own pools at ``t
 its lifetime (``_init_worker``), while the calling thread, which solves nothing, is not
 capped. A ``run`` handed to a peer process (``_peer``) touches no FE state here either, so it too
 runs outside the lock and uncapped; calls routed to one peer serialize on that peer's own lock.
+A split run (``_solve_split``) holds its peer's lock throughout and takes the backend lock, capped,
+only while it solves its own share, so a call holding both locks takes the peer's first.
 No path mutates ``os.environ``.
 """
 from __future__ import annotations
@@ -58,7 +60,6 @@ from ._solver import (
 )
 
 from microstructure_ve.boundary import PeriodicBoundaryConstraint
-from microstructure_ve.steps import Dynamic
 
 
 class _FEProblem:
@@ -258,7 +259,7 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
 
     Each step's rows report that step's own drive and the reaction to it. A periodic ``Static`` step
     with no drive of its own reports the drive of the last ``Static`` step that carried one; a
-    ``Dynamic`` step with no drive of its own, or a driveless first step, is refused, as is a step
+    ``Dynamic`` step with no drive of its own, a driveless first step, or a driveless ``Static`` step with no earlier ``Static`` step carrying a drive, is refused, as is a step
     that drives other components than the first (``_loading.check_supported``).
 
     Each row is ``[frame_value, RF_Real_1..d, RF_Imag_1..d, U_1..d]`` (same columns as the ABAQUS
@@ -437,9 +438,8 @@ def _solve_split(sim, var, interpreter, cancel, knobs):
     shares = {COMPLEX_BUILD: iter(own_rows), not COMPLEX_BUILD: iter(other_rows)}
     rows = []
     for step in sim.steps:
-        dyn = spec.find(step.subsections, Dynamic)
-        count = 1 if dyn is None else len(spec.sweep_frequencies(dyn))
-        rows.extend(next(shares[dyn is not None]) for _ in range(count))
+        share = shares[arithmetic.is_dynamic_step(step)]
+        rows.extend(next(share) for _ in spec.step_frames(step))
     return np.array(rows), None
 
 
@@ -545,7 +545,7 @@ def _run_multistep(sim, bbar, cancel=None, solver="auto", petsc_options=None, n_
         # the standard solve_one reads its BCs from the sim and takes no step drive
         step_kw = {} if loading is None else {"step_loading": loading}
         if dyn is not None:
-            freqs = spec.sweep_frequencies(dyn)
+            freqs = spec.step_frames(step)
             rows.extend(solve_one(float(f), **step_kw) for f in freqs)
             energies.extend([np.nan] * len(freqs))
         elif spec.find(step.subsections, Static) is not None:
