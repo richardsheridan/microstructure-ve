@@ -4,9 +4,11 @@ A frequency-domain solve needs complex arithmetic. A real build with no complex 
 configured refuses it with ``ScalarBuildError`` instead of dropping the loss modulus, and keeps
 solving Static steps in real arithmetic. When the other build's interpreter is named by its
 variable, ``run`` hands a sim this build should not solve to a peer process running that
-interpreter, and returns the peer's rows as its own. A complex build with no real interpreter
-configured solves Static steps itself and warns.
+interpreter, and returns the peer's rows as its own; a sim with both Static and Dynamic steps is
+split, its Static steps solving in the real build and its Dynamic steps in the complex build. A
+complex build with no real interpreter configured solves Static steps itself and warns.
 """
+import copy
 import os
 import pathlib
 import pickle
@@ -21,6 +23,9 @@ from unittest import mock
 
 import numpy as np
 
+from microstructure_ve.boundary import BoundaryCondition, Prescribed
+from microstructure_ve.steps import Dynamic, Static, Step
+
 from tests._helpers import (
     HAS_COMPLEX,
     homogeneous_simulation,
@@ -28,7 +33,13 @@ from tests._helpers import (
     needs_dolfinx,
     needs_real,
 )
-from tests._matrix import MULTISTEP_CELL, PLASTIC_MULTISTEP_CELL, matrix_simulation
+from tests._matrix import (
+    MULTISTEP_CELL,
+    PLASTIC_MULTISTEP_CELL,
+    _step_plan,
+    matrix_cases,
+    matrix_simulation,
+)
 
 _COMPLEX_VAR = "MSVE_DOLFINX_COMPLEX_PYTHON"
 _REAL_VAR = "MSVE_DOLFINX_REAL_PYTHON"
@@ -63,6 +74,48 @@ def _assert_round_off(actual, expected):
     expected = np.asarray(expected)
     np.testing.assert_allclose(actual, expected, rtol=1e-12,
                                atol=1e-12 * np.nanmax(np.abs(expected)))
+
+
+def _is_dynamic(step):
+    return any(isinstance(s, Dynamic) for s in step.subsections)
+
+
+def _part(sim, dynamic):
+    """A copy of ``sim`` keeping only its Dynamic steps, or only its Static steps, in order."""
+    part = copy.deepcopy(sim)
+    part.steps = [step for step in part.steps if _is_dynamic(step) == dynamic]
+    return part
+
+
+def _plastic_reversal_after_dynamic():
+    """A plastic Static, Dynamic, Static sim whose last step reverses the first step's drive, so
+    its row depends on the plastic strain the first step left."""
+    sim = matrix_simulation(test_type="hyperelastic_plastic_sd", n=_N, **PLASTIC_MULTISTEP_CELL)
+    reversed_drives = [BoundaryCondition(s.target, Prescribed(list(s.constraint.dofs),
+                                                              -s.constraint.value))
+                       for s in sim.steps[0].subsections if isinstance(s, BoundaryCondition)]
+    sim.steps = list(sim.steps) + [Step(subsections=[Static()] + reversed_drives)]
+    return sim
+
+
+def _mixed_sims():
+    """Every matrix sim with both Static and Dynamic steps, and a plastic Static, Dynamic,
+    Static sim, by name."""
+    sims = {test_type: matrix_simulation(test_type=test_type, n=_N, **cell)
+            for cell, test_type in matrix_cases()
+            if {kind for kind, _ in _step_plan(test_type)} == {"S", "D"}}
+    sims["plastic reversal after dynamic"] = _plastic_reversal_after_dynamic()
+    return sims
+
+
+def _events_from_cold_cache(call):
+    """``call()``'s result and the solve events it logged, starting from a cleared cache."""
+    from microstructure_ve.backends.dolfinx import clear_cache
+
+    clear_cache()
+    before = _solve_events()
+    out = call()
+    return out, _solve_events() - before
 
 
 @needs_real
@@ -255,6 +308,34 @@ class PeerConfigurationTests(unittest.TestCase):
                 os.environ[var] = path
                 self._assert_refused(var, path, sim)
 
+    def test_mixed_sim_is_refused_before_any_step_solves(self):
+        """A sim with both Static and Dynamic steps, run with the other build's variable naming
+        no usable interpreter, raises ``ScalarBuildError`` naming the variable and the path
+        before any step solves (``cancel`` is never polled) and without writing
+        ``output_path``."""
+        from microstructure_ve.backends.dolfinx import ScalarBuildError, run
+
+        var = _REAL_VAR if HAS_COMPLEX else _COMPLEX_VAR
+        sim = matrix_simulation(test_type="viscoelastic_sd", n=_N, **_PERIODIC)
+        not_executable = self.tmp / "python"
+        not_executable.write_text("")
+        not_executable.chmod(0o644)
+        paths = {"missing": self.tmp / "no-such-python", "not executable": not_executable,
+                 "same build": sys.executable}
+        if shutil.which("false"):
+            paths["exits at once"] = shutil.which("false")
+        for name, path in paths.items():
+            with self.subTest(name):
+                os.environ[var] = str(path)
+                out = self.tmp / f"{name}.tsv"
+                polls = []
+                with self.assertRaises(ScalarBuildError) as cm:
+                    run(sim, output_path=out, cancel=lambda: polls.append(1) or False)
+                self.assertIn(var, str(cm.exception))
+                self.assertIn(str(path), str(cm.exception))
+                self.assertEqual(polls, [], "cancel polled: a step began")
+                self.assertFalse(out.exists(), "output_path written")
+
 
 @needs_complex
 class ComplexBuildWithoutRealPeerTests(unittest.TestCase):
@@ -327,6 +408,31 @@ with open(sys.argv[1], "rb") as f:
 rows = [run(sim) for sim in sims]
 with open(sys.argv[2], "wb") as f:
     pickle.dump(rows, f)
+"""
+
+# A real-build child that runs each pickled ``(mixed, static_part)`` pair of sims from a cleared
+# cache and hands back, for each sim, its rows and the solve events it logged in the child.
+_SPLIT_CHILD = """
+import pickle, sys
+from petsc4py import PETSc
+from microstructure_ve.backends.dolfinx import clear_cache, run
+from microstructure_ve.backends.dolfinx._arithmetic import is_complex_scalar
+if is_complex_scalar(PETSc.ScalarType):
+    sys.exit("the child interpreter is not the real-scalar build")
+PETSc.Log.begin()
+EVENTS = [PETSc.Log.Event(name) for name in ("MatLUFactorNum", "MatSolve")]
+
+def measured(sim):
+    clear_cache()
+    before = sum(e.getPerfInfo()["count"] for e in EVENTS)
+    rows = run(sim)
+    return rows, sum(e.getPerfInfo()["count"] for e in EVENTS) - before
+
+with open(sys.argv[1], "rb") as f:
+    pairs = pickle.load(f)
+out = [(measured(mixed), measured(static_part)) for mixed, static_part in pairs]
+with open(sys.argv[2], "wb") as f:
+    pickle.dump(out, f)
 """
 
 # A routed scenario run in a complex-build child, so a deadlock ends with the child, not the suite.
@@ -467,7 +573,8 @@ with open(sys.argv[2], "wb") as f:
 @needs_real_peer
 class RealPeerTests(unittest.TestCase):
     """In the complex build, a sim with no Dynamic step is solved by the real-build peer named
-    by the variable, and ``run`` answers as a native run would."""
+    by the variable, the Static steps of a sim that also has Dynamic steps are solved there, and
+    ``run`` answers as a native run would."""
 
     @classmethod
     def setUpClass(cls):
@@ -669,6 +776,96 @@ class RealPeerTests(unittest.TestCase):
         self.assertEqual(len(routed), len(sims))
         for got, want in zip(routed, native):
             _assert_round_off(got, want)
+
+    def test_mixed_sims_solve_dynamic_steps_here_and_static_steps_in_the_real_peer(self):
+        """A sim with both Static and Dynamic steps returns the native rows to round-off, in
+        step order, while this process logs the solve events of the sim's Dynamic steps alone
+        and emits no ``ScalarBuildWarning``; ``output_path`` holds the rows in the native file
+        format."""
+        from microstructure_ve.backends.dolfinx import ScalarBuildWarning, run
+
+        for name, sim in _mixed_sims().items():
+            with self.subTest(name):
+                native_file = self.tmp / f"{name}-native.tsv"
+                split_file = self.tmp / f"{name}-split.tsv"
+                native = self._native(sim, output_path=native_file)
+                _, dynamic_events = _events_from_cold_cache(
+                    lambda: self._native(_part(sim, dynamic=True)))
+                with warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter("always")
+                    split, split_events = _events_from_cold_cache(
+                        lambda: run(sim, output_path=split_file))
+                self.assertEqual([str(w.message) for w in caught
+                                  if issubclass(w.category, ScalarBuildWarning)], [])
+                self.assertEqual(split.dtype, np.float64)
+                _assert_round_off(split, native)
+                self.assertEqual(split_events, dynamic_events,
+                                 "this process did not solve exactly the Dynamic steps")
+                self.assertEqual(split_file.read_text().splitlines()[0],
+                                 native_file.read_text().splitlines()[0])
+                np.testing.assert_allclose(np.loadtxt(split_file, skiprows=1, ndmin=2),
+                                           split, rtol=1e-7)
+
+    def test_real_build_caller_solves_static_steps_itself_and_dynamic_steps_in_the_peer(self):
+        """A real-build process with the complex interpreter configured returns, for a sim with
+        both Static and Dynamic steps, the rows this complex process computes, and logs the
+        solve events of the sim's Static steps alone."""
+        mixed = _mixed_sims()
+        native = {name: self._native(sim) for name, sim in mixed.items()}
+        pairs = [(sim, _part(sim, dynamic=False)) for sim in mixed.values()]
+        sims_file, out_file = self.tmp / "sims.pkl", self.tmp / "out.pkl"
+        sims_file.write_bytes(pickle.dumps(pairs))
+        env = dict(os.environ)
+        env.pop(_REAL_VAR)
+        env[_COMPLEX_VAR] = sys.executable
+        log_file = self.tmp / "child.txt"
+        with open(log_file, "wb") as log:
+            proc = subprocess.run(
+                [self.real_python, "-c", _SPLIT_CHILD, str(sims_file), str(out_file)],
+                env=env, cwd=self.tmp, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                timeout=900)
+        self.assertEqual(proc.returncode, 0, log_file.read_text())
+        out = pickle.loads(out_file.read_bytes())
+        self.assertEqual(len(out), len(mixed))
+        for name, ((rows, events), (_, static_events)) in zip(mixed, out):
+            with self.subTest(name):
+                _assert_round_off(rows, native[name])
+                self.assertGreater(static_events, 0, "the Static part logged no solve events")
+                self.assertEqual(events, static_events,
+                                 "the real process did not solve exactly the Static steps")
+
+    def test_cancel_while_the_real_peer_solves_stops_a_mixed_run(self):
+        """A ``cancel`` that turns truthy, or raises, once polled more times than the sim has
+        steps, while the peer still solves a long plastic Static step, stops the run with
+        ``Cancelled`` or the callback's own exception without writing ``output_path``, and the
+        next mixed run returns the native rows."""
+        from microstructure_ve.backends.dolfinx import Cancelled, run
+
+        long_sim = matrix_simulation(test_type="hyperelastic_plastic_sd", n=_N,
+                                     **PLASTIC_MULTISTEP_CELL)
+        small = matrix_simulation(test_type="viscoelastic_sd", n=_N, **_PERIODIC)
+        native = self._native(small)
+        n_steps = len(list(long_sim.steps))
+
+        def stop_after_step_polls(stop):
+            polls = []
+
+            def cancel():
+                polls.append(1)
+                return len(polls) > n_steps and stop()
+            return cancel
+
+        def raise_own():
+            raise _StopRequested("stopped by the caller")
+
+        for expected, stop in ((Cancelled, lambda: True), (_StopRequested, raise_own)):
+            with self.subTest(expected.__name__):
+                out = self.tmp / f"{expected.__name__}.tsv"
+                with self.assertRaises(expected):
+                    run(long_sim, n_incr=2000, output_path=out,
+                        cancel=stop_after_step_polls(stop))
+                self.assertFalse(out.exists(), "output_path written")
+                _assert_round_off(run(small), native)
 
     def test_cancelled_parallel_sweep_through_the_complex_peer_leaves_no_process(self):
         """A real-build process cancels a routed ``workers=2`` sweep once the complex peer's pool
