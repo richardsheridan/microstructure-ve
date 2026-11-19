@@ -21,6 +21,8 @@ from dolfinx import fem
 import dolfinx.fem.petsc as fempetsc
 import dolfinx_mpc
 
+from . import _arithmetic as arithmetic
+
 
 class Cancelled(RuntimeError):
     """Raised when a user ``cancel()`` predicate returns True during a sweep or solve."""
@@ -28,6 +30,20 @@ class Cancelled(RuntimeError):
 
 class ConvergenceError(RuntimeError):
     """Raised when a solve ends without meeting its convergence test; no result is returned."""
+
+
+class ScalarBuildError(RuntimeError):
+    """Raised when a solve needs complex arithmetic and this process's PETSc is the real build."""
+
+
+COMPLEX_BUILD = arithmetic.is_complex_scalar(PETSc.ScalarType)
+"""True iff this process's PETSc is the complex-scalar build."""
+
+
+def require_complex_build():
+    """Raise ``ScalarBuildError`` unless this process can solve in complex arithmetic."""
+    if not COMPLEX_BUILD:
+        raise ScalarBuildError(arithmetic.refusal_message())
 
 
 # --- LU cost model -----------------------------------------------------------------
@@ -92,7 +108,7 @@ class LuSolver:
         V = space.V
         self.uh = [fem.Function(V) for _ in range(len(forms.L_forms))]
 
-        matfields.set_moduli(1.0)  # placeholder values to allocate A
+        matfields.set_moduli_elastic()  # placeholder values to allocate A
         self.A = dolfinx_mpc.assemble_matrix(forms.a_form, mpc, bcs=bcs)
         self.A.assemble()
         self.b = dolfinx_mpc.assemble_vector(forms.L_forms[0], mpc)

@@ -46,7 +46,11 @@ from . import (
     _spec as spec,
     _standard as standard,
 )
-from ._solver import Cancelled, ConvergenceError, IterativeSolver, LuSolver, select_solver_kind
+from ._solver import (
+    Cancelled, ConvergenceError, IterativeSolver, LuSolver, ScalarBuildError,
+    require_complex_build, select_solver_kind,
+)
+from ._arithmetic import needs_complex
 
 from microstructure_ve.boundary import PeriodicBoundaryConstraint
 
@@ -306,6 +310,8 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
 
     # The check reads only the caller's sim (pure numpy), so it needs no lock.
     loadingmod.check_supported(sim)
+    if needs_complex(sim):
+        require_complex_build()
 
     energies = None
     if len(list(sim.steps)) > 1 or _has_static(sim):

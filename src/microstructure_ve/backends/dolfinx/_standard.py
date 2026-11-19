@@ -209,7 +209,7 @@ def build_solver(sim, prob):
     if prob.std_mats is None:
         import ufl
 
-        matfields.set_moduli(1.0)  # placeholder to establish sparsity
+        matfields.set_moduli_elastic()  # placeholder to establish sparsity
         A_bc = fempetsc.assemble_matrix(forms.a_form, bcs=dirichlet_bcs)
         A_bc.assemble()
         # reaction = action of the unreduced form on the solution: f_int = K_full * u,
