@@ -10,7 +10,12 @@ The channel is a pair of pipes carrying pickles, so the peer's stdout and stderr
 caller's. The peer's environment is the caller's minus both interpreter variables, so it solves
 with its own build only. On start the peer reports its scalar kind and its ``microstructure_ve``
 package directory, and the client refuses a peer of its own build or of another source tree. A
-peer exits when its request pipe closes; the client kills its peers at interpreter exit.
+peer exits when its request pipe closes; the client stops its peers at interpreter exit.
+
+A peer leads its own process group, so the caller's terminal interrupt reaches the caller only,
+and stopping a peer ends every process it started. Its pool workers die by ``SIGTERM``;
+multiprocessing's resource tracker ignores that, and exits, unlinking the pool's semaphores, once
+the processes using it are gone.
 
 Only tuples, strings, sims, arrays and pickled exceptions cross the pipe: the server runs as
 ``__main__``, so a class defined here would not unpickle on the other side.
@@ -20,9 +25,11 @@ from __future__ import annotations
 import atexit
 import os
 import pickle
+import signal
 import subprocess
 import sys
 import threading
+import time
 import traceback
 from multiprocessing.connection import Connection
 
@@ -36,6 +43,9 @@ _HANDSHAKE_S = 600.0
 _POLL_S = 0.1
 """Interval at which a waiting caller polls ``cancel`` and the peer's liveness."""
 
+_STOP_S = 10.0
+"""Longest wait for a stopped peer's process group to exit before it is killed outright."""
+
 
 def _package_dir():
     """The resolved directory of the ``microstructure_ve`` package this process imports."""
@@ -48,11 +58,26 @@ class _Peer:
     def __init__(self, proc, tx, rx):
         self.proc, self.tx, self.rx = proc, tx, rx
         self.lock = threading.Lock()
+        self.clear_pending = False
+
+    def _signal_group(self, sig):
+        try:
+            os.killpg(self.proc.pid, sig)
+        except ProcessLookupError:
+            return False
+        return True
 
     def stop(self):
-        """Kill the process, wait for it, and close the pipes."""
-        if self.proc.poll() is None:
-            self.proc.kill()
+        """End the peer and every process in its group, wait for them, and close the pipes."""
+        self._signal_group(signal.SIGTERM)
+        deadline = time.monotonic() + _STOP_S
+        try:
+            self.proc.wait(_STOP_S)
+        except subprocess.TimeoutExpired:
+            pass
+        while self._signal_group(0) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self._signal_group(signal.SIGKILL)
         self.proc.wait()
         self.tx.close()
         self.rx.close()
@@ -81,7 +106,7 @@ def _start(var, path):
     try:
         proc = subprocess.Popen(
             [path, "-m", __spec__.name, str(request_r), str(reply_w)],
-            pass_fds=(request_r, reply_w), stdin=subprocess.DEVNULL, env=env)
+            pass_fds=(request_r, reply_w), stdin=subprocess.DEVNULL, env=env, process_group=0)
     except OSError as e:
         os.close(request_w)
         os.close(reply_r)
@@ -156,11 +181,18 @@ def solve(var, path, sim, cancel, kwargs):
     ``(rows, energies)``, or raise the peer's exception with its traceback as a note."""
     from ._solver import Cancelled
 
-    p = _peer_for(var, path)
-    with p.lock:
-        if cancel is not None and cancel():
-            raise Cancelled("cancelled by callback")
-        status, payload, text = _request(path, p, ("run", sim, kwargs), cancel)
+    while True:
+        p = _peer_for(var, path)
+        with p.lock:
+            with _PEERS_LOCK:
+                current = _PEERS.get(path) is p
+            if not current:
+                continue  # another call stopped it while this one waited
+            if cancel is not None and cancel():
+                raise Cancelled("cancelled by callback")
+            _clear_if_pending(path, p)
+            status, payload, text = _request(path, p, ("run", sim, kwargs), cancel)
+        break
     if status == "ok":
         return payload
     try:
@@ -173,17 +205,27 @@ def solve(var, path, sim, cancel, kwargs):
     raise exc
 
 
+def _clear_if_pending(path, p):
+    """Clear ``p``'s cache if a clear arrived while it served a request; hold ``p.lock``."""
+    if p.clear_pending and p.proc.poll() is None:
+        p.clear_pending = False
+        _request(path, p, ("clear",))
+
+
 def clear_peers():
-    """Clear the FE cache of every live peer; start none."""
+    """Clear the FE cache of every live peer, or of a busy one before its next request; start
+    none and wait for no request."""
     with _PEERS_LOCK:
         peers = list(_PEERS.items())
     for path, p in peers:
-        with p.lock:
-            if p.proc.poll() is None:
-                try:
-                    _request(path, p, ("clear",))
-                except RuntimeError:
-                    pass  # it died; the next routed call replaces it
+        p.clear_pending = True
+        if p.lock.acquire(blocking=False):
+            try:
+                _clear_if_pending(path, p)
+            except RuntimeError:
+                pass  # it died; the next routed call replaces it
+            finally:
+                p.lock.release()
 
 
 @atexit.register
