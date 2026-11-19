@@ -8,7 +8,7 @@ Public API::
 ``run`` transparently caches the mesh-only FE setup by mesh shape, so sweeping many
 simulations that share a grid is fast; ``clear_cache`` releases that memory.
 
-Every entry point is thread-safe; which calls serialize, that they run single-core, and how a
+Every entry point is thread-safe; which calls serialize, the thread cap they run under, and how a
 ``run(workers=N)`` sweep differs is the concurrency contract in ``_run``'s module docstring.
 
 ``run`` / ``build_solver`` are resolved lazily so that importing this package -- and its pure-numpy

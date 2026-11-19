@@ -457,14 +457,13 @@ class _CallerError(Exception):
     """An exception a caller's own ``cancel`` raises to stop a solve."""
 
 
-@needs_dolfinx
-class InProcessThreadCapTests(unittest.TestCase):
-    """Every in-process call that solves runs with each native thread pool capped to one
-    thread in the calling thread, and hands the caller's own limits back on return or raise.
+class _ThreadCapCase(unittest.TestCase):
+    """Checks shared by the thread-cap tests; holds no tests of its own.
 
-    The caller sets its own limit (not 1) around each call, so the checks do not depend on the
-    host's core count or on ``*_NUM_THREADS``. Callbacks only record what they see; the
-    assertions run after the call, so a failed check cannot pose as the caller's exception.
+    The caller sets its own limit ``CALLER_LIMIT`` around each call, so the checks do not
+    depend on the host's core count or on ``*_NUM_THREADS``. Callbacks only record what they
+    see; the assertions run after the call, so a failed check cannot pose as the caller's
+    exception.
     """
 
     CALLER_LIMIT = 2
@@ -475,18 +474,19 @@ class InProcessThreadCapTests(unittest.TestCase):
         clear_cache()
         self.addCleanup(clear_cache)
 
-    def _caller_baseline(self):
-        """Pool counts under the caller's own limit; must hold no 1 for a cap to be visible."""
+    def _caller_baseline(self, cap=1):
+        """Pool counts under the caller's own limit; must hold no ``cap`` for it to be visible."""
         counts = _threadpool_counts()
         self.assertTrue(counts, "no native thread pools reported")
-        self.assertNotIn(1, counts, "caller limit not applied; the cap would be invisible")
+        self.assertNotIn(cap, counts, "caller limit not applied; the cap would be invisible")
         return counts
 
-    def _assert_capped(self, seen):
+    def _assert_capped(self, seen, cap=1):
         self.assertTrue(seen, "the backend never called back mid-call")
         for counts in seen:
             self.assertTrue(counts, "no native thread pools reported mid-call")
-            self.assertTrue(all(n == 1 for n in counts), f"pools not capped mid-call: {seen}")
+            self.assertTrue(all(n == cap for n in counts),
+                            f"pools not capped at {cap} mid-call: {seen}")
 
     def _recording_cancel(self, seen, stop=None):
         """A ``cancel`` that records the pool counts, then returns False, or ``True`` /
@@ -499,6 +499,13 @@ class InProcessThreadCapTests(unittest.TestCase):
                 raise stop("stopped by the caller")
             return False
         return cancel
+
+
+@needs_dolfinx
+class InProcessThreadCapTests(_ThreadCapCase):
+    """Every in-process call that solves runs with each native thread pool capped to one
+    thread by default in the calling thread, and hands the caller's own limits back on return or raise.
+    """
 
     @needs_complex
     def test_serial_sweep_caps_pools_and_restores_caller_limits(self):
@@ -641,6 +648,158 @@ class InProcessThreadCapTests(unittest.TestCase):
             after = _threadpool_counts()
         self._assert_capped(seen)
         self.assertEqual(after, before, "caller's limits not restored after raise")
+
+
+@needs_dolfinx
+class ThreadsKnobTests(_ThreadCapCase):
+    """``threads=N`` on ``run`` and ``build_solver`` caps each native thread pool at N threads
+    wherever the default caps it at one, restores the caller's limits, and refuses an N that is
+    not a positive int before any work.
+
+    ``solver="iterative"`` polls ``cancel`` inside each solve as well as between solves, so the
+    samples cover the solves themselves, not only ``run``'s own frame.
+    """
+
+    THREADS = 2
+    CALLER_LIMIT = 3
+    BAD_THREADS = (0, -1, 2.0, "2", None, True, False)
+
+    def _static_sims(self):
+        from tests._matrix import MULTISTEP_CELL
+
+        return {
+            "periodic elastic": matrix_simulation(test_type="elastic", **MULTISTEP_CELL),
+            "periodic multistep static": matrix_simulation(
+                test_type="viscoelastic_halved_ss", **MULTISTEP_CELL),
+        }
+
+    def _run_capped(self, sim, **kwargs):
+        """Run ``sim`` with ``threads=THREADS`` under the caller's limit; check the caps."""
+        import threadpoolctl
+
+        from microstructure_ve.backends.dolfinx import run
+
+        seen = []
+        with threadpoolctl.threadpool_limits(limits=self.CALLER_LIMIT):
+            before = self._caller_baseline(cap=self.THREADS)
+            out = run(sim, solver="iterative", cancel=self._recording_cancel(seen),
+                      threads=self.THREADS, **kwargs)
+            after = _threadpool_counts()
+        self.assertGreater(len(seen), len(out), "cancel was never polled inside a solve")
+        self._assert_capped(seen, cap=self.THREADS)
+        self.assertEqual(after, before, "caller's limits not restored after run")
+
+    def test_static_run_caps_pools_at_threads_and_restores_caller_limits(self):
+        for name, sim in self._static_sims().items():
+            with self.subTest(name):
+                self._run_capped(sim)
+
+    @needs_complex
+    def test_frequency_sweep_caps_pools_at_threads_and_restores_caller_limits(self):
+        # workers=2 on a single frequency runs in-process like workers=1
+        for workers, f_count in ((1, 2), (2, 1)):
+            with self.subTest(workers=workers, f_count=f_count):
+                self._run_capped(homogeneous_simulation(n=3, dim=2, f_count=f_count),
+                                 workers=workers)
+
+    def test_stopped_run_with_threads_restores_caller_limits(self):
+        import threadpoolctl
+
+        from microstructure_ve.backends.dolfinx import Cancelled, run
+
+        sim = self._static_sims()["periodic multistep static"]
+        for stop, raised in ((True, Cancelled), (_CallerError, _CallerError)):
+            with self.subTest(raised=raised.__name__):
+                seen = []
+                with threadpoolctl.threadpool_limits(limits=self.CALLER_LIMIT):
+                    before = self._caller_baseline(cap=self.THREADS)
+                    with self.assertRaises(raised):
+                        run(sim, solver="iterative", threads=self.THREADS,
+                            cancel=self._recording_cancel(seen, stop=stop))
+                    after = _threadpool_counts()
+                self._assert_capped(seen, cap=self.THREADS)
+                self.assertEqual(after, before, "caller's limits not restored after raise")
+
+    def _solve_one_capped(self, **call_kw):
+        """Build with ``threads=THREADS`` and call ``solve_one(1.0, **call_kw)`` under the
+        caller's limit; check the caps and the restore after the build and the call."""
+        import threadpoolctl
+
+        from microstructure_ve.backends.dolfinx import build_solver
+
+        sim = homogeneous_simulation(n=3, dim=2)
+        seen = []
+        with threadpoolctl.threadpool_limits(limits=self.CALLER_LIMIT):
+            before = self._caller_baseline(cap=self.THREADS)
+            solve_one, _ = build_solver(sim, solver="iterative", threads=self.THREADS,
+                                        cancel=self._recording_cancel(seen))
+            after_build = _threadpool_counts()
+            solve_one(1.0, **call_kw)
+            after_solve = _threadpool_counts()
+        self.assertEqual(after_build, before, "caller's limits not restored after build_solver")
+        self._assert_capped(seen, cap=self.THREADS)
+        self.assertEqual(after_solve, before, "caller's limits not restored after solve_one")
+
+    def test_elastic_solve_one_caps_pools_at_threads_and_restores(self):
+        self._solve_one_capped(elastic=True)
+
+    @needs_complex
+    def test_frequency_solve_one_caps_pools_at_threads_and_restores(self):
+        self._solve_one_capped()
+
+    def test_worker_pools_capped_at_threads(self):
+        # threads goes after the four positional initializer arguments
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor
+
+        from microstructure_ve.backends.dolfinx import _run as run
+
+        sim = homogeneous_simulation(n=3, dim=2, f_count=2)
+        ctx = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(
+            max_workers=1, mp_context=ctx, initializer=run._init_worker,
+            initargs=(sim, True, "auto", None, self.THREADS),
+        ) as ex:
+            counts = ex.submit(_threadpool_counts).result(timeout=120)
+        self.assertTrue(counts, "no native thread pools reported")
+        self.assertTrue(all(n == self.THREADS for n in counts),
+                        f"worker pools not capped at {self.THREADS}: {counts}")
+
+    def test_threads_not_a_positive_int_raises_before_any_work(self):
+        import os
+        import tempfile
+
+        from microstructure_ve.backends.dolfinx import build_solver, run
+
+        sim = self._static_sims()["periodic elastic"]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "rows.tsv")
+            for bad in self.BAD_THREADS:
+                with self.subTest("run", threads=bad):
+                    seen = []
+                    with self.assertRaises(ValueError) as cm:
+                        run(sim, output_path=path, threads=bad,
+                            cancel=self._recording_cancel(seen))
+                    self.assertIn("threads", str(cm.exception))
+                    self.assertEqual(seen, [], "cancel polled before threads was refused")
+                    self.assertFalse(os.path.exists(path), "output written despite refusal")
+                with self.subTest("build_solver", threads=bad):
+                    with self.assertRaises(ValueError) as cm:
+                        build_solver(sim, threads=bad)
+                    self.assertIn("threads", str(cm.exception))
+
+    @needs_complex
+    def test_parallel_sweep_refuses_bad_threads_in_the_calling_process(self):
+        from microstructure_ve.backends.dolfinx import run
+
+        sim = homogeneous_simulation(n=3, dim=2, f_count=2)
+        for bad in (0, 2.0):
+            with self.subTest(threads=bad):
+                seen = []
+                with self.assertRaises(ValueError) as cm:
+                    run(sim, workers=2, threads=bad, cancel=self._recording_cancel(seen))
+                self.assertIn("threads", str(cm.exception))
+                self.assertEqual(seen, [], "cancel polled before threads was refused")
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ The direct solver is MUMPS, a multifrontal sparse LU; why it and not PETSc's nat
 docs/dolfinx_backend_design.md#10-iterative-solver-gmresilu-crossover-for-large-3d-adopted. The
 matrix is re-assembled per frequency (same sparsity -> LU re-factors values only); the
 per-unit-strain right-hand sides are cheap back-substitutions. MUMPS factors on the native thread
-pools, which every in-process backend call caps to one thread (the ``_run`` module docstring).
+pools, which every in-process backend call caps at its ``threads`` (the ``_run`` module docstring).
 
 Cancellation. A direct LU ``ksp.solve()`` is a single C call with no Python breakpoint
 and no monitor callback (PREONLY+LU never fires ``setMonitor``), so it can only be
@@ -51,6 +51,8 @@ def require_complex_build():
 # of tools/bench_solvers.py; rerun it to recalibrate on other hardware.
 # ndof = n_nodes * dim for the vector P1 space.
 LU_TIME_S = 10.0  # crossover budget: above this predicted LU time, prefer the iterative solver
+# TODO: _COST was fit at one thread in the complex build; the LU-versus-iterative choice of
+# select_solver_kind ignores both the threads cap and the scalar build.
 _COST = {2: (1.70e-6, 1.21), 3: (6.96e-7, 1.61)}  # dim -> (coefficient, exponent)
 
 

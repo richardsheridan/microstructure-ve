@@ -414,7 +414,7 @@ single-threaded on this host MUMPS is 3–9× faster on the 2D cells below and 4
 and on the plastic Jacobian of the FEniCS_test 400×400 RVE it refactors in 4.6 s against 71 s
 (about 15×, `tools/bench_grid_scaling.py`), with answers equal to round-off. §0's earlier "MUMPS ~9 s"
 was not reproduced. MUMPS would also use BLAS threads on its fronts, but every in-process backend
-call caps the native thread pools to one (the `_run` module docstring).
+call caps the native thread pools at its `threads` (the `_run` module docstring).
 
 **History — why ILU, not the textbook GMRES+GAMG.** A first pass tried the canonical recipe: the
 rigid-body **near**-nullspace (`dolfinx_mpc.utils.rigid_motions_nullspace`) with **GMRES + GAMG** —
