@@ -28,10 +28,44 @@ def needs_complex_build(sim):
     return any(any(isinstance(s, Dynamic) for s in step.subsections) for step in sim.steps)
 
 
-def refusal_message():
-    """The message for a frequency-domain solve refused in a real-scalar build."""
+def peer_variable(sim, complex_build):
+    """The variable naming the interpreter that solves ``sim`` in place of this build, or None.
+
+    A complex build hands a sim with no ``Dynamic`` step to the real build; a real build hands a
+    sim with any ``Dynamic`` step to the complex build. ``complex_build`` is this process's build.
+    """
+    if needs_complex_build(sim):
+        return None if complex_build else COMPLEX_PYTHON_VAR
+    return REAL_PYTHON_VAR if complex_build else None
+
+
+def native_static_warning():
+    """The message for a Static step a complex build solves itself, no real interpreter named."""
     return (
-        "A frequency-domain (Dynamic) solve needs complex arithmetic, but this Python's PETSc is "
-        f"the real-scalar build. Set {COMPLEX_PYTHON_VAR} to a Python whose PETSc is the "
-        "complex-scalar build, or run from that environment."
+        "Solving a Static step in complex arithmetic because no real-scalar PETSc build is "
+        f"configured. Set {REAL_PYTHON_VAR} to a Python whose PETSc is the real-scalar build to "
+        "solve it there."
+    )
+
+
+_NEEDS_COMPLEX = (
+    "A frequency-domain (Dynamic) solve needs complex arithmetic, but this Python's PETSc is the "
+    "real-scalar build."
+)
+
+
+def refusal_message():
+    """The message for a frequency-domain solve ``run`` refuses in a real-scalar build."""
+    return (
+        f"{_NEEDS_COMPLEX} Set {COMPLEX_PYTHON_VAR} to a Python whose PETSc is the complex-scalar "
+        "build, or run from that environment."
+    )
+
+
+def in_process_refusal_message():
+    """The message for a frequency-domain ``solve_one(f)`` refused in a real-scalar build."""
+    return (
+        f"{_NEEDS_COMPLEX} build_solver solves in this process, so {COMPLEX_PYTHON_VAR} does not "
+        "apply to it: call it from a Python whose PETSc is the complex-scalar build, or use run, "
+        f"which hands the sim to the interpreter {COMPLEX_PYTHON_VAR} names."
     )

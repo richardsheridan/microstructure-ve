@@ -3,7 +3,7 @@
 ``build_solver`` assembles the spec/assembly/constraints/solver/homogenize pieces into a
 ``solve_one(f)`` closure (all dolfinx/PETSc state captured in it). ``run`` sweeps the frequencies
 and optionally writes a readODB-style tsv, optionally fanning the independent per-frequency solves
-across a spawn ProcessPool (``workers``). The macro loading is parsed from the sim by
+across a spawn ProcessPool (``workers``), or hands the whole sim to a peer process of the other PETSc scalar build (``_peer``). The macro loading is parsed from the sim by
 ``_loading.macro_loading``.
 
 Concurrency contract (the guarantee): every entry point of this backend -- ``run``,
@@ -27,30 +27,34 @@ everything from the pickled sim and share nothing with this process's cache, so 
 fan-out runs *outside* the lock and parallel sweeps launched from several threads
 genuinely overlap. It runs N worker processes, each capping its own pools at ``threads`` for
 its lifetime (``_init_worker``), while the calling thread, which solves nothing, is not
-capped. No path mutates ``os.environ``.
+capped. A ``run`` handed to a peer process (``_peer``) touches no FE state here either, so it too
+runs outside the lock and uncapped; calls routed to one peer serialize on that peer's own lock.
+No path mutates ``os.environ``.
 """
 from __future__ import annotations
 
 import contextlib
 import os
 import threading
+import warnings
 
 import numpy as np
 import threadpoolctl
 
 from . import (
+    _arithmetic as arithmetic,
     _assembly as assembly,
     _constraints as constraints,
     _homogenize as homogenize,
     _loading as loadingmod,
+    _peer as peer,
     _spec as spec,
     _standard as standard,
 )
 from ._solver import (
-    Cancelled, ConvergenceError, IterativeSolver, LuSolver, ScalarBuildError,
-    require_complex_build, select_solver_kind,
+    COMPLEX_BUILD, Cancelled, ConvergenceError, IterativeSolver, LuSolver, ScalarBuildError,
+    ScalarBuildWarning, require_complex_build, select_solver_kind,
 )
-from ._arithmetic import needs_complex_build
 
 from microstructure_ve.boundary import PeriodicBoundaryConstraint
 
@@ -90,6 +94,12 @@ def _check_threads(threads):
         raise ValueError(f"threads must be a positive int, got {threads!r}")
 
 
+def _check_solver(solver):
+    """Raise ``ValueError`` unless ``solver`` names a solver kind ``build_solver`` accepts."""
+    if solver not in ("auto", "lu", "iterative"):
+        raise ValueError(f"solver must be 'auto', 'lu' or 'iterative', got {solver!r}")
+
+
 @contextlib.contextmanager
 def _capped(threads):
     """Hold ``_BACKEND_LOCK`` with the native thread pools capped to ``threads`` threads,
@@ -116,9 +126,12 @@ def clear_cache():
     reuse it and skip the dominant build cost. The cache lives for the process; call this to
     free memory when you move on to different mesh shapes, or to force a clean rebuild.
     Thread-safe: takes the same process-wide lock as ``run``/``build_solver`` (the module
-    docstring's concurrency contract)."""
+    docstring's concurrency contract). Also clears the cache of every live peer process
+    (``_peer``), and starts none; a peer busy with a request is not waited for but cleared before
+    it serves its next one."""
     with _BACKEND_LOCK:
         _FE_CACHE.clear()
+    peer.clear_peers()
 
 
 def _fe_problem(geom, model, bbar):
@@ -173,8 +186,7 @@ def build_solver(sim, bbar=True, cancel=None, petsc_options=None, solver="auto",
 
 
 def _build_solver(sim, bbar, cancel, petsc_options, solver):
-    if solver not in ("auto", "lu", "iterative"):
-        raise ValueError(f"solver must be 'auto', 'lu' or 'iterative', got {solver!r}")
+    _check_solver(solver)
     model = sim.model
     has_pbc = any(isinstance(bc, PeriodicBoundaryConstraint) for bc in model.bcs)
     geom = spec.Geometry.from_model(model)
@@ -301,8 +313,17 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
     Refusal: a sim that ``_loading.check_supported`` rejects raises that check's
     ``NotImplementedError`` (unsupported feature) or ``ValueError`` (malformed sim) before any
     solver is built. After that check, a sim with any ``Dynamic`` step raises ``ScalarBuildError``
-    (a ``RuntimeError``) in a real-scalar PETSc build, before any solver is built or worker started
+    (a ``RuntimeError``) in a real-scalar PETSc build with ``MSVE_DOLFINX_COMPLEX_PYTHON`` unset or empty, before any solver is built or worker started
     and without writing ``output_path``; ``Static`` steps solve in either build.
+
+    Scalar build: when ``_arithmetic.peer_variable`` names a variable for ``sim`` and that variable
+    is set, the whole sim is solved by a peer process running the interpreter it names
+    (``_peer``), after every check above, and its rows, energies and exceptions are returned or
+    raised here; ``output_path`` is written here. ``cancel`` is polled while the peer solves; either
+    trigger kills the peer. An interpreter that is missing, of this process's own build, or imports
+    another ``microstructure_ve`` source tree raises ``ScalarBuildError``. A complex build with
+    ``MSVE_DOLFINX_REAL_PYTHON`` unset solves a sim's Static steps itself and emits a
+    ``ScalarBuildWarning``, shown once per process under Python's default warning filter.
 
     Non-convergence: a hyperelastic or plastic ``Static`` step whose Newton solve, free lateral
     entries included, misses its tolerance, or an iterative linear solve that does not
@@ -327,9 +348,33 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
 
     # The check reads only the caller's sim (pure numpy), so it needs no lock.
     loadingmod.check_supported(sim)
-    if needs_complex_build(sim):
-        require_complex_build()
+    _check_solver(solver)
+    var = arithmetic.peer_variable(sim, COMPLEX_BUILD)
+    interpreter = os.environ.get(var) if var else None
+    knobs = dict(bbar=bbar, workers=workers, solver=solver, petsc_options=petsc_options,
+                 n_incr=n_incr, return_energy=return_energy, threads=threads)
+    if interpreter:
+        out, energies = peer.solve(var, interpreter, sim, cancel, knobs)
+    else:
+        if arithmetic.needs_complex_build(sim):
+            require_complex_build(arithmetic.refusal_message())
+        if COMPLEX_BUILD and _has_static(sim) and not os.environ.get(arithmetic.REAL_PYTHON_VAR):
+            warnings.warn(arithmetic.native_static_warning(), ScalarBuildWarning)
+        out, energies = _solve(sim, cancel=cancel, **knobs)
 
+    if output_path is not None:
+        np.savetxt(
+            output_path, out, fmt="%.8e", delimiter="\t",
+            header="\t".join(_row_header(dim)), comments="",
+        )
+    if return_energy:
+        return out, energies
+    return out
+
+
+def _solve(sim, bbar, workers, cancel, solver, petsc_options, n_incr, return_energy, threads):
+    """Solve an argument-checked ``sim`` in this process; return ``(rows, energies)``, with
+    ``energies`` None unless ``return_energy``. A peer process serves its requests with this."""
     energies = None
     if len(list(sim.steps)) > 1 or _has_static(sim):
         with _capped(threads):
@@ -360,15 +405,7 @@ def run(sim, output_path=None, bbar=True, workers=1, cancel=None, solver="auto",
             with _capped(threads):
                 out = _run_serial_sweep(sim, freqs, bbar, cancel, solver, petsc_options,
                                         threads)
-
-    if output_path is not None:
-        np.savetxt(
-            output_path, out, fmt="%.8e", delimiter="\t",
-            header="\t".join(_row_header(dim)), comments="",
-        )
-    if return_energy:
-        return out, energies
-    return out
+    return out, energies
 
 
 def _run_serial_sweep(sim, freqs, bbar, cancel, solver, petsc_options, threads):

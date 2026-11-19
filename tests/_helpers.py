@@ -51,7 +51,7 @@ def _complex_build():
 HAS_COMPLEX = _complex_build()
 
 # A frequency-domain solve (a Dynamic step, or solve_one(f) without elastic=True) needs complex
-# arithmetic; a real-scalar build refuses it.
+# arithmetic; a real-scalar build cannot solve it in its own process.
 needs_complex = unittest.skipUnless(
     HAS_COMPLEX, "needs a complex-scalar PETSc build (the fenicsx env)")
 
